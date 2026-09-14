@@ -132,4 +132,5 @@ describe('HelloModal', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Show the message' }));
     expect(screen.getByText('Putting the message together')).toBeInTheDocument();
   });
+
 });

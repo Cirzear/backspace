@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuthStore } from '../../stores/authStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { askIsOver, recordDismissal, shouldShowAsk } from '../../utils/telemetryAsk';
+import { recordDismissal, shouldShowAsk } from '../../utils/telemetryAsk';
 import { HelloModal } from './HelloModal';
 
 /**
@@ -23,16 +23,12 @@ export function TelemetryAsk() {
   // In-session suppression: the ask is opened at most once per page load, so a
   // dismissal that could not be written to storage still ends it for now.
   const asked = useRef(false);
-  // Read once per mount. Nothing but this component's own dismissal changes
-  // it, and that closes the modal in the same gesture.
-  const over = useRef(askIsOver(localStorage));
 
   useEffect(() => {
-    // The status request exists to decide whether to ask. A browser that has
-    // spent both dismissals will never ask again, so requesting it on every
-    // page load for the rest of this admin's life buys nothing. The settings
-    // panel fetches its own status and is unaffected.
-    if (!isAdmin || over.current) return;
+    // One status request per admin page load. It is what decides whether to
+    // ask, and the instance is the only place that knows: a no made on an
+    // earlier release is due again, and no browser-side record can tell.
+    if (!isAdmin) return;
     void fetchTelemetry().catch(() => undefined);
   }, [isAdmin, fetchTelemetry]);
 
@@ -44,12 +40,13 @@ export function TelemetryAsk() {
     void fetchPreview().catch(() => setPreviewFailed(true));
   }, [isAdmin, telemetry, fetchPreview]);
 
+  // The store forgets this browser's snooze once the answer is stored.
   const onAnswer = useCallback((enabled: boolean) => setEnabled(enabled), [setEnabled]);
 
   const onDismiss = useCallback(() => {
-    // An answer is stored on the instance and ends the ask for every admin, so
-    // only a closing without one snoozes the ask in this browser.
-    if (useSettingsStore.getState().telemetry?.enabled === null) {
+    // An answer is stored on the instance and settles the ask for every admin,
+    // so only a closing without one snoozes the ask in this browser.
+    if (useSettingsStore.getState().telemetry?.askDue === true) {
       recordDismissal(localStorage, Date.now());
     }
     setOpen(false);
