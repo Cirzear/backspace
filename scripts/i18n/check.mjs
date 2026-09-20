@@ -26,6 +26,7 @@ export const REQUIRED_PLURAL_FORMS = {
   en: ['one', 'other'],
   de: ['one', 'other'],
   ru: ['one', 'few', 'many', 'other'],
+  zh: ['other'],
 };
 const DEFAULT_PLURAL_FORMS = ['one', 'other'];
 

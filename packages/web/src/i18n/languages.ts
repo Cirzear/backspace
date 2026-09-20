@@ -10,6 +10,7 @@ export const supportedLanguages = [
   // PR once every surface is covered and the translation has been reviewed.
   { code: 'ru', nativeName: 'Русский', dir: 'ltr', released: true },
   { code: 'de', nativeName: 'Deutsch', dir: 'ltr', released: true },
+  { code: 'zh', nativeName: '中文', dir: 'ltr', released: true },
 ] as const satisfies readonly { code: string; nativeName: string; dir: 'ltr' | 'rtl'; released: boolean }[];
 
 export type SupportedLanguage = (typeof supportedLanguages)[number]['code'];
