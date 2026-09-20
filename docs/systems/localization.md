@@ -6,7 +6,7 @@ moves. This spec is the contract; the foundation PR implements it and each
 surface sweep PR extends it.
 
 Shipped languages: English (`en`, the source language and the fallback),
-Russian (`ru`), German (`de`). Adding a language is a catalog directory plus
+Russian (`ru`), German (`de`), Chinese (`zh`). Adding a language is a catalog directory plus
 one entry in `supportedLanguages`; nothing else in the code should need to
 know the list.
 
@@ -118,6 +118,7 @@ Each language supplies the CLDR categories it needs:
 | en | `_one`, `_other` |
 | de | `_one`, `_other` |
 | ru | `_one`, `_few`, `_many`, `_other` |
+| zh | `_other` |
 
 Example (`admin.json`):
 
@@ -224,7 +225,7 @@ Detection order on startup:
 Each entry in `supportedLanguages` carries a `released` flag. Only released
 languages appear in the picker (`availableLanguages`) or can be chosen by
 detection; a stored choice for an unreleased language is ignored. English,
-Russian and German are all released as of 1.1.0. The flag exists for the next
+Russian, German and Chinese are all released. The flag exists for the next
 language: it lands surface by surface with `released: false`, so a release cut
 in between stays free of that language rather than shipping it half
 translated, and the PR that finishes it flips the flag. Tests reach an
@@ -239,7 +240,7 @@ language keeps following their browser; only the picker persists.
 
 The selector lives in the user settings modal, Account panel, section
 "Language". It lists `supportedLanguages`, showing each language by its
-`nativeName` (English, Русский, Deutsch); the list is not translated,
+`nativeName` (English, Русский, Deutsch, 中文); the list is not translated,
 because a user who cannot read the current language needs to find their own.
 
 Changing the language:
@@ -340,7 +341,7 @@ The main process shows a handful of strings outside the renderer: tray menu
 items, the application menu (macOS, and the accelerator-only Edit menu on
 Windows and Linux), the update items, the recovery page and the instance
 picker. The menu strings live in `packages/desktop/src/l10n.ts` as a small
-typed catalog with `en`, `ru` and `de` entries; `translateDesktop(language,
+typed catalog with `en`, `ru`, `de` and `zh` entries; `translateDesktop(language,
 key, values?)` reads it. The recovery and instance-picker pages carry their
 own inline `STRINGS` tables, because they are shown precisely when the
 renderer is unavailable.
