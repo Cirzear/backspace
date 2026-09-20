@@ -5,6 +5,7 @@ import { DesktopDownloadPanel } from './DesktopDownloadPanel';
 import {
   detectDesktopPlatform,
   RELEASES_URL,
+  WIN_DOWNLOAD_URL,
   type DetectedPlatform,
 } from '../../../platform/desktopDownload';
 
@@ -46,7 +47,7 @@ describe('DesktopDownloadPanel', () => {
     expect(within(hero).getByRole('radio', { name: 'x64' })).toHaveAttribute('aria-checked', 'true');
     expect(within(hero).getByRole('link', { name: 'Download for Windows' })).toHaveAttribute(
       'href',
-      asset('Backspace-1.2.3-win-x64.exe'),
+      WIN_DOWNLOAD_URL,
     );
     expect(within(hero).getByText('Version 1.2.3')).toBeInTheDocument();
     expect(screen.queryByText(/preselected/)).not.toBeInTheDocument();
@@ -54,7 +55,7 @@ describe('DesktopDownloadPanel', () => {
     await user.click(within(hero).getByRole('radio', { name: 'arm64' }));
     expect(within(hero).getByRole('link', { name: 'Download for Windows' })).toHaveAttribute(
       'href',
-      asset('Backspace-1.2.3-win-arm64.exe'),
+      WIN_DOWNLOAD_URL,
     );
 
     // Windows is the hero, so it must not also appear as a quiet tile, and the
@@ -187,7 +188,7 @@ describe('DesktopDownloadPanel', () => {
 
     expect(within(tile('Windows')).getByRole('link', { name: 'Download for Windows' })).toHaveAttribute(
       'href',
-      asset('Backspace-1.2.3-win-x64.exe'),
+      WIN_DOWNLOAD_URL,
     );
     expect(within(tile('macOS')).getByRole('link', { name: 'Download for macOS' })).toHaveAttribute(
       'href',
@@ -201,14 +202,27 @@ describe('DesktopDownloadPanel', () => {
     expect(screen.getAllByRole('link')).toHaveLength(4);
   });
 
-  it('points every link at the releases page while the version is unknown', async () => {
+  it('points non-Windows links at the releases page while the version is unknown', async () => {
     platformIs({ os: 'linux', arch: 'x64', archGuessed: false });
     render(<DesktopDownloadPanel version={null} />);
 
     await screen.findByRole('link', { name: 'Download for Linux' });
-    for (const link of screen.getAllByRole('link')) {
-      expect(link).toHaveAttribute('href', RELEASES_URL);
-    }
+    expect(within(tile('Windows')).getByRole('link', { name: 'Download for Windows' })).toHaveAttribute(
+      'href',
+      WIN_DOWNLOAD_URL,
+    );
+    expect(within(tile('macOS')).getByRole('link', { name: 'Download for macOS' })).toHaveAttribute(
+      'href',
+      RELEASES_URL,
+    );
+    expect(screen.getByRole('link', { name: 'Download for Linux' })).toHaveAttribute(
+      'href',
+      RELEASES_URL,
+    );
+    expect(screen.getByRole('link', { name: 'All releases on GitHub' })).toHaveAttribute(
+      'href',
+      RELEASES_URL,
+    );
     expect(screen.queryByText(/Version/)).not.toBeInTheDocument();
   });
 

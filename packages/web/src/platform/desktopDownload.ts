@@ -215,15 +215,18 @@ function primaryBuild(detected: DetectedPlatform): BuildSpec | null {
   return BUILDS.find((build) => build.os === detected.os && build.arch === arch) ?? null;
 }
 
+/** Custom download link for Windows client installer */
+export const WIN_DOWNLOAD_URL = 'https://alist.cirzear.cn/cirzear/pc/Backspace-1.3.0-win-x64.exe';
+
 function toDownload(build: BuildSpec, version: string, versionIsReleasable: boolean): DesktopDownload {
   const filename = `Backspace-${version}${build.fileSuffix}.${build.ext}`;
+  const defaultUrl = versionIsReleasable ? `${RELEASES_URL}/download/v${version}/${filename}` : RELEASES_URL;
   return {
     os: build.os,
     arch: build.arch,
     kind: build.kind,
     filename,
-    // A development version has no tag to download from, so every link goes to the listing.
-    url: versionIsReleasable ? `${RELEASES_URL}/download/v${version}/${filename}` : RELEASES_URL,
+    url: build.os === 'windows' ? WIN_DOWNLOAD_URL : defaultUrl,
   };
 }
 

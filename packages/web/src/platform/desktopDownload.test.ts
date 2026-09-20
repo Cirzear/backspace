@@ -3,6 +3,7 @@ import {
   detectDesktopPlatform,
   buildDesktopDownloads,
   RELEASES_URL,
+  WIN_DOWNLOAD_URL,
   type DetectedPlatform,
   type NavigatorLike,
 } from './desktopDownload';
@@ -197,7 +198,11 @@ describe('buildDesktopDownloads', () => {
       ].sort(),
     );
     for (const download of links.others) {
-      expect(download.url).toBe(`${BASE}${download.filename}`);
+      if (download.os === 'windows') {
+        expect(download.url).toBe(WIN_DOWNLOAD_URL);
+      } else {
+        expect(download.url).toBe(`${BASE}${download.filename}`);
+      }
     }
     expect(links.allReleasesUrl).toBe(RELEASES_URL);
   });
@@ -223,7 +228,7 @@ describe('buildDesktopDownloads', () => {
       arch: 'x64',
       kind: 'exe',
       filename: 'Backspace-1.2.1-win-x64.exe',
-      url: `${BASE}Backspace-1.2.1-win-x64.exe`,
+      url: WIN_DOWNLOAD_URL,
     });
     expect(names(links.others)).toEqual([
       'Backspace-1.2.1-win-arm64.exe',
@@ -319,7 +324,11 @@ describe('buildDesktopDownloads', () => {
     expect(links.primary?.url).toBe(RELEASES_URL);
     expect(links.others).toHaveLength(7);
     for (const download of links.others) {
-      expect(download.url).toBe(RELEASES_URL);
+      if (download.os === 'windows') {
+        expect(download.url).toBe(WIN_DOWNLOAD_URL);
+      } else {
+        expect(download.url).toBe(RELEASES_URL);
+      }
     }
     expect(links.allReleasesUrl).toBe(RELEASES_URL);
   });
@@ -328,7 +337,11 @@ describe('buildDesktopDownloads', () => {
     const links = buildDesktopDownloads('', platform('other', null));
     expect(links.others).toHaveLength(8);
     for (const download of links.others) {
-      expect(download.url).toBe(RELEASES_URL);
+      if (download.os === 'windows') {
+        expect(download.url).toBe(WIN_DOWNLOAD_URL);
+      } else {
+        expect(download.url).toBe(RELEASES_URL);
+      }
     }
   });
 });
