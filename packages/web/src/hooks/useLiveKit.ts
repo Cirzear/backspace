@@ -4,6 +4,7 @@ import {
   RoomEvent,
   Track,
   Participant,
+  AudioPresets,
   RemoteParticipant,
   RemoteTrackPublication,
   RemoteAudioTrack,
@@ -675,7 +676,17 @@ export function useLiveKit() {
         url = resp.url;
       }
       if (gen !== _connectGeneration) return;
-      const newRoom = new Room({ adaptiveStream: true, dynacast: true, publishDefaults: { videoCodec: 'h264', simulcast: true } });
+    //   const newRoom = new Room({ adaptiveStream: true, dynacast: true, publishDefaults: { videoCodec: 'h264', simulcast: true } });
+    const newRoom = new Room({
+      adaptiveStream: true,
+      dynacast: true,
+      publishDefaults: {
+        videoCodec: 'h264',
+        simulcast: true,
+        audioPreset: AudioPresets.musicHighQualityStereo,
+        dtx: false,
+      }
+    });
       roomRef.current = newRoom;
       let initialConnectPending = true;
 
