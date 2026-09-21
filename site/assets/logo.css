@@ -1,0 +1,40 @@
+.logo-mark {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 16px;
+  height: 21px;
+  vertical-align: middle;
+}
+
+.logo-mark::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--primary);
+  -webkit-mask: url("logo-glyph.svg") center / 100% 100% no-repeat;
+  mask: url("logo-glyph.svg") center / 100% 100% no-repeat;
+}
+
+.brand .logo-mark {
+  width: 20px;
+  height: 26px;
+}
+
+.brand > span:not(.logo-mark) {
+  transform: translateY(1px);
+}
+
+.strip .tile.logo {
+  background: var(--primary);
+  padding: 0;
+}
+
+.strip .tile.logo .logo-mark {
+  width: 68%;
+  height: 88%;
+}
+
+.strip .tile.logo .logo-mark::after {
+  background: #fff;
+}

@@ -53,7 +53,7 @@ Full spec: `docs/systems/design-system.md`
 
 **Core:** Warm matte surfaces with subtle frosted glass accents. Calm over flashy. Warm over cool.
 **Two-material system:** Solid matte panels for content (75%), frosted glass for persistent controls (25%).
-**Colors:** Warm dark surfaces (#13131a chat, #1a1a23 sidebars), pastel accents (mint, peach, lavender, sky, amber, rose, coral).
+**Colors:** Warm dark surfaces (#13131a chat, #1a1a23 sidebars), pastel accents (mint, peach, lavender, sky, amber, rose, coral), brand primary lavender (`#7c6cf6`).
 
 ### Surface Tiers
 | Tier | Class | When to Use |
