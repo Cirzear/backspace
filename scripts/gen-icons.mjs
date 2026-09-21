@@ -8,9 +8,9 @@
  *   - macOS .icns (10-rep iconset)
  *   - Windows .ico (multi-size)
  *   - Linux per-size PNGs (electron-builder dir mode)
- *   - macOS menu-bar template + @2x
- *   - Windows tray .ico (multi-size, DPI-auto)
- *   - Linux tray PNG (22x22)
+ *   - macOS menu-bar template + @2x (18x22 / 36x44)
+ *   - Windows tray .ico (multi-size, DPI-auto, glyph inset per frame)
+ *   - Linux tray PNG (22x22, 18px glyph)
  *   - Web favicons, PWA, in-app brand logo, PWA maskable
  *   - assets/brand/app-icon-1024.png, a reference export of the app icon
  *
@@ -22,13 +22,14 @@
  * everywhere an OS shows this app as a single launchable icon (dock,
  * taskbar, Start menu, Alt-Tab, PWA install, iOS home screen), is the
  * contributor's original dimensional composition recoloured to the
- * lavender system: a squircle badge on a `#2a2740`-to-`#12101d` plum
- * gradient, drop shadow, inner shadow and a soft-light stroke overlay,
- * with the glyph itself a white-to-`#7c6cf6` gradient. See
+ * lavender system: a badge (a rounded rectangle at Apple's own 22.37%
+ * template corner radius) on a `#2a2740`-to-`#12101d` plum gradient,
+ * drop shadow, inner shadow and a soft-light stroke overlay, with the
+ * glyph itself a white-to-`#7c6cf6` gradient. See
  * `docs/systems/design-system.md`'s Brand section for the full rule.
  *
  * APP-ICON RENDERING: every app-icon output renders straight from vector.
- * `app-icon.svg` already carries its own squircle badge, drop shadow and
+ * `app-icon.svg` already carries its own badge, drop shadow and
  * inner shadow, so there is no raster source and no post-render masking —
  * sharp/librsvg renders the SVG at the target size and that's the pixel
  * output. Sizes 16 and 32 render from `app-icon-small.svg` instead: at
@@ -66,7 +67,7 @@ const DESKTOP_RES   = join(ROOT, 'packages/desktop/resources');
 const WEB_ICONS      = join(ROOT, 'packages/web/public/icons');
 const BRAND          = join(ROOT, 'assets/brand');
 
-// app-icon.svg's squircle badge ground: a vertical gradient from plum to
+// app-icon.svg's badge ground: a vertical gradient from plum to
 // near-black, matching the badge's own `paint0_linear` gradient exactly.
 // Reused here as an opaque background for outputs that must carry zero
 // transparent pixels: the apple-touch-icon (iOS paints transparent
@@ -101,8 +102,7 @@ const loadSvg = (path) => readFileSync(path);
 async function renderPng(svg, size) {
   // Render SVG → square PNG at exact target size. fit: 'contain' preserves
   // aspect ratio: wide-bbox SVGs (mark, mark-small) get transparent
-  // top/bottom or left/right padding instead of being stretched square;
-  // mark-tray already carries a square 22-unit canvas with its own inset.
+  // top/bottom or left/right padding instead of being stretched square.
   return sharp(svg, { density: SVG_DENSITY })
     .resize(size, size, {
       fit: 'contain',
@@ -111,6 +111,83 @@ async function renderPng(svg, size) {
     .png({ compressionLevel: 9, palette: false })
     .toBuffer();
 }
+
+async function renderTemplatePng(svg, height) {
+  // Render a non-square SVG at an exact pixel height, width following the
+  // SVG's own aspect ratio. mark-tray.svg carries its own 18x22 canvas
+  // with the glyph already inset and centred, so nothing is fitted here.
+  return sharp(svg, { density: SVG_DENSITY })
+    .resize({ height })
+    .png({ compressionLevel: 9, palette: false })
+    .toBuffer();
+}
+
+// Alpha centroid of a rendered RGBA buffer, in pixel-centre coordinates
+// (a fully symmetric glyph centred on a W-wide canvas measures W / 2).
+async function alphaCentroidX(png) {
+  const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  let sum = 0;
+  let weight = 0;
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    const a = data[i + 3];
+    sum += a * ((p % info.width) + 0.5);
+    weight += a;
+  }
+  return weight === 0 ? info.width / 2 : sum / weight;
+}
+
+function parseMarkSvg(markSvg) {
+  // Splits a mark master into its root viewBox and inner markup so the
+  // glyph can be re-hosted inside another canvas at any size/position.
+  const text = markSvg.toString('utf8');
+  const open = text.match(/<svg\b[^>]*>/);
+  const viewBox = open && open[0].match(/viewBox="([^"]+)"/);
+  if (!open || !viewBox) throw new Error('parseMarkSvg: source SVG has no root <svg viewBox>');
+  const [, , vbW, vbH] = viewBox[1].trim().split(/[\s,]+/).map(Number);
+  const inner = text.slice(open.index + open[0].length, text.lastIndexOf('</svg>'));
+  return { viewBox: viewBox[1], aspect: vbW / vbH, inner };
+}
+
+// Wraps a parsed mark in a canvas of canvasW x canvasH px with the glyph
+// scaled to glyphH px tall and its top-left corner at (x, y), fractional
+// positions allowed: the placement is baked into the vector before
+// rasterising, so a sub-pixel correction renders as true coverage instead
+// of a whole-pixel composite offset.
+function placeMarkSvg(mark, canvasW, canvasH, glyphH, x, y) {
+  return Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${canvasW}" height="${canvasH}">` +
+      `<svg x="${x}" y="${y}" width="${glyphH * mark.aspect}" height="${glyphH}" viewBox="${mark.viewBox}">${mark.inner}</svg>` +
+      `</svg>`,
+  );
+}
+
+async function renderTrayGlyphPng(markSvg, canvasW, canvasH, glyphH) {
+  // Colour tray glyph on a transparent canvas: glyphH px tall, centred
+  // vertically by bounding box and horizontally by alpha centroid. The
+  // mark's straight left edge and open right side put its centroid left
+  // of its box centre, so a box-centred render reads left-heavy; the
+  // first pass measures that offset and the second pass bakes the
+  // correction into the vector placement.
+  const mark = parseMarkSvg(markSvg);
+  const render = (x, y) =>
+    sharp(placeMarkSvg(mark, canvasW, canvasH, glyphH, x, y), { density: SVG_DENSITY })
+      .resize(canvasW, canvasH)
+      .png({ compressionLevel: 9, palette: false })
+      .toBuffer();
+  const x0 = (canvasW - glyphH * mark.aspect) / 2;
+  const y0 = (canvasH - glyphH) / 2;
+  const probe = await render(x0, y0);
+  const shift = canvasW / 2 - (await alphaCentroidX(probe));
+  const png = await render(x0 + shift, y0);
+  const centroid = await alphaCentroidX(png);
+  return { png, measured: `${canvasW}x${canvasH} glyph ${glyphH}h, centroid x ${centroid.toFixed(2)} (shift ${shift >= 0 ? '+' : ''}${shift.toFixed(2)})` };
+}
+
+// Tray frame sizes for Windows: total vertical margin floor(size / 8), so
+// the glyph is 14, 18, 21, 28, 35, 42 tall in the 16..48 frames (Windows
+// 11 draws its own tray glyphs about 14px inside the 16px cell).
+const TRAY_ICO_SIZES = [16, 20, 24, 32, 40, 48];
+const trayGlyphHeight = (size) => size - Math.floor(size / 8);
 
 function plumGradientSvg(size) {
   // Full-bleed vertical gradient rect, no rounding: the badge shape
@@ -141,9 +218,64 @@ async function writePng(path, svg, size) {
   writeFileSync(path, buf);
 }
 
+async function writeTemplatePng(path, svg, height) {
+  mkdirSync(dirname(path), { recursive: true });
+  const buf = await renderTemplatePng(svg, height);
+  writeFileSync(path, buf);
+}
+
+async function writeTrayPng(path, markSvg, canvasW, canvasH, glyphH) {
+  mkdirSync(dirname(path), { recursive: true });
+  const { png, measured } = await renderTrayGlyphPng(markSvg, canvasW, canvasH, glyphH);
+  writeFileSync(path, png);
+  return measured;
+}
+
+async function writeTrayIco(path, markSvg, sizes) {
+  mkdirSync(dirname(path), { recursive: true });
+  const frames = await Promise.all(sizes.map((s) => renderTrayGlyphPng(markSvg, s, s, trayGlyphHeight(s))));
+  const ico = await pngToIco(frames.map((f) => f.png));
+  writeFileSync(path, ico);
+  return `${sizes.length} frames: ${frames.map((f) => f.measured).join('; ')}`;
+}
+
 async function writeAppIconPng(path, icons, size) {
   mkdirSync(dirname(path), { recursive: true });
   const buf = await renderAppIconPng(icons, size);
+  writeFileSync(path, buf);
+}
+
+// Apple's icon-grid template places the visible artwork in an 824px
+// square centred on a 1024 canvas (a 100px transparent margin each
+// side) — every other OS frames its own icon (Windows applies its own
+// padding in Explorer/taskbar, Linux desktop environments crop or pad
+// per-DE, Android masks the maskable icon itself), so this margin is
+// specific to the two macOS consumers: the .icns and the dev/dock
+// `build/icon.png`. Renders the same badge composition as every other
+// app-icon output (routed through renderAppIconPng, so 16/32 would still
+// take the small variant, though neither macOS output ever requests
+// those sizes) at the scaled-down inner size, then centres it on a
+// transparent canvas of the requested size.
+async function macIconPng(icons, size) {
+  const innerSize = Math.round(size * (824 / 1024));
+  const inner = await renderAppIconPng(icons, innerSize);
+  const offset = Math.round((size - innerSize) / 2);
+  return sharp({
+    create: {
+      width: size,
+      height: size,
+      channels: 4,
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    },
+  })
+    .composite([{ input: inner, left: offset, top: offset }])
+    .png({ compressionLevel: 9, palette: false })
+    .toBuffer();
+}
+
+async function writeMacIconPng(path, icons, size) {
+  mkdirSync(dirname(path), { recursive: true });
+  const buf = await macIconPng(icons, size);
   writeFileSync(path, buf);
 }
 
@@ -153,15 +285,6 @@ async function writeAppIconPng(path, icons, size) {
 async function dimsOfBuffer(buf) {
   const meta = await sharp(buf).metadata();
   return `${meta.width}x${meta.height}`;
-}
-
-async function writeIco(path, svg, sizes) {
-  mkdirSync(dirname(path), { recursive: true });
-  const buffers = await Promise.all(sizes.map((s) => renderPng(svg, s)));
-  const ico = await pngToIco(buffers);
-  writeFileSync(path, ico);
-  const dims = await Promise.all(buffers.map(dimsOfBuffer));
-  return `${sizes.length} frames: ${dims.join(', ')}`;
 }
 
 async function writeAppIconIco(path, icons, sizes) {
@@ -177,21 +300,21 @@ async function writeAppIconIco(path, icons, sizes) {
   return `${sizes.length} frames: ${dims.join(', ')}`;
 }
 
-async function writeAppIconIcns(path, icons) {
+async function writeAppIconIcns(path, macIcon1024) {
   // png2icons.createICNS takes a single high-res PNG and synthesises the
   // full 10-rep iconset internally (16/16@2x, 32/32@2x, 128/128@2x,
-  // 256/256@2x, 512/512@2x). Feed it the 1024 vector render — every rep
-  // it derives is a downscale of a render already sized generously above
-  // any target (see SVG_DENSITY), so none of the synthesised reps are
-  // softer than a from-scratch render at that size would be.
+  // 256/256@2x, 512/512@2x) by downscaling it. Feed it the margined 1024
+  // render (see macIconPng) so every synthesised rep inherits the same
+  // Apple-grid margin proportionally — there's no per-rep hook into
+  // png2icons to apply the margin after the fact.
   mkdirSync(dirname(path), { recursive: true });
-  const icns = png2icons.createICNS(icons.appIcon1024, png2icons.BICUBIC, 0);
+  const icns = png2icons.createICNS(macIcon1024, png2icons.BICUBIC, 0);
   if (!icns) throw new Error(`png2icons.createICNS returned null for ${path}`);
   writeFileSync(path, icns);
   // png2icons hands back only the container bytes, no per-rep metadata —
   // report the one thing we can measure honestly: the source buffer it
   // was built from.
-  const srcDims = await dimsOfBuffer(icons.appIcon1024);
+  const srcDims = await dimsOfBuffer(macIcon1024);
   return `${srcDims} source, container not decoded`;
 }
 
@@ -305,11 +428,15 @@ async function main() {
     await trace('linux-png', out, `${s}x${s} (${s <= APP_ICON_SMALL_MAX ? 'small' : 'app-icon'})`);
   }
 
-  await writeAppIconPng(join(DESKTOP_BUILD, 'icon.png'), icons, 512);
-  await trace('build-icon', join(DESKTOP_BUILD, 'icon.png'), '512x512');
+  // macOS dev/dock icon and packaged .icns: both apply Apple's icon-grid
+  // margin (824/1024 artwork centred on the canvas) — see macIconPng.
+  // Every other output below stays full-bleed.
+  await writeMacIconPng(join(DESKTOP_BUILD, 'icon.png'), icons, 512);
+  await trace('build-icon', join(DESKTOP_BUILD, 'icon.png'), '512x512 (Apple grid margin)');
 
-  const icnsMeasured = await writeAppIconIcns(join(DESKTOP_BUILD, 'icon.icns'), icons);
-  await trace('mac-icns', join(DESKTOP_BUILD, 'icon.icns'), '10-rep iconset', icnsMeasured);
+  const macIcon1024 = await macIconPng(icons, 1024);
+  const icnsMeasured = await writeAppIconIcns(join(DESKTOP_BUILD, 'icon.icns'), macIcon1024);
+  await trace('mac-icns', join(DESKTOP_BUILD, 'icon.icns'), '10-rep iconset (Apple grid margin)', icnsMeasured);
 
   const winIcoMeasured = await writeAppIconIco(
     join(DESKTOP_BUILD, 'icon.ico'),
@@ -319,26 +446,33 @@ async function main() {
   await trace('win-ico', join(DESKTOP_BUILD, 'icon.ico'), '7 sizes', winIcoMeasured);
 
   // --- Desktop: tray ---
-  // macOS menu bar: mark-tray.svg is a silhouette tuned for the 22px
-  // template (18px body inset in a square 22-unit canvas, 3px arrow
-  // channel, shaft on whole pixel rows), so it renders 1:1 here with no
-  // further fitting. main.ts marks the PNG as a template image and macOS
-  // tints the alpha; the file must stay pure black.
-  await writePng(join(DESKTOP_RES, 'tray-iconTemplate.png'), markTray, 22);
-  await trace('tray-mac-1x', join(DESKTOP_RES, 'tray-iconTemplate.png'), '22x22 (mark-tray)');
+  // macOS menu bar: mark-tray.svg is a silhouette tuned for the menu bar
+  // (16px body on an 18x22 canvas, 2.8px arrow channel, centred by alpha
+  // centroid), so it renders 1:1 here with no further fitting. The canvas
+  // is 18 wide, not 22: the status item pads the image itself, and a 22px
+  // box around a 12px glyph left a wider gap than the system icons keep.
+  // main.ts marks the PNG as a template image and macOS tints the alpha;
+  // the file must stay pure black. Electron resolves the @2x by suffix.
+  await writeTemplatePng(join(DESKTOP_RES, 'tray-iconTemplate.png'), markTray, 22);
+  await trace('tray-mac-1x', join(DESKTOP_RES, 'tray-iconTemplate.png'), '18x22 (mark-tray)');
 
-  await writePng(join(DESKTOP_RES, 'tray-iconTemplate@2x.png'), markTray, 44);
-  await trace('tray-mac-2x', join(DESKTOP_RES, 'tray-iconTemplate@2x.png'), '44x44 (mark-tray)');
+  await writeTemplatePng(join(DESKTOP_RES, 'tray-iconTemplate@2x.png'), markTray, 44);
+  await trace('tray-mac-2x', join(DESKTOP_RES, 'tray-iconTemplate@2x.png'), '36x44 (mark-tray)');
 
   // Windows and Linux trays render in colour from the bold small-size
-  // variant. The .ico's 16 and 20px frames fall under the 1.5px small-size
-  // rule with the standard mark (its channel is ~1.2px at 16), and the
-  // whole tray set takes the same source so every frame is the same glyph.
-  const trayIcoMeasured = await writeIco(join(DESKTOP_RES, 'tray-icon.ico'), markSmall, [16, 20, 24, 32, 40, 48]);
-  await trace('tray-win-ico', join(DESKTOP_RES, 'tray-icon.ico'), '6 sizes (mark-small)', trayIcoMeasured);
+  // variant, inset in their cell the way each platform's own tray glyphs
+  // are (Windows 11: about 14px in the 16px cell; Ubuntu/KDE indicators:
+  // about 18px in 22) and centred by alpha centroid, see
+  // renderTrayGlyphPng. The .ico's 16 and 20px frames fall under the
+  // 1.5px small-size rule with the standard mark (its channel is ~1.2px
+  // at 16), and the whole tray set takes the same source so every frame
+  // is the same glyph. The app icons are a different family and stay
+  // full-bleed; this inset applies to the tray only.
+  const trayIcoMeasured = await writeTrayIco(join(DESKTOP_RES, 'tray-icon.ico'), markSmall, TRAY_ICO_SIZES);
+  await trace('tray-win-ico', join(DESKTOP_RES, 'tray-icon.ico'), '6 sizes (mark-small, inset)', trayIcoMeasured);
 
-  await writePng(join(DESKTOP_RES, 'tray-icon.png'), markSmall, 22);
-  await trace('tray-linux', join(DESKTOP_RES, 'tray-icon.png'), '22x22 (mark-small)');
+  const trayPngMeasured = await writeTrayPng(join(DESKTOP_RES, 'tray-icon.png'), markSmall, 22, 22, 18);
+  await trace('tray-linux', join(DESKTOP_RES, 'tray-icon.png'), '22x22 (mark-small, 18px glyph)', trayPngMeasured);
 
   // --- Web: favicons + PWA + in-app ---
   // Favicons render from mark-small.svg on transparent, not the app-icon
