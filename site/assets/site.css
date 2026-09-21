@@ -6,6 +6,13 @@
   font-style: normal;
   font-display: swap;
 }
+@font-face {
+  font-family: "Fabio XM";
+  src: url("fabio-xm-variable.ttf") format("truetype");
+  font-weight: 400 500;
+  font-style: normal;
+  font-display: swap;
+}
 :root {
   --base: #0b0b10;
   --chat: #13131a;
@@ -31,6 +38,7 @@
   --line: rgba(255, 255, 255, 0.07);
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   --sans: "DM Sans", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --display: "Fabio XM", var(--sans);
 }
 /*
  * DM Sans covers Latin and Latin Extended and nothing else: Google Fonts
@@ -67,7 +75,7 @@ body {
   -webkit-font-smoothing: antialiased;
   overflow-x: hidden;
 }
-::selection { background: rgba(124, 108, 246, 0.35); }
+::selection { background: color-mix(in srgb, var(--primary) 35%, transparent); }
 img { max-width: 100%; height: auto; display: block; }
 a { color: var(--sky); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -87,7 +95,7 @@ a:focus-visible, button:focus-visible, summary:focus-visible {
   border-bottom: 1px solid var(--glass-border);
 }
 .nav-in { display: flex; align-items: center; gap: 26px; height: 60px; }
-.brand { display: flex; align-items: center; gap: 10px; font-weight: 640; font-size: 17px; letter-spacing: -0.01em; color: var(--txt); margin-right: auto; }
+.brand { display: flex; align-items: center; gap: 10px; font-family: var(--display); font-weight: 500; font-size: 18px; letter-spacing: -0.01em; color: var(--txt); margin-right: auto; }
 .brand:hover { text-decoration: none; }
 .brand img { width: 26px; height: 26px; }
 .nav-link { color: var(--txt2); font-size: 14.5px; font-weight: 460; }
@@ -119,7 +127,7 @@ a:focus-visible, button:focus-visible, summary:focus-visible {
 .hero::before {
   content: ""; position: absolute; inset: -200px 0 0 0; z-index: -1; pointer-events: none;
   background:
-    radial-gradient(900px 480px at 78% 0%, rgba(124, 108, 246, 0.09), transparent 62%),
+    radial-gradient(900px 480px at 78% 0%, color-mix(in srgb, var(--primary) 9%, transparent), transparent 62%),
     radial-gradient(760px 420px at 12% 12%, rgba(134, 239, 172, 0.05), transparent 58%);
 }
 .hero-head { max-width: 780px; margin: 0 auto 44px; text-align: center; }
@@ -129,8 +137,9 @@ a:focus-visible, button:focus-visible, summary:focus-visible {
 }
 .hero-tag b { color: var(--mint); font-weight: 500; }
 h1 {
+  font-family: var(--display);
   font-size: clamp(2.3rem, 5.4vw, 3.9rem);
-  font-weight: 630; line-height: 1.04; letter-spacing: -0.032em;
+  font-weight: 500; line-height: 1.04; letter-spacing: -0.032em;
   margin-bottom: 20px;
   text-wrap: balance;
 }
@@ -347,8 +356,9 @@ section { padding: 96px 0; }
 .ch-amber::before { color: var(--amber); }
 .ch-coral::before { color: var(--coral); }
 h2 {
+  font-family: var(--display);
   font-size: clamp(1.65rem, 3.4vw, 2.35rem);
-  font-weight: 620; letter-spacing: -0.026em; line-height: 1.12;
+  font-weight: 500; letter-spacing: -0.026em; line-height: 1.12;
   margin-bottom: 18px;
 }
 .sec-copy { color: var(--txt2); max-width: 60ch; }
