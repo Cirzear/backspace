@@ -414,6 +414,13 @@
     "copyUnheld": "Diese Rolle hat Berechtigungen, die du nicht hast. Du kannst sie deshalb nicht kopieren.",
     "copyDeleteUnheld": "Diese Rolle hat Berechtigungen, die du nicht hast. Du kannst sie deshalb weder kopieren noch löschen."
   },
+  "memberRoles": {
+    "title": "Rollen — {{name}}",
+    "viewProfile": "Profil ansehen",
+    "affectsAll": "Berechtigungsänderungen gelten für alle Mitglieder mit dieser Rolle.",
+    "selectRole": "Wähle eine Rolle aus, um ihre Berechtigungen zu bearbeiten.",
+    "saved": "Änderungen gespeichert"
+  },
   "permissions": {
     "title": "Berechtigungen",
     "names": {
