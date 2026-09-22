@@ -1,0 +1,426 @@
+import type Database from 'better-sqlite3';
+import type { DirectoryPingError } from '@backspace/shared';
+import { config } from '../config.js';
+import { getRawDb } from '../db/index.js';
+import { getInstanceId } from '../utils/federationEpoch.js';
+import { resolveLocalOrigin } from '../routes/federation/origin.js';
+import { pingUrl, slotMinute } from '../telemetry/reporter.js';
+import { utcDay } from '../telemetry/day.js';
+import {
+  clearDirectoryDirty, getDocumentVersion, isDirectoryPingReason, onDirectoryDirty, readDirectoryState,
+  recordDirectoryPingFailure, recordDirectoryPingSuccess, type DirectoryPingReason,
+} from './state.js';
+
+export interface PingerDeps {
+  sqlite: Database.Database;
+  /** Hub base URL. Empty means the pinger is disabled. */
+  endpoint: string;
+  /** This instance's public origin, the only thing the ping carries. */
+  origin: string;
+  /** Spreads the daily slot the way the telemetry reporter spreads its own. */
+  instanceId: string;
+  fetch: typeof fetch;
+  now: () => Date;
+  version: string;
+  log: { info(msg: string): void; debug(msg: string): void };
+}
+
+/**
+ * What the pinger remembers between ticks and loses on restart. Nothing here
+ * needs to survive a restart: the boot ping resends whatever is dirty, a
+ * retired hub is tried once more per boot on purpose, and the per-day slot
+ * guard is derived from the persisted error, not from this.
+ */
+export interface PingerMemory {
+  /** Consecutive failures since the last accepted ping; picks the backoff step. */
+  failures: number;
+  /**
+   * End of the failure backoff, in ms. The tick and the daily rule wait it out;
+   * the change ping does not, an edit is new information.
+   */
+  nextRetryAt: number | null;
+  /**
+   * End of a hub `Retry-After` (a 429), in ms. Every sender waits it out:
+   * sending into a cooldown buys nothing but another 429.
+   */
+  cooldownUntil: number | null;
+  /** Document version the hub rejected the origin for; the retry loop waits for the next change. */
+  haltedVersion: number | null;
+  /** The hub answered 410: nothing is sent until the next boot. */
+  retired: boolean;
+  /** The ping in flight, so the tick and the change ping never send on top of each other. */
+  inFlight: Promise<PingOutcome> | null;
+}
+
+export function createPingerMemory(): PingerMemory {
+  return { failures: 0, nextRetryAt: null, cooldownUntil: null, haltedVersion: null, retired: false, inFlight: null };
+}
+
+const BACKOFF_MS: readonly [number, number, number, number] = [60_000, 300_000, 900_000, 3_600_000];
+const TIMEOUT_MS = 10_000;
+const DEFAULT_RETRY_AFTER_S = 10;
+const DEBOUNCE_MS = 3_000;
+const TICK_MS = 60_000;
+
+export type PingOutcome = 'accepted' | 'cooldown' | 'origin-rejected' | 'retired' | 'fetch-failed' | 'failed';
+
+function isTimeout(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('name' in error)) return false;
+  const { name } = error as { name: unknown };
+  return name === 'TimeoutError' || name === 'AbortError';
+}
+
+/**
+ * Retry-After is either a number of seconds or an HTTP date. The per-address
+ * limiter on the hub sends neither, which is what the default covers.
+ */
+function retryAfterMs(header: string | null, now: number): number {
+  if (header !== null) {
+    const value = header.trim();
+    if (/^\d+$/.test(value)) return Number(value) * 1000;
+    const date = Date.parse(value);
+    if (!Number.isNaN(date)) return Math.max(0, date - now);
+  }
+  return DEFAULT_RETRY_AFTER_S * 1000;
+}
+
+/** The hub's 502 body says why it could not read this instance's document. Anything else reads as no reason. */
+async function readFetchReason(response: Response): Promise<DirectoryPingReason | undefined> {
+  try {
+    const body: unknown = await response.json();
+    if (typeof body !== 'object' || body === null) return undefined;
+    const { reason } = body as { reason?: unknown };
+    return isDirectoryPingReason(reason) ? reason : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function scheduleRetry(mem: PingerMemory, at: number): void {
+  const step = BACKOFF_MS[Math.min(mem.failures, BACKOFF_MS.length - 1)] ?? BACKOFF_MS[3];
+  mem.nextRetryAt = at + step;
+  mem.failures += 1;
+}
+
+function recordFailure(deps: PingerDeps, mem: PingerMemory, error: DirectoryPingError): void {
+  recordDirectoryPingFailure(deps.sqlite, error);
+  scheduleRetry(mem, error.at);
+}
+
+/**
+ * One ping: tells the hub to fetch this instance's document, then applies the
+ * answer table from section 6 of the spec. The document version is captured
+ * before the request so a change that lands while the ping is in flight keeps
+ * the dirty flag; the change ping sends the next ping for it.
+ *
+ * The ping is recorded in `mem.inFlight` for its duration: the tick skips
+ * while one is running and the change ping waits for it, so a retry never
+ * goes out twice and the backoff ladder steps once per failure.
+ *
+ * The hub's answer body is never logged.
+ */
+export function sendDirectoryPing(deps: PingerDeps, mem: PingerMemory): Promise<PingOutcome> {
+  const flight = performPing(deps, mem).finally(() => {
+    if (mem.inFlight === flight) mem.inFlight = null;
+  });
+  mem.inFlight = flight;
+  return flight;
+}
+
+async function performPing(deps: PingerDeps, mem: PingerMemory): Promise<PingOutcome> {
+  const sentVersion = getDocumentVersion();
+  let response: Response | null = null;
+  let failure: 'network' | 'timeout' = 'network';
+  let cause = '';
+  try {
+    response = await deps.fetch(pingUrl(deps.endpoint), {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'user-agent': `backspace-server/${deps.version}`,
+      },
+      body: JSON.stringify({ schema: 1, origin: deps.origin }),
+      redirect: 'error',
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+  } catch (error) {
+    failure = isTimeout(error) ? 'timeout' : 'network';
+    cause = error instanceof Error ? error.message : 'request failed';
+  }
+  const at = deps.now().getTime();
+
+  if (response === null) {
+    recordFailure(deps, mem, { at, status: failure });
+    deps.log.debug(`[directory] ping did not go through (${failure}, ${cause}), retrying in ${describeDelay(mem.nextRetryAt, at)}`);
+    return 'failed';
+  }
+
+  const { status } = response;
+  if (status >= 200 && status < 300) {
+    const cleared = recordDirectoryPingSuccess(deps.sqlite, sentVersion, at);
+    mem.failures = 0;
+    mem.nextRetryAt = null;
+    mem.cooldownUntil = null;
+    deps.log.debug(cleared
+      ? '[directory] ping accepted'
+      : '[directory] ping accepted, the document changed in flight so the next change ping is still owed');
+    return 'accepted';
+  }
+  if (status === 429) {
+    mem.cooldownUntil = at + retryAfterMs(response.headers.get('retry-after'), at);
+    deps.log.debug(`[directory] hub asked for a pause, next ping in ${describeDelay(mem.cooldownUntil, at)}`);
+    return 'cooldown';
+  }
+  if (status === 400) {
+    recordDirectoryPingFailure(deps.sqlite, { at, status: 'origin' });
+    mem.haltedVersion = sentVersion;
+    deps.log.info(`[directory] the hub rejected this instance's origin (${deps.origin}); no retry until the directory settings change`);
+    return 'origin-rejected';
+  }
+  if (status === 410) {
+    clearDirectoryDirty(deps.sqlite);
+    recordDirectoryPingFailure(deps.sqlite, { at, status });
+    mem.retired = true;
+    deps.log.info('[directory] the hub reports the directory as retired, pinging stopped until the next start');
+    return 'retired';
+  }
+  if (status === 502) {
+    const reason = await readFetchReason(response);
+    if (reason !== undefined) {
+      recordFailure(deps, mem, { at, status: 'fetch', reason });
+      deps.log.debug(`[directory] the hub could not read this instance's document (${reason}), retrying in ${describeDelay(mem.nextRetryAt, at)}`);
+      return 'fetch-failed';
+    }
+  }
+  recordFailure(deps, mem, { at, status });
+  deps.log.debug(`[directory] ping did not go through (status ${status}), retrying in ${describeDelay(mem.nextRetryAt, at)}`);
+  return 'failed';
+}
+
+function describeDelay(until: number | null, at: number): string {
+  const ms = until === null ? 0 : Math.max(0, until - at);
+  return `${Math.round(ms / 1000)}s`;
+}
+
+/** No hub cooldown is running. The one wait every sender honours. */
+function cooldownOver(mem: PingerMemory, nowMs: number): boolean {
+  return mem.cooldownUntil === null || nowMs >= mem.cooldownUntil;
+}
+
+/** Neither the failure backoff nor a hub cooldown is running. What the tick and the daily rule wait for. */
+function retryDue(mem: PingerMemory, nowMs: number): boolean {
+  return (mem.nextRetryAt === null || nowMs >= mem.nextRetryAt) && cooldownOver(mem, nowMs);
+}
+
+/**
+ * One pass of the minute timer. In order: the boot ping, the retry loop for a
+ * dirty flag, the daily refresh while listed. Returns 'sent' when a ping was
+ * attempted, whatever the hub answered.
+ *
+ * The retry loop runs while dirty regardless of the toggle: an instance that
+ * switched itself off while the hub was unreachable still has to tell the hub
+ * so, or it sits in the feed until the hub's own recheck drops it.
+ *
+ * The daily rule's per-day guard comes from the persisted error, not from
+ * memory, so a restart loop cannot re-attempt a failing hub more than once a
+ * day by the slot. It also waits out both the cooldown and the backoff: a 429
+ * at the slot is not retried every minute until the hub relents, and a backoff
+ * set by the retry loop is not bypassed by the slot.
+ */
+export async function pingerTick(deps: PingerDeps, mem: PingerMemory, opts: { boot?: boolean } = {}): Promise<'sent' | 'skipped'> {
+  if (deps.endpoint === '' || mem.retired || mem.inFlight !== null) return 'skipped';
+  const state = readDirectoryState(deps.sqlite);
+  const now = deps.now();
+  const nowMs = now.getTime();
+
+  if (opts.boot === true && (state.enabled || state.dirty)) {
+    await sendDirectoryPing(deps, mem);
+    return 'sent';
+  }
+
+  if (state.dirty && mem.haltedVersion !== getDocumentVersion() && retryDue(mem, nowMs)) {
+    await sendDirectoryPing(deps, mem);
+    return 'sent';
+  }
+
+  if (state.enabled) {
+    const today = utcDay(now);
+    const minuteOfDay = now.getUTCHours() * 60 + now.getUTCMinutes();
+    const slot = slotMinute(deps.instanceId);
+    const todaySlotInstant = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, slot);
+    const slotReached = minuteOfDay >= slot;
+    const notYetToday = state.lastPingAt === null || state.lastPingAt < todaySlotInstant;
+    const notAttemptedToday = state.lastError === null || utcDay(new Date(state.lastError.at)) !== today;
+    if (slotReached && notYetToday && notAttemptedToday && retryDue(mem, nowMs)) {
+      await sendDirectoryPing(deps, mem);
+      return 'sent';
+    }
+  }
+
+  return 'skipped';
+}
+
+/**
+ * How long a change ping waits: the debounce, or the rest of a running
+ * `Retry-After` when that is longer. Sending inside a known cooldown only buys
+ * another 429, and the second one can come from the hub's per-address limiter,
+ * which sends no header and costs the default wait again.
+ *
+ * The failure backoff is ignored on purpose: an edit is new information and
+ * goes out 3 seconds after the last mark even while the tick is backing off.
+ * The in-flight record is what keeps that from becoming two senders.
+ *
+ * The `max` also covers the boundary: Node's timers run on the monotonic clock
+ * with millisecond truncation while `deps.now()` reads the wall clock, so a
+ * timer armed for the end of a cooldown can fire a millisecond before
+ * `cooldownUntil`. That re-arms for the full debounce rather than for the one
+ * millisecond left, so a ping at the boundary can be 3 seconds late, once. It
+ * is what "the debounce, or the rest of the cooldown, whichever is longer"
+ * means; a log line reading that way is not a fault.
+ */
+export function changePingDelay(mem: PingerMemory, nowMs: number): number {
+  const remaining = mem.cooldownUntil === null ? 0 : mem.cooldownUntil - nowMs;
+  return Math.max(DEBOUNCE_MS, remaining);
+}
+
+export interface ChangePingScheduler {
+  /** Arms (or re-arms) the change ping; called on every dirty mark. */
+  schedule(): void;
+  stop(): void;
+}
+
+/**
+ * The event path: one timer, re-armed on every dirty mark, that fires the
+ * change ping `changePingDelay` after the last mark so a burst of edits sends
+ * one ping. When it fires it sends only if the document is still dirty (a ping
+ * already in flight may have covered the change) and the retry loop is not
+ * halted on the current version.
+ *
+ * A 429 re-arms the timer for the cooldown's end instead of leaving the change
+ * to the minute tick: the hub's per-origin cooldown is 10 seconds, and an edit
+ * that follows another within it should land seconds later, not up to a
+ * minute. Any other failure leaves that retry to the minute tick and its
+ * backoff; a new mark during the backoff is a new change and sends after the
+ * debounce regardless, with the in-flight record keeping the two senders apart.
+ *
+ * `stop` is final. Two of the re-arms above run from a promise continuation (a
+ * ping in flight settling, a 429 answering), so clearing the timer alone does
+ * not end the scheduler: a continuation that lands after `stop` would set a
+ * fresh timer, and that timer sends. `mem.retired` is not that seam either, it
+ * is the hub's 410 answer and nothing about a local shutdown sets it. The flag
+ * below is the seam, and `arm` is where it is read, because every path that
+ * schedules goes through `arm`.
+ */
+export function createChangePingScheduler(
+  deps: PingerDeps,
+  mem: PingerMemory,
+  report: (err: unknown) => void,
+): ChangePingScheduler {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let stopped = false;
+
+  const fire = (): void => {
+    timer = null;
+    try {
+      if (mem.retired) return;
+      if (!readDirectoryState(deps.sqlite).dirty || mem.haltedVersion === getDocumentVersion()) return;
+      // A cooldown can start after arming, when a tick-driven ping that was in
+      // flight at the mark comes back 429; the delay is recomputed rather than
+      // sent into. A backoff that started the same way is not waited for.
+      if (!cooldownOver(mem, deps.now().getTime())) {
+        arm();
+        return;
+      }
+      // A ping in flight is not joined: a change that landed during it keeps
+      // the flag under the version guard and needs its own send once it
+      // settles. Whoever started that ping reports its failure.
+      if (mem.inFlight !== null) {
+        mem.inFlight.finally(arm).catch(() => undefined);
+        return;
+      }
+    } catch (err) {
+      report(err);
+      return;
+    }
+    sendDirectoryPing(deps, mem)
+      .then((outcome) => {
+        if (outcome === 'cooldown' && readDirectoryState(deps.sqlite).dirty) arm();
+      })
+      .catch(report);
+  };
+
+  const arm = (): void => {
+    if (stopped) return;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(fire, changePingDelay(mem, deps.now().getTime()));
+  };
+
+  return {
+    schedule: arm,
+    stop: () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      timer = null;
+    },
+  };
+}
+
+let interval: ReturnType<typeof setInterval> | null = null;
+let scheduler: ChangePingScheduler | null = null;
+let unsubscribe: (() => void) | null = null;
+
+function productionDeps(): PingerDeps {
+  return {
+    sqlite: getRawDb(),
+    endpoint: config.directory.endpoint,
+    origin: resolveLocalOrigin(),
+    instanceId: getInstanceId(),
+    fetch: globalThis.fetch,
+    now: () => new Date(),
+    version: config.version,
+    log: { info: (m) => console.log(m), debug: () => undefined },
+  };
+}
+
+/**
+ * Boot ping once, a tick every minute, and the change ping scheduler on every
+ * dirty mark. Started outside the federation workers guard on purpose: the
+ * two-instance harness disables the workers and still needs the pinger,
+ * pointed at a local stub.
+ */
+export function startDirectoryPinger(): void {
+  if (interval) return;
+  if (config.directory.endpoint === '') {
+    console.log('[directory] pinger disabled, DIRECTORY_ENDPOINT is empty');
+    return;
+  }
+  const deps = productionDeps();
+  const mem = createPingerMemory();
+  const report = (err: unknown) => {
+    console.error('[directory] pinger failed:', err);
+  };
+
+  scheduler = createChangePingScheduler(deps, mem, report);
+  unsubscribe = onDirectoryDirty(() => scheduler?.schedule());
+
+  console.log(`[directory] pinger started, hub ${deps.endpoint}, origin ${deps.origin}`);
+  pingerTick(deps, mem, { boot: true }).catch(report);
+  interval = setInterval(() => {
+    pingerTick(deps, mem).catch(report);
+  }, TICK_MS);
+}
+
+export function stopDirectoryPinger(): void {
+  if (interval) {
+    clearInterval(interval);
+    interval = null;
+  }
+  if (scheduler) {
+    scheduler.stop();
+    scheduler = null;
+  }
+  if (unsubscribe) {
+    unsubscribe();
+    unsubscribe = null;
+  }
+}

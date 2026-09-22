@@ -15,6 +15,9 @@ import { connectInstance, disconnectInstance as disconnectWs, disconnectAllRemot
 import { failoverDmOriginsFromDisconnected } from '../utils/dmOriginFailover';
 import { useUIStore } from './uiStore';
 import { parseFederatedUsername } from '../utils/identity';
+// The registry's `errorMessage` carries one of these codes, never a sentence:
+// the Connections row is what turns it into words, in the user's language.
+import { registryReason } from '../i18n/registryErrors';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -92,17 +95,39 @@ function isNetworkError(err: unknown): boolean {
 
 // ─── Error types ────────────────────────────────────────────────────────────
 
-/** Thrown when the remote instance already has an account for this user with a different password. */
-export class DifferentPasswordError extends Error {
+/**
+ * Thrown when the instance already has an account for this user and it does
+ * not accept the credential the home instance issued for it: the account
+ * predates per-remote credentials, or was made by hand there. The way out is
+ * the explicit per-instance login, so every surface that can offer it catches
+ * this class by name.
+ *
+ * It is an `HttpError` carrying a registered code, minted by the client
+ * rather than by a route, so `describeError` says it in the user's language
+ * wherever it does escape to a message. The English text stays as the log
+ * line and the last-resort fallback, never as what a Russian or German user
+ * reads.
+ */
+export class DifferentPasswordError extends HttpError {
   constructor(public remoteUsername: string) {
-    super('Account exists with a different password on this instance');
+    super(
+      409,
+      'Account exists with a different password on this instance',
+      { error: 'federation_different_password', code: 'federation_different_password', statusCode: 409 },
+      'federation_different_password',
+    );
     this.name = 'DifferentPasswordError';
   }
 }
 
 // ─── URL normalization ───────────────────────────────────────────────────────
 
-function normalizeOrigin(url: string): string {
+/**
+ * Canonical origin of a user-typed or stored instance value: scheme added
+ * when missing, host lowercased, path and trailing slash dropped. Throws
+ * `Invalid URL` when the value does not parse.
+ */
+export function normalizeOrigin(url: string): string {
   let normalized = url.trim();
 
   // Add https:// if no protocol
@@ -277,7 +302,29 @@ export async function maybeAutoReattach(instance: ConnectedInstance): Promise<vo
   }
 }
 
-// ─── API client resolution ───────────────────────────────────────────────────
+// ─── Auto-connect gate ───────────────────────────────────────────────────────
+
+/**
+ * Resolve once `autoConnectAll` has finished, so a fan-out over connected
+ * instances does not run against an incomplete or empty list on page reload.
+ * Resolves at once when it already has. The flag is re-read after subscribing
+ * because it can flip between the first check and the subscription.
+ */
+export function waitForAutoConnect(): Promise<void> {
+  if (useInstanceStore.getState()._autoConnectDone) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const unsub = useInstanceStore.subscribe((state) => {
+      if (state._autoConnectDone) {
+        unsub();
+        resolve();
+      }
+    });
+    if (useInstanceStore.getState()._autoConnectDone) {
+      unsub();
+      resolve();
+    }
+  });
+}
 
 // ─── Registry helpers ────────────────────────────────────────────────────────
 
@@ -492,8 +539,12 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
         api: authenticatedClient,
       };
 
+      // Replace by origin, never append: a re-authentication runs this over
+      // the placeholder in `error` or `disconnected`, which stays in the list
+      // until the new session takes its place, so the origin is never absent
+      // (Outer Space dedupes against this list at render).
       set((state) => {
-        const updated = [...state.instances, instance];
+        const updated = [...state.instances.filter((i) => i.origin !== origin), instance];
         saveCachedTokens(updated, currentUser.id);
         return { instances: updated, isLoading: false };
       });
@@ -571,8 +622,10 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
         api: authenticatedClient,
       };
 
+      // Replace by origin, as connectToRemote does: the explicit login is the
+      // fallback for an origin whose placeholder may still be in the list.
       set((state) => {
-        const updated = [...state.instances, instance];
+        const updated = [...state.instances.filter((i) => i.origin !== origin), instance];
         const userId = useAuthStore.getState().user?.id;
         if (userId) saveCachedTokens(updated, userId);
         return { instances: updated, isLoading: false };
@@ -765,7 +818,7 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
         set((state) => ({
           instances: state.instances.map(i =>
             i.origin === origin
-              ? { ...i, status: 'disconnected' as const, error: 'Instance unreachable — retrying in background' }
+              ? { ...i, status: 'disconnected' as const, error: 'Instance unreachable, retrying in background' }
               : i
           ),
         }));
@@ -774,7 +827,7 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
         const errRegistry = upsertRegistryEntry(get().registry, origin, {
           origin,
           status: 'unreachable',
-          errorMessage: 'Instance unreachable',
+          errorMessage: registryReason('unreachable'),
         });
         set({ registry: errRegistry, registryUpdatedAt: Date.now() });
 
@@ -783,7 +836,7 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
         set((state) => ({
           instances: state.instances.map(i =>
             i.origin === origin
-              ? { ...i, status: 'error' as const, error: 'Token expired — re-authenticate to reconnect' }
+              ? { ...i, status: 'error' as const, error: 'Token expired, re-authenticate to reconnect' }
               : i
           ),
         }));
@@ -792,7 +845,7 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
         const errRegistry = upsertRegistryEntry(get().registry, origin, {
           origin,
           status: 'auth_expired',
-          errorMessage: 'Token expired',
+          errorMessage: registryReason('session_expired'),
         });
         set({ registry: errRegistry, registryUpdatedAt: Date.now() });
       }
@@ -800,17 +853,15 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
   },
 
   reauthenticateInstance: async (origin: string, password: string) => {
-    const inst = get().instances.find(i => i.origin === origin);
-
-    // Clean up existing instance if present (stale placeholder or disconnected entry)
-    if (inst) {
-      set((state) => ({
-        instances: state.instances.filter(i => i.origin !== origin),
-      }));
+    // The stale placeholder (error or disconnected) stays in `instances`
+    // until connectToRemote replaces it by origin on success. Removing it up
+    // front left the origin absent for the request's duration, and for good
+    // on a wrong password, so its spaces surfaced in Outer Space under a chip
+    // saying the session had expired. Its spaces and socket do go now: the
+    // new session's ready payload brings them back.
+    if (get().instances.some((i) => i.origin === origin)) {
       useSpaceStore.getState().removeInstanceSpaces(origin);
     }
-
-    // Disconnect any lingering WS
     disconnectWs(origin);
 
     // Re-connect through the standard flow (handles register/login)
@@ -1008,7 +1059,7 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
         addedAt: Date.now(),
         lastConnectedAt: null,
         disconnectedAt: null,
-        errorMessage: 'Re-authenticate to connect',
+        errorMessage: registryReason('reauthenticate'),
       });
     }
 
@@ -1067,7 +1118,7 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
             addedAt: Date.now(),
             lastConnectedAt: null,
             disconnectedAt: null,
-            errorMessage: 'Authenticate to connect to your home instance',
+            errorMessage: registryReason('authenticate_home'),
           });
         }
       }
@@ -1134,7 +1185,7 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
           user: currentUser, // placeholder
           username: ri.username,
           status: 'error' as const,
-          error: 'Session expired — re-authenticate to reconnect',
+          error: 'Session expired, re-authenticate to reconnect',
           api: createApiClient(origin, () => null),
         }));
         return { instances: [...state.instances, ...placeholders] };
@@ -1145,7 +1196,7 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
     for (const { origin } of withoutToken) {
       const entry = registry.get(origin);
       if (entry) {
-        registry.set(origin, { ...entry, status: 'auth_expired', errorMessage: 'Session expired — re-authenticate to reconnect' });
+        registry.set(origin, { ...entry, status: 'auth_expired', errorMessage: registryReason('session_expired') });
       }
     }
 
@@ -1237,7 +1288,7 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
               set((state) => ({
                 instances: state.instances.map(i =>
                   i.origin === origin
-                    ? { ...i, status: 'disconnected' as const, error: 'Instance unreachable — retrying in background' }
+                    ? { ...i, status: 'disconnected' as const, error: 'Instance unreachable, retrying in background' }
                     : i
                 ),
               }));
@@ -1245,7 +1296,7 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
               // Update registry entry on network error
               const entry = registry.get(origin);
               if (entry) {
-                registry.set(origin, { ...entry, status: 'unreachable', errorMessage: 'Instance unreachable' });
+                registry.set(origin, { ...entry, status: 'unreachable', errorMessage: registryReason('unreachable') });
               }
 
               // Start WebSocket — its built-in exponential backoff retry will auto-recover
@@ -1256,7 +1307,7 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
               set((state) => ({
                 instances: state.instances.map(i =>
                   i.origin === origin
-                    ? { ...i, status: 'error' as const, error: 'Token expired — re-authenticate to reconnect' }
+                    ? { ...i, status: 'error' as const, error: 'Token expired, re-authenticate to reconnect' }
                     : i
                 ),
               }));
@@ -1264,7 +1315,7 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
               // Update registry entry on auth error
               const entry = registry.get(origin);
               if (entry) {
-                registry.set(origin, { ...entry, status: 'auth_expired', errorMessage: 'Token expired' });
+                registry.set(origin, { ...entry, status: 'auth_expired', errorMessage: registryReason('session_expired') });
               }
             }
           }
@@ -1313,6 +1364,113 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
     // Token cache preserved — scoped per user, survives logout for seamless reconnect
   },
 }));
+
+// ─── Shared connect path ─────────────────────────────────────────────────────
+
+export type ConnectOutcome =
+  | { kind: 'connected'; how: 'new' | 'reconnect' | 'already' | 'resumed' }
+  /** No password was typed and no cached session could be resumed: ask for one. */
+  | { kind: 'needs-password' }
+  | { kind: 'needs-remote-password'; remoteUsername: string };
+
+/**
+ * The origin, as the store spells it, that a cached token could still carry
+ * back: a live instance the user disconnected or whose session errored, as
+ * long as it kept its token, or (with no live instance) a registry entry the
+ * user disconnected, whose token `reconnectInstance` restores from
+ * `localStorage`. Null when there is nothing to resume.
+ *
+ * The registry side lists `disconnected` only. `unreachable` has a chip that
+ * retries it already, and `auth_expired` is what a refused token becomes, so
+ * neither is worth a second attempt from a card. The live side does include
+ * `error`, that status's live counterpart, because a live instance can hold
+ * a token the registry has not judged yet; such an origin is inner anyway,
+ * so no card opens the dialog for it.
+ */
+export function resumableOrigin(state: InstanceState, canonical: string): string | null {
+  const live = state.instances.find((i) => normalizeOrigin(i.origin) === canonical);
+  if (live) {
+    const stale = live.status === 'disconnected' || live.status === 'error';
+    return stale && live.token !== '' ? live.origin : null;
+  }
+  for (const entry of state.registry.values()) {
+    if (normalizeOrigin(entry.origin) === canonical && entry.status === 'disconnected') return entry.origin;
+  }
+  return null;
+}
+
+/** The registry status for an origin after a reconnect attempt, however the store spells it. */
+function registryStatusFor(state: InstanceState, canonical: string): FederationRegistryEntry['status'] | undefined {
+  for (const entry of state.registry.values()) {
+    if (normalizeOrigin(entry.origin) === canonical) return entry.status;
+  }
+  return undefined;
+}
+
+/**
+ * The one way to establish a session on another instance from a user-typed
+ * password: the Connections panel and the directory's connect-then-join flow
+ * both go through it. The branch is by the status the store holds for the
+ * origin: `error` or `disconnected` is re-authenticated in place;
+ * `connected` or `connecting` is usable already and short-circuits without
+ * touching the store (`connectToRemote` has no duplicate check of its own
+ * and would append a second entry); an unknown origin connects. A remote
+ * account that does not accept the home-issued credential is reported as
+ * `needs-remote-password` so the caller can offer the explicit per-instance
+ * login form; every other failure is thrown as is.
+ *
+ * Called with an empty password it asks nothing of the user yet: an origin
+ * a cached token could carry back is resumed through `reconnectInstance`
+ * (the same token reconnect the Connections row and the Explore chips use),
+ * and the caller learns `resumed`, or `needs-password` when there was no
+ * session to resume or the token was refused. An instance that turned out
+ * unreachable is reported as `peer_unreachable` rather than as a password
+ * the user could fix. This is what lets a card for an instance the user
+ * disconnected join without a prompt they gain nothing from.
+ *
+ * This does not validate a typed URL: a caller that wants the self and
+ * duplicate checks for user input still runs `probeInstance` first, as the
+ * Connections flow does.
+ */
+export async function connectToInstance(
+  origin: string,
+  password: string,
+  displayName?: string,
+): Promise<ConnectOutcome> {
+  const store = useInstanceStore.getState();
+  const canonical = normalizeOrigin(origin);
+  const existing = store.instances.find((i) => normalizeOrigin(i.origin) === canonical);
+  if (existing && (existing.status === 'connected' || existing.status === 'connecting')) {
+    return { kind: 'connected', how: 'already' };
+  }
+
+  if (password === '') {
+    const resumable = resumableOrigin(store, canonical);
+    if (!resumable) return { kind: 'needs-password' };
+    await store.reconnectInstance(resumable);
+    const after = useInstanceStore.getState();
+    const live = after.instances.find((i) => normalizeOrigin(i.origin) === canonical);
+    if (live?.status === 'connected') return { kind: 'connected', how: 'resumed' };
+    if (registryStatusFor(after, canonical) === 'unreachable') {
+      throw new HttpError(503, 'peer_unreachable', { error: 'peer_unreachable', code: 'peer_unreachable', statusCode: 503 }, 'peer_unreachable');
+    }
+    return { kind: 'needs-password' };
+  }
+
+  try {
+    if (existing) {
+      await store.reauthenticateInstance(existing.origin, password);
+      return { kind: 'connected', how: 'reconnect' };
+    }
+    await store.connectToRemote(canonical, password, displayName);
+    return { kind: 'connected', how: 'new' };
+  } catch (err) {
+    if (err instanceof DifferentPasswordError) {
+      return { kind: 'needs-remote-password', remoteUsername: err.remoteUsername };
+    }
+    throw err;
+  }
+}
 
 // ─── API client resolution ───────────────────────────────────────────────────
 // Register the resolver with spaceStore so getApiForOrigin() works everywhere.

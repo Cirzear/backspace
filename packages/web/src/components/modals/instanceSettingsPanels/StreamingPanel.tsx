@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useFormatters } from '../../../i18n/formatters';
 import { describeError } from '../../../i18n/errors';
@@ -19,12 +19,20 @@ export function StreamingPanel() {
   const f = useFormatters();
   const limits = useSettingsStore((s) => s.streamingLimits);
   const updateStreamingLimits = useSettingsStore((s) => s.updateStreamingLimits);
+  const fetchStreamingLimits = useSettingsStore((s) => s.fetchStreamingLimits);
 
   const addToast = useUIStore((s) => s.addToast);
 
   const [draft, setDraft] = useState<InstanceStreamingLimits | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
+  // Whether this panel's own load came back without a document. The store
+  // leaves `streamingLimits` null when the request fails rather than
+  // substituting defaults an admin could save over the real configuration, so
+  // the panel is the one that has to tell "not fetched yet" from "fetch
+  // failed"; without this it would sit on "Loading settings" forever.
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [loading, setLoading] = useState(false);
 
 
   // Matrix editor state: full grid of kbps values (integers only)
@@ -32,6 +40,26 @@ export function StreamingPanel() {
   const [editingCell, setEditingCell] = useState<string | null>(null);
   const [scaleValue, setScaleValue] = useState(1.0);
   const scaleSnapshot = useRef<Record<string, number> | null>(null);
+
+  // The panel edits this document, so it reads it when it opens rather than
+  // living on whatever a parent fetched earlier. `fetchStreamingLimits`
+  // swallows its own error, so the outcome is read from the store: the
+  // document either arrived or it did not.
+  const loadLimits = useCallback(async () => {
+    // `loadFailed` is deliberately not cleared here. Clearing it would take
+    // the failure line, and the button that was just clicked, off the screen
+    // for the length of the retry and drop the admin back on "Loading
+    // settings"; the outcome below is what decides, so a retry that fails
+    // again never moves anything.
+    setLoading(true);
+    await fetchStreamingLimits();
+    setLoadFailed(useSettingsStore.getState().streamingLimits === null);
+    setLoading(false);
+  }, [fetchStreamingLimits]);
+
+  useEffect(() => {
+    void loadLimits();
+  }, [loadLimits]);
 
   useEffect(() => {
     if (limits) setDraft({ ...limits });
@@ -56,7 +84,28 @@ export function StreamingPanel() {
       ? t('common:units.mbps', { value: f.formatNumber(Math.round(kbps / 100) / 10) })
       : t('common:units.kbps', { value: f.formatNumber(kbps) });
 
-  if (!draft) return <div className="text-sm text-txt-tertiary">{t('common:states.loadingSettings')}</div>;
+  if (!draft) {
+    // A failed load says so and offers the way back, rather than leaving the
+    // admin on a spinner for a request that is not coming.
+    if (loadFailed) {
+      // The panel's own failure treatment, the one its save errors use: a
+      // load that failed is an error, not an empty state.
+      return (
+        <div className="p-2 bg-accent-rose/10 border border-accent-rose/30 rounded text-txt-danger text-sm flex flex-wrap items-center gap-3">
+          <span>{t('common:states.loadSettingsFailed')}</span>
+          <button
+            type="button"
+            onClick={() => { void loadLimits(); }}
+            disabled={loading}
+            className="font-medium underline underline-offset-2 hover:no-underline transition-all disabled:no-underline disabled:opacity-60 disabled:cursor-default"
+          >
+            {t('common:actions.retry')}
+          </button>
+        </div>
+      );
+    }
+    return <div className="text-sm text-txt-tertiary">{t('common:states.loadingSettings')}</div>;
+  }
 
   const getDefaultKbps = (key: string): number => {
     const parts = key.split('_').map(Number);

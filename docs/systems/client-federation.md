@@ -8,8 +8,9 @@ Source files:
 - `packages/web/src/stores/spaceStore.ts` — Origin-aware space/channel store, `channelOriginMap`, `getChannelOrigin()`, `resolveUserOrigin()`, `getLayoutHomeOrigin()`, `getMyUserIdForOrigin()`, DM deduplication
 - `packages/web/src/utils/crossStoreResolvers.ts` — Neutral module holding the cross-store resolver bindings (`_getApiForOrigin`, `_resolveOriginFromHostname`, `_getUserIdForOrigin`) + the WS-populated user-ID cache. Breaks a TDZ cycle between spaceStore and instanceStore; see "API Client Resolution" below
 - `packages/web/src/utils/identity.ts` — Cross-instance user identity resolution (`isSelf`, `canonicalUserMatch`, self-ID registry)
-- `packages/web/src/hooks/useInstanceConnect.ts` — Connection flow hook for the Connections UI
 - `packages/web/src/components/modals/ConnectedInstances.tsx` — Connections settings panel
+- `packages/web/src/components/modals/RemotePasswordStep.tsx` - the password/fallback-login step shared by the Connections add-instance flow and the directory's connect-and-join dialog
+- `packages/web/src/components/modals/ConnectAndJoinModal.tsx` - connect-then-join from an Outer Space card (see [directory.md](directory.md) §9)
 
 ---
 
@@ -155,6 +156,8 @@ Called once per session after login:
 3. For instances **with cached tokens**: attempt reconnection in parallel — verify token, open WebSocket, sync profile
 4. For instances **without cached tokens**: create error placeholders (visible in Connections UI with "re-authenticate" prompt)
 5. Set `_autoConnectDone = true` to unblock topology sync
+
+`waitForAutoConnect()`, exported next to the store, resolves once that flag is set (immediately when it already is, with a re-check after subscribing so a flip between the check and the subscription is not missed). Every fan-out over connected instances (`exploreStore`, `socialStore`, `discoverStore`, `utils/mutuals.ts`) awaits it first.
 
 ### Topology Sync (`syncInstanceList`)
 
@@ -360,6 +363,28 @@ The **Connections** panel (in user settings) allows managing remote instance con
 - **Remote Instances** — each shows status (connected/disconnected/error), hostname, username. Actions: Reconnect, Re-authenticate, Sync Password, Disconnect.
 - **Add Instance** — multi-step form: enter hostname → verify password → register/login → connected.
 
+### The shared connect path: `connectToInstance`
+
+`connectToInstance(origin, password, displayName?)` in `instanceStore.ts` is the one way to establish a session on another instance from a user-typed password. The Connections add-instance flow (after its `probeInstance` step) and the directory's connect-then-join flow both go through it. It branches on the status the store holds for the canonical origin:
+
+| Store status for the origin | What happens | Outcome |
+|---|---|---|
+| `connected` or `connecting` | nothing; the session is usable already, and `connectToRemote` has no duplicate check of its own and would append a second entry | `{ kind: 'connected', how: 'already' }` |
+| `error` or `disconnected` | `reauthenticateInstance(origin, password)` in place | `{ kind: 'connected', how: 'reconnect' }` |
+| unknown | `connectToRemote(origin, password, displayName)`, the flow above | `{ kind: 'connected', how: 'new' }` |
+| any, called with an empty password | a resumable origin (a live instance in `error`/`disconnected` that kept its token, or a registry entry in `disconnected`) is resumed with `reconnectInstance` | `{ kind: 'connected', how: 'resumed' }`, or `{ kind: 'needs-password' }` when there was nothing to resume or the token was refused, or a thrown `peer_unreachable` |
+| any, and the remote refused the home-issued credential | `DifferentPasswordError` is caught | `{ kind: 'needs-remote-password', remoteUsername }`, so the caller can offer the explicit per-instance login form |
+
+Every other failure is thrown as is. It does not validate a typed URL: a caller that wants the self and duplicate checks for user input still runs `probeInstance` first, as the Connections flow does.
+
+**A placeholder is replaced, never removed first.** `connectToRemote` and `loginToRemote` write their new instance by origin (`[...instances.filter(i => i.origin !== origin), instance]`), and `reauthenticateInstance` leaves the stale `error` or `disconnected` entry in `instances` while the request runs (it still drops the origin's spaces and socket; the new session's ready payload brings the spaces back). The origin is therefore never absent from the list: a wrong password leaves the placeholder as it was. This matters because Outer Space dedupes at render from the registry and the live list ([directory.md](directory.md) section 9); with the entry removed up front, an expired instance's spaces surfaced as "Connect and join" cards under the chip that said its session had expired. A `disconnected` origin is deliberately not deduped there: it is an outer instance again for Explore, and connecting from its card comes back through this same path, reusing the identity.
+
+### Connect from an Outer Space card
+
+The Explore page's Outer Space section (the space directory, [directory.md](directory.md)) is a second entry point into this flow. Clicking an entry opens `ConnectAndJoinModal`, which probes the entry's host (unless the session already holds a `connected`/`connecting` instance for that origin, in which case the probe and the password step are skipped), shows the same `RemotePasswordStep` the Connections panel uses with the origin prefilled ("This space lives on chat.example.org. Connecting creates your identity there, linked to your account on home.example.org.", an intro that says what connecting does; the field label and its hint are the only two places the modal says "password"), calls `connectToInstance`, and then runs `exploreStore.publicJoin` or `requestJoin` against the new origin through `getApiForOrigin`. The typed password is verified against the home instance and the home mints the per-remote secret exactly as above; the remote never sees what was typed. A `409 already_member` is treated as a join, since the space arrives with the connection's ready payload.
+
+**Pending join requests are keyed by origin.** `exploreStore.fetchMyRequests()` fans out over the home instance and every connected instance with `Promise.allSettled`, tagging each request with `_instanceOrigin` (`''` for home), and `useSpaceJoin.isPending` compares `(origin, spaceId)`. Space ids are local to their instance; until this change a pending request on one origin showed as pending for a same-id space on any other, and a request made on a remote instance never appeared after a reload.
+
 ### Add-Instance Pre-Flight: `federatedRegistrationOpen`
 
 The hostname-probe step calls `GET /api/instance/info` on the target. The response carries two registration fields:
@@ -408,6 +433,62 @@ The federation registry is a persistent server-side record of all instances a us
 - **Client:** `registry` Map in `instanceStore` (Zustand)
 - **LWW timestamp:** `federationRegistryUpdatedAt` on `users` table
 
+### Client readers
+
+Two surfaces read the client Map and must agree: the Connections panel
+(`ConnectedInstances.tsx`, every entry with its status, actions and the
+`ReauthForm`) and the Explore page's `ConnectionChips` (entries in
+`auth_expired` or `unreachable` only, with Retry and the same `ReauthForm`;
+see [directory.md](directory.md) section 9). Both render from the Map, so a
+status change from any path (`reconnectInstance`, `reauthenticateInstance`,
+`autoConnectAll`) reaches both at once.
+
+### The reconnect surface: `ReauthForm`
+
+`ReauthForm` (`components/modals/ReauthForm.tsx`) is the whole way back from
+`auth_expired`, in both hosts. It has two phases and no chrome of its own, so
+each host places it on the panel or row it already has:
+
+1. **Home password.** A labelled field, Connect and Cancel, with the error
+   under the field it is about. Submitting calls `reauthenticateInstance`,
+   which drops the stale session and re-runs the standard connect flow.
+2. **The account's own password on that instance.** Reached only when phase 1
+   throws `DifferentPasswordError`, which means the instance has an account
+   for this user that does not accept the credential the home issued, and no
+   home password can fix it. The phase renders `FallbackForm`, exported from
+   `RemotePasswordStep.tsx` and shared with the Connections add flow and the
+   connect-and-join dialog, prefilled with the username the error carries;
+   its submit calls `loginToRemote`, which restores the connection exactly as
+   the add flow restores it. There is no Back: the password phase 1 asks for
+   is not what the instance refused.
+
+`DifferentPasswordError` is an `HttpError` (409) carrying the registered code
+`federation_different_password`, minted by the client rather than by a route,
+so `describeError` says it in the user's language anywhere it does surface as
+a message. Its English text is the log line and the last-resort fallback
+only.
+
+The chips host keeps an open chip mounted. `ConnectionChips` hides a chip
+whose live instance is `connecting` on its own, but it holds the set of
+opened origins itself and exempts them, because dropping an entry unmounts
+the chip and unmounting `ReauthForm` discards the password being typed into
+it: a `reconnectInstance` started anywhere else (the Connections panel, the
+connect-and-join dialog's silent resume, startup) would otherwise empty the
+field under the user's hands. An origin leaves the set as soon as its entry
+is anything but `auth_expired`, which is the only status the form exists
+for, so a connection that comes back, is disconnected, or stops answering
+takes its open state with it and a later expiry opens a fresh form.
+
+Escape cancels the surface in either phase, and never travels past it in any
+state. That containment is load-bearing: `Modal.tsx` closes the settings
+modal from a document-level Escape listener, so an Escape let through during
+a submit would close the modal around a running reconnect and leave a
+`DifferentPasswordError` with no surface to arrive in. The handler therefore
+stops the event first and judges it after; while a submit is in flight the
+key is swallowed and does nothing, as Cancel does. In the chips host the collapsed pill
+becomes a small matte panel on a line of its own, bounded by the form rather
+than by the section, and collapsing hands focus back to the chip's action.
+
 ### Lifecycle States
 
 | State | Meaning |
@@ -416,6 +497,36 @@ The federation registry is a persistent server-side record of all instances a us
 | `disconnected` | User intentionally disconnected; account exists on remote |
 | `unreachable` | Remote is down/unresponsive |
 | `auth_expired` | Token invalid; needs re-authentication |
+
+### The reason field (`errorMessage`)
+
+`errorMessage` on a registry entry is a machine-readable reason code, not a
+sentence. The Connections row renders it through `describeRegistryError`
+(`i18n/registryErrors.ts`), which is the only place the words exist; the
+store writes the code through `registryReason`, which types the value against
+the union so a typo at a write site does not compile.
+
+| Code | Written by | Status it accompanies |
+|------|-----------|-----------------------|
+| `unreachable` | `reconnectInstance`, `autoConnectAll` on a network error | `unreachable` |
+| `session_expired` | `reconnectInstance`, `autoConnectAll` on an auth error; the tokenless placeholder path | `auth_expired` |
+| `reauthenticate` | `autoConnectAll` seeding a `replicatedInstances` entry with no registry row | `auth_expired` |
+| `authenticate_home` | `autoConnectAll` seeding the home instance of a federated account | `auth_expired` |
+
+These are deliberately not `ErrorCode`s: nothing throws them, no route sends
+them, and `ERROR_MESSAGES` on the server is exhaustive over `ErrorCode`, so a
+code there would mean English text in the server package for a string only
+this client writes and reads. The rule they follow is the same one
+([localization.md](localization.md)): the value on the wire is a code and the
+client owns the words.
+
+The registry syncs through the home instance, so a row can arrive holding the
+English sentence a client on an older version wrote. `describeRegistryError`
+passes a value it does not recognise through unchanged rather than dropping
+the only explanation the row has.
+
+The live `ConnectedInstance.error` field is a separate, unrendered string for
+the console and stays English.
 
 ### Sync Pattern
 

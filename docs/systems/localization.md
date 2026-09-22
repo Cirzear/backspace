@@ -95,9 +95,9 @@ Rules:
 | `chat` | Message list, composer, attachments, embeds, reactions, replies, typing, jump-to-message |
 | `dm` | DM list, group DM management, DM calls, DM system messages |
 | `voice` | Voice channel controls, screen share, stream tiles, device pickers |
-| `spaces` | Space, category and channel CRUD, invites, discovery, membership, bans, roles |
+| `spaces` | Space, category and channel CRUD, invites, discovery, membership, bans, roles; the Explore page's Inner and Outer Space sections, the connect-and-join dialog, the connections-that-need-attention chips and the per-space directory switch (`explore.inner.*`, `explore.outer.*`, `explore.connect.*`, `explore.connections.*`, `settings.discovery.directory.*`) |
 | `settings` | User settings modal and its panels (account, voice, privacy, connections, keybinds, desktop) |
-| `admin` | Instance settings panels (general, registration, users, storage, streaming, updates, federation) |
+| `admin` | Instance settings panels (general, registration, users, storage, streaming, updates, federation); the space-discovery ladder and the directory status line (`general.discovery.*`, `general.directory.*`) |
 | `federation` | Connected instances UI, peering requests, identity attach and detach |
 | `social` | Friends page, friend requests, user profiles, mutuals, user search |
 | `search` | Search popover and filter help |
@@ -315,6 +315,64 @@ Federation: error bodies relayed from a peer instance follow the same
 contract, so a code from a newer peer is localized and a bare `error` from
 an older peer is shown as is.
 
+The space directory ([directory.md](directory.md)) added four codes:
+`directory_disabled` (the feed proxy, `DIRECTORY_ENDPOINT` empty),
+`directory_unreachable` (the proxy could not read the hub; the Outer Space
+section shows this text as its unreachable state), `directory_private_space`
+(`directoryListed: true` on a private space) and
+`directory_requires_discovery` (`directoryEnabled: true` with discovery off).
+
+One code is minted by the client and never by a route:
+`federation_different_password`, thrown as `DifferentPasswordError` when a
+remote instance refuses the credential the user's home issued for it. It sits
+in `ERROR_CODES` and in `ERROR_MESSAGES` like any other, because
+`ERROR_MESSAGES` is exhaustive and the English text is still the fallback, but
+no route sends it. The pattern for a client-minted code is the one
+`RateLimitError` established: subclass `HttpError`, pass a registered code, and
+let `describeError` find the catalog entry.
+
+Client state that is not an error follows the same split without joining
+`ErrorCode`. The federation registry's `errorMessage` holds one of four
+reason codes (`unreachable`, `session_expired`, `reauthenticate`,
+`authenticate_home`) written by `instanceStore` and turned into words by
+`describeRegistryError` in `i18n/registryErrors.ts`, against
+`federation:connections.row.reason.*`. They are not `ErrorCode`s because
+nothing throws or sends them and `ERROR_MESSAGES` is exhaustive over that
+union, which would put English text in the server package for a string only
+the web client writes and reads. A value the switch does not recognise is
+rendered as it stands: registry rows sync between clients, and one written
+before this change carries an English sentence that is still the row's only
+explanation. See
+[client-federation.md](client-federation.md#the-reason-field-errormessage).
+
+`exploreStore.error` follows the same rule with a smaller vocabulary:
+`{ kind: 'none_answered' }` or `{ kind: 'failed', cause }`, rendered by the
+Explore page from `spaces:explore.inner.noneAnswered` and `describeError`
+respectively. The test for a store that reports a failure is whether the
+words could be chosen later, at the surface, in the language the reader has
+now.
+
+The check reads `ERROR_CODES` by scanning the array for quoted words, so it
+strips comments from the file first (`readErrorCodes` in
+`scripts/i18n/check.mjs`). Without that step a single apostrophe in a comment
+inside the array desynchronises every quote pair after it and the run reports
+a hundred-odd findings naming fragments of the file rather than the comment
+that caused them. Prose in that array is ordinary English; the stripping is
+what keeps it safe.
+
+The global rate limiter (`@fastify/rate-limit` in `index.ts`, 200 per minute,
+and every per-route override of it) answers in the same shape through its
+`errorResponseBuilder`, built with `errorBody` from `httpErrors.ts` so the
+code is typed there too: `{ error, code: 'rate_limited', statusCode: 429,
+retryAfter }`, with `retryAfter` in seconds next to the `Retry-After` header
+the plugin sets. On the client every 429 throws `RateLimitError`, an
+`HttpError` with `status 429`, the body's own code when the route sends
+one and `rate_limited` otherwise, plus `retryAfter`, so `describeError`
+localizes it like any other server error and the auth pages keep their
+countdown. The federated lookup's `lookup_rate_limited` is a different code
+because it reports a peer's limit, not this instance's; it reaches the
+client through the same class and shows its own catalog text.
+
 Every route file is converted: auth, users, spaces, channels, messages, DMs
 (including the space-invite endpoint), social, explore, admin, settings,
 search, LiveKit, uploads, GIF and URL metadata. The `authenticate`,
@@ -426,6 +484,23 @@ which are kept here. The Russian values are carried over matched by English
 text, with `Co-authored-by` credit on every commit that carries them, and
 st7105 is asked to review the result. German is written by the maintainers;
 the release PR that flips its flag is merged only after a native read.
+
+**One name per concept, per language.** A concept the product names once in
+English is named once in each catalog, and that name is not reused for
+anything else. The space directory broke this rule in Russian first: it was
+«внешний каталог» in ten strings, «общедоступный каталог» in two and a bare
+«каталог» in three, and «каталог пространств» was also being used for
+*discovery*, which is a different setting with a different switch, so a space
+owner read that the directory was off and went looking for the listing
+control. Settled as «внешний каталог» for the directory (the spelling already
+in the majority, and the one that matches «внешнее пространство» for Outer
+Space), «обнаружение пространств» for discovery (already the admin panel's
+wording), and «папка» for a filesystem directory, so that «каталог» has
+exactly one meaning. German (`Verzeichnis`) and Chinese (`目录`) each carried
+one name already and were left alone. The rule cannot be checked by comparing
+languages to each other, so the Russian one is pinned by
+`src/i18n/ruDirectoryName.test.ts`; a language that develops the same split
+gets its own.
 
 Catalogs are Weblate compatible. No hosted translation platform is
 configured yet; when one is, it points at `packages/web/src/locales` and

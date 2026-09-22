@@ -1,0 +1,357 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
+import type { User } from '@backspace/shared';
+
+// Stub AudioManager to avoid AudioWorkletNode reference error in jsdom.
+vi.mock('../../audio/AudioManager', () => ({
+  AudioManager: {
+    getInstance: vi.fn().mockReturnValue({
+      setOutputDevice: vi.fn(),
+      setVolume: vi.fn(),
+    }),
+  },
+}));
+
+// The shared connect path is a module export, not a store action, so it is
+// replaced at the module boundary; the store itself stays real.
+const { connectToInstance } = vi.hoisted(() => ({ connectToInstance: vi.fn() }));
+vi.mock('../../stores/instanceStore', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../stores/instanceStore')>();
+  return { ...actual, connectToInstance };
+});
+
+import { ConnectedInstances } from './ConnectedInstances';
+import { Modal } from '../ui/Modal';
+import { HttpError } from '../../api/client';
+import { useInstanceStore, DifferentPasswordError } from '../../stores/instanceStore';
+import { useAuthStore } from '../../stores/authStore';
+import { useFederationStore } from '../../stores/federationStore';
+
+const homeUser: User = {
+  id: 'u1',
+  username: 'jannis',
+  displayName: 'Jannis',
+  avatar: null,
+  banner: null,
+  accentColor: null,
+  avatarColor: null,
+  bio: null,
+  status: 'online',
+  customStatus: null,
+  isAdmin: false,
+  createdAt: 1,
+  homeInstance: null,
+  homeUserId: null,
+  replicatedInstances: [],
+};
+
+const probeInstance = vi.fn();
+const loginToRemote = vi.fn();
+
+beforeEach(() => {
+  connectToInstance.mockReset();
+  probeInstance.mockReset();
+  loginToRemote.mockReset();
+  probeInstance.mockResolvedValue({
+    name: 'Retro',
+    version: '1.0.0',
+    registrationOpen: true,
+    federatedRegistrationOpen: true,
+    instanceId: 'retro',
+    sourceCodeUrl: null,
+    commit: null,
+    directoryAvailable: true,
+    directoryEnabled: false,
+    origin: 'https://retro.example',
+  });
+  useInstanceStore.setState({ instances: [], registry: new Map(), probeInstance, loginToRemote });
+  useAuthStore.setState({ user: homeUser });
+  useFederationStore.setState({
+    peeringSubscriptions: [],
+    peeringNotifications: [],
+    refetchPeeringSubscriptions: vi.fn(async () => {}),
+    refetchPeeringNotifications: vi.fn(async () => {}),
+  });
+});
+
+async function openPasswordStep(user: ReturnType<typeof userEvent.setup>) {
+  render(
+    <MemoryRouter>
+      <ConnectedInstances />
+    </MemoryRouter>,
+  );
+  await user.click(screen.getByRole('button', { name: '+ Add Instance' }));
+  await user.type(screen.getByPlaceholderText('https://instance.example.com'), 'retro.example');
+  await user.click(screen.getByRole('button', { name: 'Connect' }));
+  expect(await screen.findByText('Enter your password to connect to retro.example')).toBeInTheDocument();
+  expect(probeInstance).toHaveBeenCalledWith('retro.example');
+}
+
+describe('AddInstanceFlow', () => {
+  it('renders the password step after the probe and connects with the typed password', async () => {
+    const user = userEvent.setup();
+    connectToInstance.mockResolvedValue({ kind: 'connected', how: 'new' });
+    await openPasswordStep(user);
+
+    expect(screen.getByText('Retro')).toBeInTheDocument();
+    expect(screen.getByText('https://retro.example')).toBeInTheDocument();
+
+    await user.type(screen.getByPlaceholderText('The one you sign in with'), 'hunter2');
+    await user.click(screen.getByRole('button', { name: 'Connect' }));
+
+    await waitFor(() => expect(connectToInstance).toHaveBeenCalledWith('https://retro.example', 'hunter2', 'Jannis'));
+    // onDone: the flow closes and the add button is back.
+    expect(await screen.findByRole('button', { name: '+ Add Instance' })).toBeInTheDocument();
+  });
+
+  it('falls back to the remote login form when the home credential is refused', async () => {
+    const user = userEvent.setup();
+    connectToInstance.mockResolvedValue({ kind: 'needs-remote-password', remoteUsername: 'jannis-old' });
+    loginToRemote.mockResolvedValue(undefined);
+    await openPasswordStep(user);
+
+    await user.type(screen.getByPlaceholderText('The one you sign in with'), 'hunter2');
+    await user.click(screen.getByRole('button', { name: 'Connect' }));
+
+    expect(await screen.findByText(/An account already exists on this instance/)).toBeInTheDocument();
+    expect(screen.getByDisplayValue('jannis-old')).toBeInTheDocument();
+
+    await user.type(screen.getByPlaceholderText('Password on the remote instance'), 'other-pw');
+    await user.click(screen.getByRole('button', { name: 'Login & Connect' }));
+
+    await waitFor(() => expect(loginToRemote).toHaveBeenCalledWith('https://retro.example', 'jannis-old', 'other-pw'));
+    expect(await screen.findByRole('button', { name: '+ Add Instance' })).toBeInTheDocument();
+  });
+});
+
+describe('AddInstanceFlow outcome handling', () => {
+  it('never reports success for needs-password: the step stays open with the error', async () => {
+    const user = userEvent.setup();
+    connectToInstance.mockResolvedValue({ kind: 'needs-password' });
+    await openPasswordStep(user);
+
+    await user.type(screen.getByPlaceholderText('The one you sign in with'), 'hunter2');
+    await user.click(screen.getByRole('button', { name: 'Connect' }));
+
+    expect(await screen.findByText('Enter a password.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '+ Add Instance' })).not.toBeInTheDocument();
+  });
+});
+
+describe('RegistryRow re-authentication', () => {
+  it('opens the shared reauth form from an expired row and submits the password to the store', async () => {
+    const user = userEvent.setup();
+    const reauthenticateInstance = vi.fn(async (origin: string) => {
+      const registry = new Map(useInstanceStore.getState().registry);
+      const entry = registry.get(origin);
+      if (entry) registry.set(origin, { ...entry, status: 'connected', errorMessage: null });
+      useInstanceStore.setState({ registry });
+    });
+    useInstanceStore.setState({
+      reauthenticateInstance,
+      registry: new Map([[
+        'https://zwiss.example',
+        {
+          origin: 'https://zwiss.example',
+          label: 'Zwiss',
+          username: 'jannis@home.example',
+          remoteUserId: 'r1',
+          status: 'auth_expired',
+          addedAt: 1,
+          lastConnectedAt: 1,
+          disconnectedAt: null,
+          errorMessage: 'Token expired',
+        },
+      ]]),
+    });
+    render(
+      <MemoryRouter>
+        <ConnectedInstances />
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByText('Zwiss'));
+    await user.click(screen.getByRole('button', { name: 'Re-authenticate' }));
+    const password = screen.getByLabelText('Your home account password');
+    expect(password).toHaveFocus();
+    await user.type(password, 'hunter2');
+    await user.click(screen.getByRole('button', { name: 'Connect' }));
+
+    await waitFor(() => expect(reauthenticateInstance).toHaveBeenCalledWith('https://zwiss.example', 'hunter2'));
+    // The form closes on success; the row now reads connected.
+    await waitFor(() => expect(screen.queryByLabelText('Your home account password')).not.toBeInTheDocument());
+    expect(screen.queryByText('Auth expired')).not.toBeInTheDocument();
+  });
+
+  it('a different password on the instance moves the row to the per-instance login and restores from it', async () => {
+    const user = userEvent.setup();
+    const reauthenticateInstance = vi.fn(async () => {
+      throw new DifferentPasswordError('jannis@home.example');
+    });
+    const loginToRemote = vi.fn(async (origin: string) => {
+      const registry = new Map(useInstanceStore.getState().registry);
+      const entry = registry.get(origin);
+      if (entry) registry.set(origin, { ...entry, status: 'connected', errorMessage: null });
+      useInstanceStore.setState({ registry });
+    });
+    useInstanceStore.setState({
+      reauthenticateInstance,
+      loginToRemote,
+      registry: new Map([[
+        'https://zwiss.example',
+        {
+          origin: 'https://zwiss.example',
+          label: 'Zwiss',
+          username: 'jannis@home.example',
+          remoteUserId: 'r1',
+          status: 'auth_expired',
+          addedAt: 1,
+          lastConnectedAt: 1,
+          disconnectedAt: null,
+          errorMessage: null,
+        },
+      ]]),
+    });
+    render(
+      <MemoryRouter>
+        <ConnectedInstances />
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByText('Zwiss'));
+    await user.click(screen.getByRole('button', { name: 'Re-authenticate' }));
+    await user.type(screen.getByLabelText('Your home account password'), 'hunter2');
+    await user.click(screen.getByRole('button', { name: 'Connect' }));
+
+    // The same way out the add flow offers, in the row that shares the form.
+    expect(await screen.findByPlaceholderText('Password on the remote instance')).toBeInTheDocument();
+    expect(screen.queryByText('Account exists with a different password on this instance')).not.toBeInTheDocument();
+
+    await user.type(screen.getByPlaceholderText('Password on the remote instance'), 'local-pw');
+    await user.click(screen.getByRole('button', { name: 'Login & Connect' }));
+
+    await waitFor(() => expect(loginToRemote).toHaveBeenCalledWith('https://zwiss.example', 'jannis@home.example', 'local-pw'));
+    await waitFor(() => expect(screen.queryByPlaceholderText('Password on the remote instance')).not.toBeInTheDocument());
+    expect(screen.queryByText('Auth expired')).not.toBeInTheDocument();
+  });
+
+  // The row lives inside the settings modal, which closes on a document-level
+  // Escape. The reauth surface must swallow the key in every state: letting it
+  // through during a submit would close the modal around a running reconnect
+  // and leave its answer with nowhere to arrive.
+  it('Escape inside the reauth form never reaches the modal, idle or submitting', async () => {
+    const user = userEvent.setup();
+    // The submit is made to fail, so the form is still there to press Escape in.
+    let refuse: (err: Error) => void = () => {};
+    const reauthenticateInstance = vi.fn(() => new Promise<void>((_resolve, reject) => { refuse = reject; }));
+    const onClose = vi.fn();
+    useInstanceStore.setState({
+      reauthenticateInstance,
+      registry: new Map([[
+        'https://zwiss.example',
+        {
+          origin: 'https://zwiss.example',
+          label: 'Zwiss',
+          username: 'jannis@home.example',
+          remoteUserId: 'r1',
+          status: 'auth_expired',
+          addedAt: 1,
+          lastConnectedAt: 1,
+          disconnectedAt: null,
+          errorMessage: null,
+        },
+      ]]),
+    });
+    render(
+      <MemoryRouter>
+        <Modal isOpen onClose={onClose} title="Settings">
+          <ConnectedInstances />
+        </Modal>
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByText('Zwiss'));
+    await user.click(screen.getByRole('button', { name: 'Re-authenticate' }));
+    const password = screen.getByLabelText('Your home account password');
+
+    // Submitting: the key is swallowed, the form stays, the modal stays.
+    await user.type(password, 'hunter2');
+    await user.click(screen.getByRole('button', { name: 'Connect' }));
+    expect(await screen.findByRole('button', { name: 'Connecting…' })).toBeDisabled();
+    await user.keyboard('{Escape}');
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Your home account password')).toBeInTheDocument();
+
+    // Idle: the key collapses the form and still does not reach the modal.
+    refuse(new HttpError(401, 'invalid_credentials', { error: 'x', code: 'invalid_credentials', statusCode: 401 }, 'invalid_credentials'));
+    expect(await screen.findByText('Wrong username or password.')).toBeInTheDocument();
+    // The submit handed the keyboard back to the field, so the retype is immediate.
+    expect(screen.getByLabelText('Your home account password')).toHaveFocus();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByLabelText('Your home account password')).not.toBeInTheDocument());
+    expect(onClose).not.toHaveBeenCalled();
+
+    // With the form gone, the modal owns Escape again.
+    await user.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalled();
+  });
+});
+
+describe('RegistryRow reason', () => {
+  function seedEntry(errorMessage: string | null, status: 'auth_expired' | 'unreachable' = 'auth_expired') {
+    useInstanceStore.setState({
+      registry: new Map([[
+        'https://zwiss.example',
+        {
+          origin: 'https://zwiss.example',
+          label: 'Zwiss',
+          username: 'jannis@home.example',
+          remoteUserId: 'r1',
+          status,
+          addedAt: 1,
+          lastConnectedAt: 1,
+          disconnectedAt: null,
+          errorMessage,
+        },
+      ]]),
+    });
+    return render(
+      <MemoryRouter>
+        <ConnectedInstances />
+      </MemoryRouter>,
+    );
+  }
+
+  it('reads the stored reason out of the catalog, never the code itself', async () => {
+    const user = userEvent.setup();
+    seedEntry('session_expired');
+
+    await user.click(screen.getByText('Zwiss'));
+
+    expect(screen.getByText('The saved session expired. Re-authenticate to reconnect.')).toBeInTheDocument();
+    expect(screen.queryByText('session_expired')).not.toBeInTheDocument();
+  });
+
+  it('has words for the unreachable reason too', async () => {
+    const user = userEvent.setup();
+    seedEntry('unreachable', 'unreachable');
+
+    await user.click(screen.getByText('Zwiss'));
+
+    expect(screen.getByText('This instance could not be reached.')).toBeInTheDocument();
+  });
+
+  it('shows an entry written by an older client as it stands', async () => {
+    // The registry syncs through the home instance, so a row can arrive
+    // carrying the English sentence a client on an older version wrote.
+    // Dropping it would leave the row with no explanation at all.
+    const user = userEvent.setup();
+    seedEntry('Token expired');
+
+    await user.click(screen.getByText('Zwiss'));
+
+    expect(screen.getByText('Token expired')).toBeInTheDocument();
+  });
+});

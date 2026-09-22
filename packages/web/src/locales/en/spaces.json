@@ -158,11 +158,66 @@
   "explore": {
     "title": "Explore",
     "searchPlaceholder": "Search spaces...",
-    "discoveryDisabled": "Space discovery is disabled by the instance administrator.",
+    "discoveryOff": {
+      "member": "Your instance administrator has turned off space discovery. Spaces here are joinable by invite link only.",
+      "admin": "Space discovery is off on this instance. Spaces here are joinable by invite link only.",
+      "enable": "Turn on space discovery",
+      "failed": "Could not change the setting."
+    },
+    "browseOff": {
+      "member": "Spaces from other instances are not shown here because your instance administrator turned that off.",
+      "admin": "Spaces from other instances are not shown here.",
+      "action": "Show global spaces in Explore",
+      "confirm": {
+        "title": "Show spaces from other instances here?",
+        "exposure": "Those instances see the IP address of every browser that loads one, and this instance's administrator does not control them.",
+        "off": "To stop showing them later: Settings, Instance, General, the switch for global spaces in Explore.",
+        "action": "Show global spaces"
+      }
+    },
+    "notListed": {
+      "text": "No space here is listed in the public directory.",
+      "action": "List them",
+      "confirm": {
+        "title": "List spaces from this instance publicly?",
+        "optIn": "Only spaces whose owners turn listing on are sent, so this switch lists no space on its own.",
+        "off": "To stop listing later: Settings, Instance, General, the space discovery choice.",
+        "action": "List spaces"
+      }
+    },
     "noMatches": "No spaces match your search.",
     "empty": "No discoverable spaces yet.",
-    "allJoined": "You're in all discoverable spaces",
     "joinedSection": "Joined",
+    "notConnected": "Not connected to {{host}}",
+    "inner": {
+      "title": "Inner Space",
+      "subtitle": "Spaces on your instances",
+      "noneAnswered": "No instance answered. Inner Space is empty until one does."
+    },
+    "outer": {
+      "title": "Outer Space",
+      "subtitle": "Communities across Backspace",
+      "empty": "Nothing out there yet. Spaces that opt in to the directory appear here.",
+      "noMatches": "Nothing in Outer Space matches your search.",
+      "showMore": "Show more",
+      "connectAndJoin": "Connect and join",
+      "connectAndRequest": "Connect and request",
+      "closedBadge": "Closed to new accounts"
+    },
+    "connections": {
+      "title": "Connections that need attention",
+      "sessionExpired": "session expired",
+      "unreachable": "unreachable",
+      "reconnect": "Reconnect",
+      "retry": "Retry"
+    },
+    "connect": {
+      "title": "Join {{name}}",
+      "intro": "This space lives on <host>{{host}}</host>. Connecting creates your identity there, linked to your account on <home>{{home}}</home>.",
+      "probing": "Reaching {{host}}…",
+      "connecting": "Connecting…",
+      "requested": "Your request to join {{name}} was sent."
+    },
     "badges": {
       "joined": "Joined",
       "public": "Public",
@@ -251,6 +306,17 @@
             "description": "Visible in Explore; anyone can join instantly"
           }
         }
+      },
+      "directory": {
+        "label": "List in the Backspace directory",
+        "hint": "Show this space in Outer Space on every Backspace instance.",
+        "notConfigured": "This instance is not configured to reach a directory, so listing this space would reach none.",
+        "adminOff": "Your instance administrator has to turn on global space discovery.",
+        "adminOffSelf": "Global space discovery is off on this instance.",
+        "adminOffSelfAction": "Turn it on",
+        "adminOffSelfIntro": "This turns on global space discovery for the whole instance: spaces here become discoverable in Explore, and the instance starts reporting itself to the public directory.",
+        "privateSpace": "Set visibility to public or request to join first.",
+        "disclosure": "Listing makes public: the space's name, description, icon, banner, member count and this instance's address. People browsing the directory load the icon and banner from this instance."
       },
       "description": {
         "label": "Description",
@@ -406,6 +472,7 @@
       "leaveFailed": "Failed to leave space"
     },
     "dmList": {
+      "explore": "Explore",
       "comingSoon": "Coming Soon",
       "newDm": "New Direct Message",
       "empty": "No conversations yet.",

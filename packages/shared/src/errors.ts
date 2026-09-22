@@ -91,6 +91,10 @@ export const ERROR_CODES = [
   'federation_credential_remote_only',
   'federation_credential_home_only',
   'federation_credential_failed',
+  // Minted by the client, not by a route: the remote account refused the
+  // credential this user's home instance issued for it, so the only way in
+  // is the password that account holds of its own.
+  'federation_different_password',
   // dm
   'peer_reset_pending',
   'dm_target_required',
@@ -236,6 +240,12 @@ export const ERROR_CODES = [
   'voice_disabled',
   'voice_connect_forbidden',
   'file_not_found',
+
+  // Directory
+  'directory_disabled',
+  'directory_unreachable',
+  'directory_private_space',
+  'directory_requires_discovery',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

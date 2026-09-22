@@ -43,10 +43,22 @@ const DEFAULT_LIMITS: InstanceStreamingLimits = {
   maxResolution: 1080,
   maxFramerate: 60,
   discoveryEnabled: true,
+  directoryEnabled: false,
+  // The screen-share path is the only reader of these defaults and never
+  // asks this; false is the value that claims nothing.
+  directoryConfigured: false,
   bitrateMatrixOverrides: null,
   allowCustomBitrate: true,
 };
 
+/**
+ * The limits, with the defaults standing in while the document is unknown.
+ *
+ * This is the one place a default may be substituted: a screen share has to
+ * pick a bitrate whatever the server said. Everything that states a fact to
+ * the user, or offers to change one, reads `streamingLimits` itself and
+ * treats null as unknown.
+ */
 export function getStreamingLimits(): InstanceStreamingLimits {
   return useSettingsStore.getState().streamingLimits ?? DEFAULT_LIMITS;
 }
@@ -78,8 +90,14 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       const limits = await api.settings.getStreaming();
       set({ streamingLimits: limits });
     } catch (err) {
-      console.warn('[Settings] Failed to fetch streaming limits, using defaults:', err);
-      set({ streamingLimits: DEFAULT_LIMITS });
+      // Left null, not filled with defaults. The document carries the two
+      // discovery flags, and `DEFAULT_LIMITS` asserts `directoryEnabled: false`:
+      // substituting it told an admin on a listed instance that their spaces
+      // are not listed, next to a button that writes the setting. Every reader
+      // of this field already handles null, and the one consumer that needs a
+      // number whatever happened (the screen-share config) goes through
+      // `getStreamingLimits()`, which falls back at read time.
+      console.warn('[Settings] Failed to fetch streaming limits:', err);
     }
   },
 
@@ -100,14 +118,19 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   updateInstanceSettings: async (data: Partial<InstanceAdminSettings>) => {
     const updated = await api.settings.updateInstance(data);
     set({ instanceSettings: updated });
-    // If discoveryEnabled changed, also update it in streamingLimits for the DiscoveryPanel warning banner
-    if (data.discoveryEnabled !== undefined) {
-      set((state) => ({
-        streamingLimits: state.streamingLimits
-          ? { ...state.streamingLimits, discoveryEnabled: updated.discoveryEnabled }
-          : state.streamingLimits,
-      }));
-    }
+    // The space settings DiscoveryPanel reads both flags from streamingLimits,
+    // the document any signed-in user may fetch. Mirror them from the server's
+    // answer rather than from the request: turning discovery off clears the
+    // directory server-side, and the answer is where that shows.
+    set((state) => ({
+      streamingLimits: state.streamingLimits
+        ? {
+            ...state.streamingLimits,
+            discoveryEnabled: updated.discoveryEnabled,
+            directoryEnabled: updated.directoryEnabled,
+          }
+        : state.streamingLimits,
+    }));
   },
 
   fetchGifEnabled: async () => {

@@ -63,6 +63,7 @@
   "federation_credential_remote_only": "Das ist diese Instanz. Gib die Adresse einer anderen an.",
   "federation_credential_home_only": "Verbindungen werden von deiner Heimatinstanz aus eingerichtet. Mach das dort.",
   "federation_credential_failed": "Die Verbindung konnte nicht eingerichtet werden. Versuche es noch einmal.",
+  "federation_different_password": "Dein Konto auf dieser Instanz hat ein eigenes Passwort. Melde dich damit an, um die Verbindung wiederherzustellen.",
   "peer_reset_pending": "Die Verbindung zu dieser Instanz wird gerade zurückgesetzt. Versuche es gleich noch einmal.",
   "dm_target_required": "Wähle aus, wem du schreiben möchtest.",
   "cannot_dm_self": "Du kannst keine Unterhaltung mit dir selbst beginnen.",
@@ -201,5 +202,9 @@
   "internal_error": "Auf dem Server ist etwas schiefgelaufen. Versuche es erneut.",
   "voice_disabled": "Sprach- und Videochat sind auf dieser Instanz nicht eingerichtet.",
   "voice_connect_forbidden": "Du darfst diesem Sprachkanal nicht beitreten.",
-  "file_not_found": "Diese Datei wurde nicht gefunden."
+  "file_not_found": "Diese Datei wurde nicht gefunden.",
+  "directory_disabled": "Diese Instanz ist mit keinem Verzeichnis verbunden.",
+  "directory_unreachable": "Der Äußere Space ist gerade nicht erreichbar. Der Innere Space funktioniert weiterhin.",
+  "directory_private_space": "Stell den Space auf „Öffentlich“ oder „Auf Anfrage“, bevor du ihn eintragen lässt.",
+  "directory_requires_discovery": "Schalte zuerst das Entdecken von Spaces ein."
 }

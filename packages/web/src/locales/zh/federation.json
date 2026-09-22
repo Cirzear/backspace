@@ -23,9 +23,9 @@
       "connecting": "正在连接…",
       "registrationClosed": "此实例已关闭新联邦账号注册。现有账号仍可登录。",
       "passwordLabel": "输入您的密码以连接到 {{host}}",
-      "passwordPlaceholder": "您的账号密码",
-      "passwordHint": "您的密码由主实例校验，绝不会发送给 {{host}} — 该实例将获得为其专有的凭据。",
-      "fallbackNotice": "此实例上已存在一个同名账号，且无法识别主实例颁发的凭据。请使用您在该实例上设置的密码登录 — 之后将切换为该凭据。",
+      "passwordPlaceholder": "与登录时相同",
+      "passwordHint": "您的密码由主实例校验，绝不会发送给 {{host}}。该实例将获得为其专有的凭据。",
+      "fallbackNotice": "此实例上已存在一个同名账号，且无法识别主实例颁发的凭据。请使用您在该实例上设置的密码登录，之后将切换为该凭据。",
       "usernamePlaceholder": "您在此实例上的用户名",
       "remotePasswordLabel": "此实例的密码",
       "remotePasswordPlaceholder": "远端实例上的密码",
@@ -53,13 +53,19 @@
       "addedLabel": "添加时间",
       "disconnectedLabel": "断开时间",
       "lastConnectedLabel": "最后连接",
-      "homePasswordPlaceholder": "您的主账号密码",
+      "homePasswordLabel": "您的主账号密码",
       "disconnect": "断开连接",
       "reconnect": "重新连接",
       "reauthenticate": "重新认证",
       "forceRemove": "强制移除",
       "deleteIdentity": "删除身份",
-      "deleteIdentityDisabled": "请先断开连接以删除身份"
+      "deleteIdentityDisabled": "请先断开连接以删除身份",
+      "reason": {
+        "unreachable": "无法连接到此实例。",
+        "sessionExpired": "保存的会话已过期。请重新认证以恢复连接。",
+        "reauthenticate": "请重新认证以连接。",
+        "authenticateHome": "请认证以连接到您的主实例。"
+      }
     },
     "forceRemove": {
       "title": "强制移除条目",

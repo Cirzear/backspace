@@ -8,9 +8,47 @@
       "counter": "{{length}}/{{max}}"
     },
     "discovery": {
-      "label": "Discovery",
-      "toggleLabel": "Space Discovery",
-      "toggleDescription": "Allow spaces to appear in the public Explore page"
+      "label": "Space discovery",
+      "description": "How far spaces on this instance can be found.",
+      "levels": {
+        "invite": {
+          "label": "Invite only",
+          "description": "Spaces here are listed nowhere. Invite links still work."
+        },
+        "local": {
+          "label": "Local space discovery",
+          "description": "Spaces appear in Explore for people on this instance and on instances connected to it."
+        },
+        "global": {
+          "label": "Global space discovery",
+          "description": "Spaces that opt in also appear in the public Backspace directory, on every instance."
+        }
+      },
+      "unconfigured": "This instance is not configured to reach a directory, so nothing here can be listed globally."
+    },
+    "directory": {
+      "registrationClosed": "New accounts from other instances are closed, so listed spaces will show as closed to new accounts.",
+      "openFederatedRegistration": "Open federated accounts",
+      "disclosure": "For each listed space this makes public: its name, description, icon, banner, member count and this instance's address. People browsing the directory load the icon and banner from this instance.",
+      "status": {
+        "never": "Never reported",
+        "lastPing": "Last reported {{date}}",
+        "lastError": "Last attempt failed ({{status}})"
+      },
+      "reasons": {
+        "unreachable": "the directory could not reach this instance",
+        "status": "this instance answered with an error",
+        "invalid": "this instance served an invalid document",
+        "origin-mismatch": "this instance reports a different address than the one it was reached at",
+        "origin": "the directory refused this instance's address; it must be an https domain with no port (set DOMAIN or PUBLIC_ORIGIN)",
+        "network": "this instance could not reach the directory",
+        "timeout": "the directory did not answer in time"
+      }
+    },
+    "browse": {
+      "toggleLabel": "Show global spaces in Explore",
+      "toggleDescription": "People here see spaces from other instances in Outer Space. Their browsers load those spaces' icons and banners from the instances that own them.",
+      "unavailable": "This instance is not configured to reach a directory, so there is nothing to show."
     },
     "gif": {
       "label": "GIF Search",

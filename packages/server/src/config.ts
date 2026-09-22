@@ -44,6 +44,33 @@ function envBool(key: string, defaultValue: boolean): boolean {
   return value === 'true' || value === '1';
 }
 
+/**
+ * A count, read strictly: a set value must be a non-negative integer and
+ * nothing else. Unlike `envInt` this refuses `parseInt`'s leftovers ('2 hops',
+ * '1.5', '-1') instead of silently taking the digits it recognises. A
+ * security-shaped number that quietly becomes the default when it is mistyped
+ * is the failure this guards against: the operator would be told nothing and
+ * would run a setting they did not choose.
+ *
+ * A blank value is unset, which is `envOptional`'s rule and this file's
+ * convention (`DIRECTORY_ENDPOINT` opts out of it in writing, because an empty
+ * URL means something there). Blank carries no number, so there is no choice
+ * to discard, and `KEY=` is what an operator types to un-set a line: refusing
+ * it would stop an instance booting over a gesture that means "I have no
+ * opinion", which the default already covers.
+ */
+function envCount(key: string, defaultValue: number): number {
+  const value = process.env[key];
+  if (value === undefined || value.trim() === '') return defaultValue;
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error(
+      `Environment variable ${key} must be a non-negative integer (0, 1, 2, ...), got: ${JSON.stringify(value)}`
+    );
+  }
+  return Number(trimmed);
+}
+
 // PUBLIC_ORIGIN overrides the federation transport URL returned by getOurOrigin().
 // Used by integration test harnesses that bind to 127.0.0.1:<ephemeral> and by
 // reverse-proxy setups where federation must advertise an http:// origin (the
@@ -75,6 +102,86 @@ if (!/^https?:\/\//i.test(sourceCodeUrl)) {
 // BACKSPACE_COMMIT build arg (see Dockerfile / deploy.sh). Null in local dev
 // (no build step) — the § 13 offer still works via version + sourceCodeUrl.
 const commit = envOptional('BACKSPACE_COMMIT') ?? null;
+
+/**
+ * The most hops any real deployment has. A CDN, in front of the operator's own
+ * reverse proxy, in front of a tunnel daemon is three, so four is already one
+ * more than the deepest topology this project has been asked about.
+ *
+ * The cap exists because the failure above it is silent. `TRUSTED_PROXY_HOPS=11`
+ * as a slip of the finger for 1 trusts eleven hops, which on a one-proxy
+ * instance means the whole forwarded chain, which is the `trustProxy: true`
+ * behaviour this setting exists to remove. Nothing would look wrong: the
+ * operator configured the thing, and the instance boots. A number that cannot
+ * describe a real deployment is a typo, and it is refused the same way
+ * '2 hops' is.
+ *
+ * The refusal cannot tell an operator to edit this file: most of them run the
+ * published image and have no checkout. It states the cap and asks for the
+ * topology instead, which is the thing we would need in order to raise it.
+ */
+const MAX_TRUSTED_PROXY_HOPS = 4;
+
+/**
+ * How many proxies in front of this app are trusted to have written
+ * `X-Forwarded-For`, counted from the app outwards. It becomes Fastify's
+ * `trustProxy` (see `index.ts`), and through it the source of `request.ip`.
+ *
+ * At 1, `request.ip` is the entry the nearest proxy appended, which is the
+ * address that proxy actually saw. Anything a client writes into the header
+ * sits further left and is ignored. `true`, which this was until it became a
+ * count, trusts the whole chain and takes the left-most entry: whatever the
+ * client cared to send.
+ *
+ * That matters because this address is what every rate limit in the app keys
+ * on, the global one and the per-route ones (`docs/systems/api.md`, "Rate
+ * limiting") and the hand-written limiter on `POST /federation/peer/accept`,
+ * which is unauthenticated first contact. It is also what the request log
+ * records as `remoteAddress`.
+ *
+ * **What an operator sets it to.** The number of proxies they actually run
+ * in front of the app:
+ *
+ * - `1` (the default) for the bundled Caddy, an operator's own reverse
+ *   proxy, or a tunnel daemon. Every deployment mode this repo ships is one
+ *   hop.
+ * - `2` for a CDN in front of their own proxy. Left at 1, the app sees the
+ *   CDN's address and everyone behind it lands in one rate-limit bucket.
+ * - `0` for nothing in front at all. That case is not cosmetic: at 1 a lone
+ *   `X-Forwarded-For` entry cannot be told apart from a proxy's word, so a
+ *   directly exposed instance left at 1 believes whatever a client sends. At
+ *   0 the header is ignored and the socket address is used.
+ *
+ * Too low is a degradation (everyone behind the nearest proxy shares a
+ * bucket); too high is a hole (the key goes back to the client). When in
+ * doubt, too low.
+ *
+ * **It governs the address and nothing else.** The rest of the
+ * `X-Forwarded-*` family is trusted or not, without following the count: at
+ * any value of 1 or more, `request.protocol` and `request.hostname` come from
+ * `X-Forwarded-Proto` and `X-Forwarded-Host` (the last entry, whatever the
+ * number), and at 0 they come from the socket and the `Host` header. Raising
+ * the count to 2 for a CDN therefore changes which address is billed and
+ * leaves protocol and host exactly where they were. No route in this server
+ * reads either of those two, which is what keeps that from mattering; a route
+ * that starts building a URL from the request host would make it matter.
+ *
+ * Both ways of getting it wrong refuse to boot rather than resolving to
+ * something the operator did not choose: a value that is not a non-negative
+ * integer, and a value above `MAX_TRUSTED_PROXY_HOPS`. See
+ * `docs/systems/web-security.md` section 9 and
+ * `docs/systems/deployment.md`, "Server proxy-awareness".
+ */
+const trustedProxyHops = envCount('TRUSTED_PROXY_HOPS', 1);
+if (trustedProxyHops > MAX_TRUSTED_PROXY_HOPS) {
+  throw new Error(
+    `TRUSTED_PROXY_HOPS is how many proxies in front of this app may be trusted to have written X-Forwarded-For, ` +
+    `and it is what every rate limit keys on. Got ${trustedProxyHops}; the maximum is ${MAX_TRUSTED_PROXY_HOPS}. ` +
+    `A CDN in front of your own reverse proxy in front of a tunnel is 3 hops, so if you meant 1 or 2 this is a typo. ` +
+    `If your deployment really does have more than ${MAX_TRUSTED_PROXY_HOPS}, that is the limit to raise and not your ` +
+    `setting: open an issue at ${UPSTREAM_SOURCE_URL}/issues describing the hops in front of this instance.`
+  );
+}
 
 // The running version, read from this package's own manifest rather than kept
 // as a second copy in the source. A hand-maintained constant is what let the
@@ -123,6 +230,8 @@ export const config = {
   version,
   sourceCodeUrl,
   commit,
+
+  trustedProxyHops,
 
   livekit: {
     url: envOptional('LIVEKIT_URL'),
@@ -176,6 +285,19 @@ export const config = {
   telemetry: {
     /** Receiver base URL for the opt-in daily ping. Tests and a future move override it. */
     endpoint: envOptional('TELEMETRY_ENDPOINT') ?? 'https://hello.backspacechat.com',
+  },
+  directory: {
+    /**
+     * Hub base URL for the opt-in space directory. Unset means the project
+     * hub. Set to an empty string to disable the pinger and the proxy
+     * entirely (forks, air-gapped installs). Trailing slashes are dropped.
+     *
+     * Written out rather than through envOptional, which folds an empty
+     * value into unset and would hand an operator who set '' the hub.
+     */
+    endpoint: process.env.DIRECTORY_ENDPOINT === undefined
+      ? 'https://explore.backspacechat.com'
+      : process.env.DIRECTORY_ENDPOINT.trim().replace(/\/+$/, ''),
   },
   backup: {
     dir: envOptional('BACKUP_DIR') ?? resolve(dirname(env('DB_PATH', resolve(__dirname, '../../../data/backspace.db'))), 'backups'),

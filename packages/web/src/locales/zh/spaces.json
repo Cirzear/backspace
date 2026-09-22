@@ -157,11 +157,66 @@
   "explore": {
     "title": "探索",
     "searchPlaceholder": "搜索空间…",
-    "discoveryDisabled": "实例管理员已禁用空间发现功能。",
+    "discoveryOff": {
+      "member": "您的实例管理员已关闭空间发现。此处的空间只能通过邀请链接加入。",
+      "admin": "本实例已关闭空间发现。此处的空间只能通过邀请链接加入。",
+      "enable": "开启空间发现",
+      "failed": "无法更改该设置。"
+    },
+    "browseOff": {
+      "member": "此处不显示来自其他实例的空间，因为您的实例管理员已关闭该功能。",
+      "admin": "此处不显示来自其他实例的空间。",
+      "action": "在“探索”中显示全局空间",
+      "confirm": {
+        "title": "在此显示来自其他实例的空间？",
+        "exposure": "那些实例会看到每个加载其内容的浏览器的 IP 地址，而本实例的管理员无法控制它们。",
+        "off": "以后要停止显示：设置、实例、常规、在“探索”中显示全局空间的开关。",
+        "action": "显示全局空间"
+      }
+    },
+    "notListed": {
+      "text": "此处没有任何空间被列入公开目录。",
+      "action": "列入目录",
+      "confirm": {
+        "title": "公开列出本实例的空间？",
+        "optIn": "只有其拥有者自行开启列入的空间才会被提交，因此该开关本身不会列入任何空间。",
+        "off": "以后要停止列入：设置、实例、常规、空间发现选项。",
+        "action": "列入空间"
+      }
+    },
     "noMatches": "没有匹配您搜索的空间。",
     "empty": "暂无可发现的空间。",
-    "allJoined": "您已加入所有可发现的空间",
     "joinedSection": "已加入",
+    "notConnected": "未连接到 {{host}}",
+    "inner": {
+      "title": "内部空间",
+      "subtitle": "您所在实例上的空间",
+      "noneAnswered": "没有实例作出响应。在有实例响应之前，内部空间将保持为空。"
+    },
+    "outer": {
+      "title": "外部空间",
+      "subtitle": "遍布 Backspace 的社区",
+      "empty": "外面还什么都没有。加入目录的空间会显示在这里。",
+      "noMatches": "外部空间中没有匹配您搜索的空间。",
+      "showMore": "显示更多",
+      "connectAndJoin": "连接并加入",
+      "connectAndRequest": "连接并申请",
+      "closedBadge": "不接受新账户"
+    },
+    "connections": {
+      "title": "需要处理的连接",
+      "sessionExpired": "会话已过期",
+      "unreachable": "无法连接",
+      "reconnect": "重新登录",
+      "retry": "重试"
+    },
+    "connect": {
+      "title": "加入 {{name}}",
+      "intro": "此空间位于 <host>{{host}}</host>。连接后将在该实例上创建您的身份，并与您在 <home>{{home}}</home> 的账号关联。",
+      "probing": "正在连接 {{host}}…",
+      "connecting": "正在连接…",
+      "requested": "您加入 {{name}} 的申请已发送。"
+    },
     "badges": {
       "joined": "已加入",
       "public": "公开",
@@ -249,6 +304,17 @@
             "description": "在“探索”中可见；任何人均可立即加入"
           }
         }
+      },
+      "directory": {
+        "label": "列入 Backspace 目录",
+        "hint": "在每个 Backspace 实例的外部空间中显示此空间。",
+        "notConfigured": "本实例未配置可访问的目录，因此此空间无法列入任何目录。",
+        "adminOff": "需要实例管理员先开启全局空间发现。",
+        "adminOffSelf": "本实例已关闭全局空间发现。",
+        "adminOffSelfAction": "开启",
+        "adminOffSelfIntro": "这会为整个实例开启全局空间发现：此处的空间将可在“探索”中被发现，实例也会开始向公开目录上报自身。",
+        "privateSpace": "请先将可见性设为公开或需申请加入。",
+        "disclosure": "列入目录后将公开：空间的名称、描述、图标、横幅、成员数量以及本实例的地址。浏览目录的人会从本实例加载图标和横幅。"
       },
       "description": {
         "label": "描述",
@@ -400,6 +466,7 @@
       "leaveFailed": "退出空间失败"
     },
     "dmList": {
+      "explore": "探索",
       "comingSoon": "敬请期待",
       "newDm": "新建私信",
       "empty": "暂无会话。",

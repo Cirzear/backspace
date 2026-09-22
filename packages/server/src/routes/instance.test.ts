@@ -26,6 +26,17 @@ vi.mock('../db/index.js', () => ({
   schema,
 }));
 
+// The real config with a mutable directory block, so the directoryAvailable
+// tests can switch the endpoint off; beforeEach puts it back. Everything else
+// (version in particular) stays real, so the version assertion below still
+// compares against the package manifest and not against a fixture.
+const mockDirectory = vi.hoisted(() => ({ endpoint: 'https://hub.test' }));
+
+vi.mock('../config.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../config.js')>();
+  return { config: { ...actual.config, directory: mockDirectory } };
+});
+
 function applyMigrations(db: Database.Database): void {
   const migrationsDir = path.resolve(__dirname, '../../drizzle');
   const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
@@ -47,6 +58,7 @@ async function buildApp(): Promise<FastifyInstance> {
 }
 
 beforeEach(async () => {
+  mockDirectory.endpoint = 'https://hub.test';
   sqlite = new Database(':memory:');
   sqlite.pragma('foreign_keys = ON');
   applyMigrations(sqlite);
@@ -105,5 +117,123 @@ describe('GET /api/instance/info', () => {
     // Persistent per-instance epoch (incarnation UUID) is always advertised.
     expect(typeof body.instanceId).toBe('string');
     expect(body.instanceId).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('reports directoryEnabled=false by default', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/instance/info' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().directoryEnabled).toBe(false);
+  });
+
+  it('reports directoryEnabled=true when the admin turned the directory on', async () => {
+    testDb.update(schema.instanceSettings)
+      .set({ directoryEnabled: 1 })
+      .where(eq(schema.instanceSettings.id, 1))
+      .run();
+
+    const res = await app.inject({ method: 'GET', url: '/api/instance/info' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().directoryEnabled).toBe(true);
+  });
+
+  // directoryAvailable is whether this instance can browse the directory at
+  // all (DIRECTORY_ENDPOINT non-empty). It is independent of directoryEnabled,
+  // the admin's listing opt-in: a fresh instance that lists nothing must still
+  // be able to browse.
+  it('reports directoryAvailable=true when an endpoint is configured, whatever the listing toggle', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/instance/info' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ directoryAvailable: true, directoryEnabled: false });
+  });
+
+  it('reports directoryAvailable=false when DIRECTORY_ENDPOINT is empty, even with listing on', async () => {
+    mockDirectory.endpoint = '';
+    testDb.update(schema.instanceSettings)
+      .set({ directoryEnabled: 1 })
+      .where(eq(schema.instanceSettings.id, 1))
+      .run();
+
+    const res = await app.inject({ method: 'GET', url: '/api/instance/info' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ directoryAvailable: false, directoryEnabled: true });
+  });
+
+  // The second half of directoryAvailable: the admin's own switch for whether
+  // the people here browse at all. The endpoint sits above it, so no setting
+  // can report a directory this instance cannot reach.
+  it('reports directoryAvailable=false when the admin turned browsing off', async () => {
+    testDb.update(schema.instanceSettings)
+      .set({ directoryBrowseEnabled: 0 })
+      .where(eq(schema.instanceSettings.id, 1))
+      .run();
+
+    const res = await app.inject({ method: 'GET', url: '/api/instance/info' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().directoryAvailable).toBe(false);
+  });
+
+  it('reports directoryAvailable=true again once browsing is switched back on', async () => {
+    testDb.update(schema.instanceSettings)
+      .set({ directoryBrowseEnabled: 0 })
+      .where(eq(schema.instanceSettings.id, 1))
+      .run();
+    expect((await app.inject({ method: 'GET', url: '/api/instance/info' })).json().directoryAvailable).toBe(false);
+
+    testDb.update(schema.instanceSettings)
+      .set({ directoryBrowseEnabled: 1 })
+      .where(eq(schema.instanceSettings.id, 1))
+      .run();
+    expect((await app.inject({ method: 'GET', url: '/api/instance/info' })).json().directoryAvailable).toBe(true);
+  });
+
+  it('reports directoryAvailable=false with no endpoint whatever the browse setting says', async () => {
+    mockDirectory.endpoint = '';
+    for (const directoryBrowseEnabled of [0, 1]) {
+      testDb.update(schema.instanceSettings)
+        .set({ directoryBrowseEnabled })
+        .where(eq(schema.instanceSettings.id, 1))
+        .run();
+      const res = await app.inject({ method: 'GET', url: '/api/instance/info' });
+      expect(res.json().directoryAvailable).toBe(false);
+    }
+  });
+
+  // Reported on its own so a client can tell a missing endpoint from an admin
+  // who turned browsing off. Folding the two together left every surface that
+  // promises the directory unable to check the only fact it rests on.
+  it('reports directoryConfigured from the endpoint alone, whatever the browse setting says', async () => {
+    for (const directoryBrowseEnabled of [0, 1]) {
+      testDb.update(schema.instanceSettings)
+        .set({ directoryBrowseEnabled })
+        .where(eq(schema.instanceSettings.id, 1))
+        .run();
+      expect((await app.inject({ method: 'GET', url: '/api/instance/info' })).json().directoryConfigured).toBe(true);
+    }
+  });
+
+  it('reports directoryConfigured=false with no endpoint, whatever the browse setting says', async () => {
+    mockDirectory.endpoint = '';
+    for (const directoryBrowseEnabled of [0, 1]) {
+      testDb.update(schema.instanceSettings)
+        .set({ directoryBrowseEnabled })
+        .where(eq(schema.instanceSettings.id, 1))
+        .run();
+      expect((await app.inject({ method: 'GET', url: '/api/instance/info' })).json().directoryConfigured).toBe(false);
+    }
+  });
+
+  it('separates the two: browsing off leaves the endpoint still reported as configured', async () => {
+    testDb.update(schema.instanceSettings)
+      .set({ directoryBrowseEnabled: 0 })
+      .where(eq(schema.instanceSettings.id, 1))
+      .run();
+    const body = (await app.inject({ method: 'GET', url: '/api/instance/info' })).json();
+    expect(body).toMatchObject({ directoryConfigured: true, directoryAvailable: false });
+  });
+
+  it('browses by default: a fresh row has the setting on', async () => {
+    const row = testDb.select().from(schema.instanceSettings).where(eq(schema.instanceSettings.id, 1)).get();
+    expect(row?.directoryBrowseEnabled).toBe(1);
+    expect((await app.inject({ method: 'GET', url: '/api/instance/info' })).json().directoryAvailable).toBe(true);
   });
 });

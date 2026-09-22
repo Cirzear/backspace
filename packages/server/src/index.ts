@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+import Fastify, { type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
@@ -22,6 +22,7 @@ import { utilRoutes } from './routes/utils.js';
 import { instanceRoutes } from './routes/instance.js';
 import { invitesRoutes } from './routes/invites.js';
 import { exploreRoutes } from './routes/explore.js';
+import { directoryRoutes } from './routes/directory.js';
 import { searchRoutes } from './routes/search.js';
 import { adminRoutes } from './routes/admin.js';
 import { adminUpdateRoutes } from './routes/adminUpdates.js';
@@ -33,6 +34,8 @@ import { buildCspHeaderValue, CSP_REPORT_GROUP, CSP_REPORT_PATH } from './utils/
 import { startFederationWorkers, stopFederationWorkers } from './utils/federationWorker.js';
 import { startBackupWorker, stopBackupWorker } from './utils/backupWorker.js';
 import { startTelemetryReporter, stopTelemetryReporter } from './telemetry/reporter.js';
+import { startDirectoryPinger, stopDirectoryPinger } from './directory/pinger.js';
+import { errorBody } from './utils/httpErrors.js';
 import './utils/federationRollback.js'; // Side-effect: registers rollback callbacks for outbox terminal failures.
 import { registerCallRelayHooks } from './ws/events.js';
 import { resetStalePresenceOnBoot } from './utils/presenceBoot.js';
@@ -43,7 +46,12 @@ import fs from 'fs';
 
 async function main(): Promise<void> {
   const app = Fastify({
-    trustProxy: true,
+    // A count of trusted hops, not `true`. `request.ip` is the address the
+    // nearest proxy appended rather than the left-most thing in
+    // `X-Forwarded-For`, so a client cannot pick the address its rate limits
+    // are counted under. `TRUSTED_PROXY_HOPS` in config.ts carries what the
+    // number means and when an operator changes it.
+    trustProxy: config.trustedProxyHops,
     logger: {
       level: 'info',
     },
@@ -149,14 +157,25 @@ async function main(): Promise<void> {
   await app.register(rateLimit, {
     max: 200,
     timeWindow: '1 minute',
-    keyGenerator: (request) => (request as any).userId || request.ip,
+    // The budget is per client address, and only per address. The limiter runs
+    // on `onRequest`, while `authenticate` is a route `preHandler`, so nothing
+    // has put a user on the request yet when this key is taken: a key that
+    // reached for `request.userId` would read undefined on every request and
+    // fall back here anyway. Stated plainly instead, because the consequence is
+    // an operator's to know: everyone behind one NAT, VPN exit or corporate
+    // proxy shares one 200-per-minute budget. Which address that is comes from
+    // `config.trustedProxyHops`, which is what keeps a client from choosing
+    // its own. See docs/systems/api.md, "Rate limiting".
+    keyGenerator: (request: FastifyRequest) => request.ip,
     // Test harnesses set DISABLE_RATE_LIMITS=1 to bypass per-IP exhaustion when
     // many tests share the loopback IP. Default unset; production unchanged.
     allowList: () => process.env.DISABLE_RATE_LIMITS === '1' || process.env.DISABLE_RATE_LIMITS === 'true',
+    // The shared error shape (see localization.md) plus `retryAfter` in
+    // seconds; the plugin sets the Retry-After header itself. One builder
+    // covers every per-route override too, so a route that tightens its own
+    // limit does not need to spell the body out again.
     errorResponseBuilder: (_request, context) => ({
-      statusCode: 429,
-      error: 'Too Many Requests',
-      message: 'Rate limit exceeded',
+      ...errorBody(429, 'rate_limited'),
       retryAfter: Math.ceil(context.ttl / 1000),
     }),
   });
@@ -199,6 +218,7 @@ async function main(): Promise<void> {
   await app.register(instanceRoutes);
   await app.register(invitesRoutes);
   await app.register(exploreRoutes);
+  await app.register(directoryRoutes);
   await app.register(searchRoutes);
   await app.register(adminRoutes);
   await app.register(adminUpdateRoutes);
@@ -257,10 +277,16 @@ async function main(): Promise<void> {
 
   startBackupWorker();
 
+  // The space directory pinger stays outside the workers guard on purpose:
+  // the two-instance harness disables the workers and still needs the pinger,
+  // pointed at a local stub. It has its own guard, an empty DIRECTORY_ENDPOINT.
+  startDirectoryPinger();
+
   const shutdown = async () => {
     console.log('Shutting down...');
     stopFederationWorkers();
     stopTelemetryReporter();
+    stopDirectoryPinger();
     stopBackupWorker();
     await app.close();
     closeDatabase(); // checkpoints WAL — leaves a complete on-disk file

@@ -80,6 +80,7 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   federation_credential_remote_only: 'Federation credentials are only issued for remote instances',
   federation_credential_home_only: 'Federation credentials are issued by your home instance',
   federation_credential_failed: 'Failed to issue federation credential',
+  federation_different_password: 'The account on that instance does not accept the credential your home instance issued',
   // dm
   peer_reset_pending: 'Federation with this instance is being reset; try again shortly',
   dm_target_required: 'userId or (homeUserId + homeInstance) is required',
@@ -225,6 +226,10 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   voice_disabled: 'Voice/video is not configured on this server',
   voice_connect_forbidden: 'Missing CONNECT permission',
   file_not_found: 'File not found',
+  directory_disabled: 'The directory is not configured on this instance',
+  directory_unreachable: 'The directory could not be reached',
+  directory_private_space: 'A private space cannot be listed in the directory',
+  directory_requires_discovery: 'Turn on space discovery before enabling the directory',
 };
 
 function fillPlaceholders(text: string, details: ErrorDetails | undefined): string {
@@ -246,6 +251,31 @@ export function errorText(code: ErrorCode, details?: ErrorDetails): string {
   return fillPlaceholders(ERROR_MESSAGES[code], details);
 }
 
+/** The shared error contract: `{ error, code, statusCode, details? }`. */
+export interface ErrorBody {
+  error: string;
+  code: ErrorCode;
+  statusCode: number;
+  details?: ErrorDetails;
+}
+
+/**
+ * The body of an error response in the shared contract.
+ *
+ * For the places that cannot go through `sendError` because something else
+ * sends the reply (the rate limiter's `errorResponseBuilder`) and still
+ * want the code typed rather than spelled.
+ */
+export function errorBody(statusCode: number, code: ErrorCode, details?: ErrorDetails): ErrorBody {
+  const body: ErrorBody = {
+    error: fillPlaceholders(ERROR_MESSAGES[code], details),
+    code,
+    statusCode,
+  };
+  if (details) body.details = details;
+  return body;
+}
+
 /**
  * Send an error response in the shared contract: `{ error, code, statusCode, details? }`.
  *
@@ -259,11 +289,5 @@ export function sendError(
   code: ErrorCode,
   details?: ErrorDetails,
 ): FastifyReply {
-  const body: { error: string; code: ErrorCode; statusCode: number; details?: ErrorDetails } = {
-    error: fillPlaceholders(ERROR_MESSAGES[code], details),
-    code,
-    statusCode,
-  };
-  if (details) body.details = details;
-  return reply.code(statusCode).send(body);
+  return reply.code(statusCode).send(errorBody(statusCode, code, details));
 }

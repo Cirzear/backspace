@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { createInstance, type i18n as I18n } from 'i18next';
-import { HttpError } from '../api/client';
+import { HttpError, RateLimitError } from '../api/client';
 import { describeError } from './errors';
 
 let i18n: I18n;
@@ -19,6 +19,7 @@ beforeAll(async () => {
           generic: 'Something went wrong.',
           recipient_deleted: 'That account was deleted.',
           username_too_long: 'Usernames can be at most {{max}} characters.',
+          rate_limited: 'Too many requests. Wait a moment and try again.',
         },
       },
       de: {
@@ -26,6 +27,7 @@ beforeAll(async () => {
         errors: {
           generic: 'Etwas ist schiefgelaufen.',
           recipient_deleted: 'Dieses Konto wurde gelöscht.',
+          rate_limited: 'Zu viele Anfragen. Warte einen Moment und versuche es erneut.',
         },
       },
     },
@@ -46,6 +48,11 @@ describe('describeError', () => {
   it('shows the server text when the code has no catalog entry in any language', () => {
     const err = HttpError.fromBody(400, { error: 'Weird thing happened', code: 'peer_rejected', statusCode: 400 });
     expect(describeError(err, i18n)).toBe('Weird thing happened');
+  });
+
+  it('localizes a rate limit through its code like any other server error', () => {
+    const err = new RateLimitError(17, { error: 'Too many requests', code: 'rate_limited', statusCode: 429, retryAfter: 17 });
+    expect(describeError(err, i18n)).toBe('Zu viele Anfragen. Warte einen Moment und versuche es erneut.');
   });
 
   it('shows the server text when there is no code', () => {
@@ -93,5 +100,18 @@ describe('HttpError.fromBody', () => {
     const err = HttpError.fromBody(502, null);
     expect(err.message).toBe('HTTP 502');
     expect(err.code).toBeUndefined();
+  });
+
+  // The default instance carries the shipped catalogs (the test setup starts
+  // i18n in English), so this is the real contract, not a fixture's.
+  it('localizes the client-minted federation code from the shipped catalog', () => {
+    const err = HttpError.fromBody(409, {
+      error: 'Account exists with a different password on this instance',
+      code: 'federation_different_password',
+      statusCode: 409,
+    });
+    expect(describeError(err)).toBe(
+      'Your account on that instance has a password of its own. Sign in with it to reconnect.',
+    );
   });
 });

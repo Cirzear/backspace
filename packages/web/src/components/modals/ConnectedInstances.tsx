@@ -10,14 +10,18 @@ import type {
   PeeringNotification,
   PeeringTriggerReason,
 } from '@backspace/shared';
-import { useInstanceStore, DifferentPasswordError, isSelfOrigin } from '../../stores/instanceStore';
+import { useInstanceStore, connectToInstance, isSelfOrigin } from '../../stores/instanceStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useFederationStore } from '../../stores/federationStore';
 import { isElectron } from '../../platform/platform';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
+import { StatusDot } from '../ui/StatusDot';
+import { RemotePasswordStep, type RemotePasswordPhase } from './RemotePasswordStep';
+import { ReauthForm } from './ReauthForm';
 import { useFormatters, type Formatters } from '../../i18n/formatters';
 import { describeError } from '../../i18n/errors';
+import { describeRegistryError } from '../../i18n/registryErrors';
 
 type FederationT = TFunction<['federation', 'common']>;
 
@@ -25,17 +29,6 @@ type FederationT = TFunction<['federation', 'common']>;
 
 function safeHost(origin: string): string {
   try { return new URL(origin).host; } catch { return origin; }
-}
-
-// ─── Status indicator ────────────────────────────────────────────────────────
-
-function StatusDot({ status }: { status: string }) {
-  const colorClass =
-    status === 'connected' ? 'bg-status-online' :
-    status === 'connecting' ? 'bg-accent-amber' :
-    'bg-txt-tertiary';
-
-  return <div className={`w-2 h-2 rounded-full shrink-0 ${colorClass}`} />;
 }
 
 // ─── Registry status helpers ────────────────────────────────────────────────
@@ -79,22 +72,18 @@ function formatRelativeTime(t: FederationT, formatters: Formatters, timestamp: n
 // ─── Add Instance flow ───────────────────────────────────────────────────────
 
 type AddStep = 'url' | 'auth' | 'done';
-type AuthPhase = 'password' | 'fallback-login';
 
 function AddInstanceFlow({ onDone }: { onDone: () => void }) {
-  const { t } = useTranslation(['federation', 'common']);
+  const { t } = useTranslation(['federation', 'common', 'errors']);
   const user = useAuthStore((s) => s.user);
-  const connectToRemote = useInstanceStore((s) => s.connectToRemote);
   const loginToRemote = useInstanceStore((s) => s.loginToRemote);
   const probeInstance = useInstanceStore((s) => s.probeInstance);
 
   const [step, setStep] = useState<AddStep>('url');
   const [url, setUrl] = useState('');
   const [probeResult, setProbeResult] = useState<(InstanceInfoResponse & { origin: string }) | null>(null);
-  const [authPhase, setAuthPhase] = useState<AuthPhase>('password');
-  const [password, setPassword] = useState('');
-  const [fallbackUsername, setFallbackUsername] = useState('');
-  const [fallbackPassword, setFallbackPassword] = useState('');
+  const [authPhase, setAuthPhase] = useState<RemotePasswordPhase>('password');
+  const [remoteUsername, setRemoteUsername] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -113,38 +102,43 @@ function AddInstanceFlow({ onDone }: { onDone: () => void }) {
     }
   };
 
-  const handleConnect = async () => {
+  const handleConnect = async (password: string) => {
     if (!probeResult) return;
     setError('');
     setIsLoading(true);
     try {
-      await connectToRemote(
+      const outcome = await connectToInstance(
         probeResult.origin,
         password,
         user?.displayName || undefined,
       );
+      if (outcome.kind === 'needs-remote-password') {
+        setAuthPhase('fallback');
+        setRemoteUsername(outcome.remoteUsername);
+        return;
+      }
+      if (outcome.kind === 'needs-password') {
+        // Only an empty password reaches this, which the step's submit
+        // blocks; handled rather than swallowed so a new outcome member can
+        // never read as success here.
+        setError(t('errors:password_required'));
+        return;
+      }
       setStep('done');
       onDone();
     } catch (err) {
-      if (err instanceof DifferentPasswordError) {
-        setAuthPhase('fallback-login');
-        setFallbackUsername(err.remoteUsername);
-        setFallbackPassword('');
-        setError('');
-      } else {
-        setError(describeError(err));
-      }
+      setError(describeError(err));
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleFallbackLogin = async () => {
+  const handleFallbackLogin = async (username: string, remotePassword: string) => {
     if (!probeResult) return;
     setError('');
     setIsLoading(true);
     try {
-      await loginToRemote(probeResult.origin, fallbackUsername, fallbackPassword);
+      await loginToRemote(probeResult.origin, username, remotePassword);
       setStep('done');
       onDone();
     } catch (err) {
@@ -189,56 +183,30 @@ function AddInstanceFlow({ onDone }: { onDone: () => void }) {
         </>
       )}
 
-      {/* Step 2: Auth — single password */}
-      {step === 'auth' && probeResult && authPhase === 'password' && (
+      {/* Step 2: the password step, shared with the directory's connect-and-join modal */}
+      {step === 'auth' && probeResult && (
         <>
-          {/* Instance info card */}
-          <div className="flex items-center gap-2">
-            <StatusDot status="connecting" />
-            <div>
-              <div className="text-sm text-txt-primary font-medium">{probeResult.name}</div>
-              <div className="text-xs text-txt-tertiary">{probeResult.origin}</div>
-            </div>
-          </div>
-
-          {!probeResult.federatedRegistrationOpen && (
-            <div className="mb-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-sm text-amber-300">
-              {t('federation:connections.add.registrationClosed')}
-            </div>
-          )}
-
-          <form onSubmit={(e) => { e.preventDefault(); handleConnect(); }} className="space-y-2">
-            <input type="text" autoComplete="username" value={user?.username || ''} readOnly tabIndex={-1} className="sr-only" />
-            <div>
-              <label className="block text-xs text-txt-tertiary mb-1">
-                {t('federation:connections.add.passwordLabel', { host: new URL(probeResult.origin).host })}
-              </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder={t('federation:connections.add.passwordPlaceholder')}
-                className="input-standard w-full"
-                disabled={isLoading}
-                autoFocus
-                autoComplete="current-password"
-              />
-              <div className="text-xs text-txt-tertiary mt-1">
-                {t('federation:connections.add.passwordHint', { host: new URL(probeResult.origin).host })}
-              </div>
-            </div>
-            <button
-              type="submit"
-              disabled={isLoading || !password}
-              className="w-full px-4 py-2 bg-accent-primary hover:bg-accent-primary/80 text-white text-sm font-medium rounded transition-colors disabled:opacity-50"
-            >
-              {isLoading ? t('federation:connections.add.connecting') : t('federation:connections.add.connect')}
-            </button>
-          </form>
-
+          <RemotePasswordStep
+            phase={authPhase}
+            instance={probeResult}
+            homeUsername={user?.username || ''}
+            remoteUsername={remoteUsername}
+            isLoading={isLoading}
+            error={error}
+            onConnect={handleConnect}
+            onLogin={handleFallbackLogin}
+          />
           <div className="flex gap-2">
             <button
-              onClick={() => { setStep('url'); setProbeResult(null); setError(''); }}
+              onClick={() => {
+                if (authPhase === 'fallback') {
+                  setAuthPhase('password');
+                } else {
+                  setStep('url');
+                  setProbeResult(null);
+                }
+                setError('');
+              }}
               className="text-xs text-txt-tertiary hover:text-txt-secondary transition-colors"
             >
               {t('common:actions.back')}
@@ -253,76 +221,8 @@ function AddInstanceFlow({ onDone }: { onDone: () => void }) {
         </>
       )}
 
-      {/* Step 2b: Fallback login — different password on remote */}
-      {step === 'auth' && probeResult && authPhase === 'fallback-login' && (
-        <>
-          {/* Instance info card */}
-          <div className="flex items-center gap-2">
-            <StatusDot status="connecting" />
-            <div>
-              <div className="text-sm text-txt-primary font-medium">{probeResult.name}</div>
-              <div className="text-xs text-txt-tertiary">{probeResult.origin}</div>
-            </div>
-          </div>
-
-          <div className="p-2 bg-accent-amber/10 border border-accent-amber/30 rounded text-xs text-accent-amber">
-            {t('federation:connections.add.fallbackNotice')}
-          </div>
-
-          <form onSubmit={(e) => { e.preventDefault(); handleFallbackLogin(); }} className="space-y-2">
-            <div>
-              <label className="block text-xs text-txt-tertiary mb-1">{t('common:labels.username')}</label>
-              <input
-                type="text"
-                value={fallbackUsername}
-                onChange={(e) => setFallbackUsername(e.target.value)}
-                placeholder={t('federation:connections.add.usernamePlaceholder')}
-                className="input-standard w-full"
-                disabled={isLoading}
-                autoComplete="username"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-txt-tertiary mb-1">{t('federation:connections.add.remotePasswordLabel')}</label>
-              <input
-                type="password"
-                value={fallbackPassword}
-                onChange={(e) => setFallbackPassword(e.target.value)}
-                placeholder={t('federation:connections.add.remotePasswordPlaceholder')}
-                className="input-standard w-full"
-                disabled={isLoading}
-                autoFocus
-                autoComplete="current-password"
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={isLoading || !fallbackUsername || !fallbackPassword}
-              className="w-full px-4 py-2 bg-accent-primary hover:bg-accent-primary/80 text-white text-sm font-medium rounded transition-colors disabled:opacity-50"
-            >
-              {isLoading ? t('federation:connections.add.loggingIn') : t('federation:connections.add.loginAndConnect')}
-            </button>
-          </form>
-
-          <div className="flex gap-2">
-            <button
-              onClick={() => { setAuthPhase('password'); setPassword(''); setError(''); }}
-              className="text-xs text-txt-tertiary hover:text-txt-secondary transition-colors"
-            >
-              {t('common:actions.back')}
-            </button>
-            <button
-              onClick={onDone}
-              className="text-xs text-txt-tertiary hover:text-txt-secondary transition-colors"
-            >
-              {t('common:actions.cancel')}
-            </button>
-          </div>
-        </>
-      )}
-
-      {/* Error display */}
-      {error && (
+      {/* The URL step's own error; the password step renders its own */}
+      {step === 'url' && error && (
         <div className="p-2 bg-accent-rose/10 border border-accent-rose/30 rounded text-txt-danger text-xs">
           {error}
         </div>
@@ -684,14 +584,10 @@ function RegistryRow({
   const disconnectInstance = useInstanceStore((s) => s.disconnectInstance);
   const reconnectInstance = useInstanceStore((s) => s.reconnectInstance);
   const forceRemoveEntry = useInstanceStore((s) => s.forceRemoveEntry);
-  const reauthenticateInstance = useInstanceStore((s) => s.reauthenticateInstance);
 
   const [showForceRemoveConfirm, setShowForceRemoveConfirm] = useState(false);
   const [showDeleteIdentity, setShowDeleteIdentity] = useState(false);
   const [showReauth, setShowReauth] = useState(false);
-  const [reauthPassword, setReauthPassword] = useState('');
-  const [reauthLoading, setReauthLoading] = useState(false);
-  const [reauthError, setReauthError] = useState('');
 
   const name = entry.label || safeHost(entry.origin);
   const isDisconnected = entry.status === 'disconnected';
@@ -731,21 +627,6 @@ function RegistryRow({
   const handleForceRemove = () => {
     forceRemoveEntry(entry.origin);
     setShowForceRemoveConfirm(false);
-  };
-
-  const handleReauth = async () => {
-    if (!reauthPassword) return;
-    setReauthError('');
-    setReauthLoading(true);
-    try {
-      await reauthenticateInstance(entry.origin, reauthPassword);
-      setShowReauth(false);
-      setReauthPassword('');
-    } catch (err) {
-      setReauthError(describeError(err));
-    } finally {
-      setReauthLoading(false);
-    }
   };
 
   return (
@@ -813,46 +694,19 @@ function RegistryRow({
               {/* Error message */}
               {entry.errorMessage && (
                 <div className="p-2 bg-accent-rose/10 border border-accent-rose/30 rounded text-txt-danger text-xs mb-3">
-                  {entry.errorMessage}
+                  {describeRegistryError(t, entry.errorMessage)}
                 </div>
               )}
 
-              {/* Re-auth inline form */}
+              {/* Re-auth inline form, shared with the Explore page's connection chips */}
               {showReauth && (
-                <form onSubmit={(e) => { e.preventDefault(); handleReauth(); }} className="mt-3 space-y-2">
-                  <input type="text" autoComplete="username" value={entry.username ?? ''} readOnly tabIndex={-1} className="sr-only" />
-                  <div className="flex gap-2">
-                    <input
-                      type="password"
-                      value={reauthPassword}
-                      onChange={(e) => setReauthPassword(e.target.value)}
-                      placeholder={t('federation:connections.row.homePasswordPlaceholder')}
-                      className="input-standard flex-1 py-1.5"
-                      disabled={reauthLoading}
-                      autoFocus
-                      autoComplete="current-password"
-                    />
-                    <button
-                      type="submit"
-                      disabled={reauthLoading || !reauthPassword}
-                      className="px-3 py-1.5 bg-accent-primary hover:bg-accent-primary/80 text-white text-xs font-medium rounded transition-colors disabled:opacity-50"
-                    >
-                      {reauthLoading ? t('federation:connections.add.connecting') : t('federation:connections.add.connect')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setShowReauth(false); setReauthPassword(''); setReauthError(''); }}
-                      className="px-2 py-1.5 text-xs text-txt-tertiary hover:text-txt-secondary transition-colors"
-                    >
-                      {t('common:actions.cancel')}
-                    </button>
-                  </div>
-                  {reauthError && (
-                    <div className="p-2 bg-accent-rose/10 border border-accent-rose/30 rounded text-txt-danger text-xs">
-                      {reauthError}
-                    </div>
-                  )}
-                </form>
+                <ReauthForm
+                  origin={entry.origin}
+                  username={entry.username ?? ''}
+                  onDone={() => setShowReauth(false)}
+                  onCancel={() => setShowReauth(false)}
+                  className="mt-3 mb-3"
+                />
               )}
 
               {/* Actions */}

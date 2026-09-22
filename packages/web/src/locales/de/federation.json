@@ -23,7 +23,7 @@
       "connecting": "Wird verbunden…",
       "registrationClosed": "Diese Instanz nimmt keine neuen föderierten Registrierungen an. Bestehende Konten können sich weiterhin anmelden.",
       "passwordLabel": "Gib dein Passwort ein, um dich mit {{host}} zu verbinden",
-      "passwordPlaceholder": "Dein Kontopasswort",
+      "passwordPlaceholder": "Dasselbe wie bei der Anmeldung",
       "passwordHint": "Dein Passwort wird von deiner Heimatinstanz geprüft und nie an {{host}} gesendet. Diese Instanz erhält eigene Zugangsdaten, die nur für sie erzeugt werden.",
       "fallbackNotice": "Auf dieser Instanz gibt es bereits ein Konto, das die von deiner Heimatinstanz ausgestellten Zugangsdaten nicht akzeptiert. Melde dich mit dem Passwort an, das du auf dieser Instanz gesetzt hast. Danach wird das Konto auf die ausgestellten Zugangsdaten umgestellt.",
       "usernamePlaceholder": "Dein Benutzername auf dieser Instanz",
@@ -53,13 +53,19 @@
       "addedLabel": "Hinzugefügt",
       "disconnectedLabel": "Getrennt",
       "lastConnectedLabel": "Zuletzt verbunden",
-      "homePasswordPlaceholder": "Passwort deines Heimatkontos",
+      "homePasswordLabel": "Passwort deines Heimatkontos",
       "disconnect": "Trennen",
       "reconnect": "Erneut verbinden",
       "reauthenticate": "Erneut anmelden",
       "forceRemove": "Entfernen erzwingen",
       "deleteIdentity": "Identität löschen",
-      "deleteIdentityDisabled": "Trenne zuerst die Verbindung, um die Identität zu löschen"
+      "deleteIdentityDisabled": "Trenne zuerst die Verbindung, um die Identität zu löschen",
+      "reason": {
+        "unreachable": "Diese Instanz war nicht erreichbar.",
+        "sessionExpired": "Die gespeicherte Sitzung ist abgelaufen. Melde dich erneut an, um die Verbindung wiederherzustellen.",
+        "reauthenticate": "Melde dich erneut an, um zu verbinden.",
+        "authenticateHome": "Melde dich an, um dich mit deiner Heimatinstanz zu verbinden."
+      }
     },
     "forceRemove": {
       "title": "Eintrag zwangsweise entfernen",

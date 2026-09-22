@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as schema from '../db/schema.js';
 import { setWorkerId } from '../utils/snowflake.js';
+import { markDirectoryDirty } from '../directory/state.js';
 
 setWorkerId(4);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -35,6 +36,23 @@ vi.mock('../utils/auth.js', () => ({
   },
 }));
 
+// Spy on the dirty mark; the real readDirectoryState stays in place so the
+// GET mapping is exercised against the actual columns.
+vi.mock('../directory/state.js', async (orig) => ({
+  ...(await orig<typeof import('../directory/state.js')>()),
+  markDirectoryDirty: vi.fn(),
+}));
+
+// The real config with a mutable directory block, so the endpoint can be
+// switched off for the `directoryConfigured` cases; `beforeEach` puts it
+// back. Everything else stays real, upload size included.
+const mockDirectory = vi.hoisted(() => ({ endpoint: 'https://hub.test' }));
+
+vi.mock('../config.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../config.js')>();
+  return { config: { ...actual.config, directory: mockDirectory } };
+});
+
 function applyMigrations(db: Database.Database): void {
   const migrationsDir = path.resolve(__dirname, '../../drizzle');
   const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
@@ -56,6 +74,7 @@ async function buildApp(): Promise<FastifyInstance> {
 }
 
 beforeEach(async () => {
+  mockDirectory.endpoint = 'https://hub.test';
   sqlite = new Database(':memory:');
   sqlite.pragma('foreign_keys = ON');
   applyMigrations(sqlite);
@@ -76,8 +95,19 @@ beforeEach(async () => {
     createdAt: Date.now(),
   }).run();
 
+  vi.mocked(markDirectoryDirty).mockClear();
   app = await buildApp();
 });
+
+function setSettings(values: Partial<typeof schema.instanceSettings.$inferInsert>): void {
+  testDb.update(schema.instanceSettings).set(values).where(eq(schema.instanceSettings.id, 1)).run();
+}
+
+function readSettings(): typeof schema.instanceSettings.$inferSelect {
+  const row = testDb.select().from(schema.instanceSettings).where(eq(schema.instanceSettings.id, 1)).get();
+  if (!row) throw new Error('instance_settings row missing');
+  return row;
+}
 
 describe('GET /api/settings/instance', () => {
   it('surfaces federatedRegistrationOpen (default true)', async () => {
@@ -218,5 +248,315 @@ describe('error codes on the settings routes', () => {
     const res = await app.inject({ method: 'PATCH', url: '/api/settings/instance', payload: { federationRelayTtlDays: 0 } });
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({ code: 'relay_ttl_out_of_range', details: { min: 1, max: 365 } });
+  });
+});
+
+describe('directory fields on GET /api/settings/instance', () => {
+  it('returns directoryEnabled, directoryLastPingAt and directoryLastError (defaults)', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/settings/instance' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      directoryEnabled: false,
+      directoryLastPingAt: null,
+      directoryLastError: null,
+    });
+  });
+
+  it('returns the stored ping state with the error parsed', async () => {
+    setSettings({
+      directoryEnabled: 1,
+      directoryLastPingAt: 1_700_000_000_000,
+      directoryLastError: JSON.stringify({ at: 1_700_000_100_000, status: 'fetch', reason: 'unreachable' }),
+    });
+    const res = await app.inject({ method: 'GET', url: '/api/settings/instance' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      directoryEnabled: true,
+      directoryLastPingAt: 1_700_000_000_000,
+      directoryLastError: { at: 1_700_000_100_000, status: 'fetch', reason: 'unreachable' },
+    });
+  });
+});
+
+describe('directoryBrowseEnabled on the instance settings routes', () => {
+  it('is on by default, so an upgrade changes nothing for anyone', async () => {
+    expect(readSettings().directoryBrowseEnabled).toBe(1);
+    const res = await app.inject({ method: 'GET', url: '/api/settings/instance' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().directoryBrowseEnabled).toBe(true);
+  });
+
+  it('turns browsing off and says so on the way back', async () => {
+    const res = await app.inject({ method: 'PATCH', url: '/api/settings/instance', payload: { directoryBrowseEnabled: false } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().directoryBrowseEnabled).toBe(false);
+    expect(readSettings().directoryBrowseEnabled).toBe(0);
+    expect((await app.inject({ method: 'GET', url: '/api/settings/instance' })).json().directoryBrowseEnabled).toBe(false);
+  });
+
+  it('turns browsing back on', async () => {
+    setSettings({ directoryBrowseEnabled: 0 });
+    const res = await app.inject({ method: 'PATCH', url: '/api/settings/instance', payload: { directoryBrowseEnabled: true } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().directoryBrowseEnabled).toBe(true);
+    expect(readSettings().directoryBrowseEnabled).toBe(1);
+  });
+
+  it('rejects a non-boolean with field_not_boolean and writes nothing', async () => {
+    const res = await app.inject({ method: 'PATCH', url: '/api/settings/instance', payload: { directoryBrowseEnabled: 'yes' } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ code: 'field_not_boolean', details: { field: 'directoryBrowseEnabled' } });
+    expect(readSettings().directoryBrowseEnabled).toBe(1);
+  });
+
+  it('is independent of the listing axis: neither switch moves the other', async () => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/settings/instance',
+      payload: { discoveryEnabled: true, directoryEnabled: true, directoryBrowseEnabled: false },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ directoryEnabled: true, directoryBrowseEnabled: false });
+
+    const off = await app.inject({ method: 'PATCH', url: '/api/settings/instance', payload: { discoveryEnabled: false } });
+    expect(off.statusCode).toBe(200);
+    expect(off.json()).toMatchObject({ directoryEnabled: false, directoryBrowseEnabled: false });
+  });
+
+  // The regression that would cost every instance in the fleet a pointless
+  // hub ping: what this instance shows its own people is not in the document
+  // it serves, so changing it owes nothing.
+  it('does not mark the directory dirty, either way', async () => {
+    const off = await app.inject({ method: 'PATCH', url: '/api/settings/instance', payload: { directoryBrowseEnabled: false } });
+    expect(off.statusCode).toBe(200);
+    expect(readSettings().directoryDirty).toBe(0);
+    expect(markDirectoryDirty).not.toHaveBeenCalled();
+
+    const on = await app.inject({ method: 'PATCH', url: '/api/settings/instance', payload: { directoryBrowseEnabled: true } });
+    expect(on.statusCode).toBe(200);
+    expect(readSettings().directoryDirty).toBe(0);
+    expect(markDirectoryDirty).not.toHaveBeenCalled();
+  });
+
+  it('marks dirty exactly once when a listing change rides along with it', async () => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/settings/instance',
+      payload: { directoryEnabled: true, directoryBrowseEnabled: false },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(markDirectoryDirty).toHaveBeenCalledTimes(1);
+  });
+
+  it('stays out of GET /api/settings/streaming, which no non-admin surface needs it on', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/settings/streaming' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).not.toHaveProperty('directoryBrowseEnabled');
+  });
+});
+
+describe('directoryEnabled on GET /api/settings/streaming', () => {
+  // The space settings panel reads this route (any signed-in user may), so the
+  // per-space switch can say "your admin has to enable the directory" without
+  // the admin-only instance settings.
+  it('is false by default', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/settings/streaming' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().directoryEnabled).toBe(false);
+  });
+
+  it('reflects the stored flag', async () => {
+    setSettings({ directoryEnabled: 1 });
+    const res = await app.inject({ method: 'GET', url: '/api/settings/streaming' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().directoryEnabled).toBe(true);
+  });
+
+  it('is carried on the PATCH /api/settings/streaming response too', async () => {
+    setSettings({ directoryEnabled: 1 });
+    const res = await app.inject({ method: 'PATCH', url: '/api/settings/streaming', payload: { maxFramerate: 30 } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().directoryEnabled).toBe(true);
+  });
+});
+
+describe('directoryConfigured on GET /api/settings/streaming', () => {
+  // The per-space listing switch needs to know whether this instance has a
+  // hub to reach, and for a space on a peer only that peer can answer it:
+  // the home instance's own `GET /instance/info` says nothing about where
+  // someone else's space lives. It rides here because this is the settings
+  // document any signed-in user may read on any instance.
+  it('reports the endpoint, whatever the stored flags say', async () => {
+    for (const directoryEnabled of [0, 1] as const) {
+      setSettings({ directoryEnabled, discoveryEnabled: 1 });
+      const res = await app.inject({ method: 'GET', url: '/api/settings/streaming' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().directoryConfigured).toBe(true);
+    }
+  });
+
+  it('is false with no endpoint, even with the listing flag stored on', async () => {
+    // The state the switch used to offer a write in: the admin's opt-in
+    // stored, and no hub for the document it opts into.
+    mockDirectory.endpoint = '';
+    setSettings({ directoryEnabled: 1, discoveryEnabled: 1 });
+    const res = await app.inject({ method: 'GET', url: '/api/settings/streaming' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ directoryConfigured: false, directoryEnabled: true });
+  });
+
+  it('is carried on the PATCH response too', async () => {
+    mockDirectory.endpoint = '';
+    const res = await app.inject({ method: 'PATCH', url: '/api/settings/streaming', payload: { maxFramerate: 30 } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().directoryConfigured).toBe(false);
+  });
+
+  it('is not writable: a PATCH carrying it changes nothing', async () => {
+    mockDirectory.endpoint = '';
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/settings/streaming',
+      payload: { directoryConfigured: true } as Record<string, unknown>,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().directoryConfigured).toBe(false);
+  });
+});
+
+describe('PATCH /api/settings/instance directory invariant', () => {
+  it('rejects directoryEnabled=true while discovery is off with directory_requires_discovery', async () => {
+    setSettings({ discoveryEnabled: 0 });
+    const res = await app.inject({ method: 'PATCH', url: '/api/settings/instance', payload: { directoryEnabled: true } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('directory_requires_discovery');
+    expect(readSettings().directoryEnabled).toBe(0);
+    expect(markDirectoryDirty).not.toHaveBeenCalled();
+  });
+
+  it('rejects directoryEnabled=true when the same PATCH turns discovery off', async () => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/settings/instance',
+      payload: { discoveryEnabled: false, directoryEnabled: true },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('directory_requires_discovery');
+    expect(readSettings().discoveryEnabled).toBe(1);
+  });
+
+  it('accepts directoryEnabled=true when the same PATCH turns discovery on', async () => {
+    setSettings({ discoveryEnabled: 0 });
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/settings/instance',
+      payload: { discoveryEnabled: true, directoryEnabled: true },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ discoveryEnabled: true, directoryEnabled: true });
+    expect(readSettings().directoryEnabled).toBe(1);
+  });
+
+  it('rejects a non-boolean directoryEnabled with field_not_boolean', async () => {
+    const res = await app.inject({ method: 'PATCH', url: '/api/settings/instance', payload: { directoryEnabled: 'yes' } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ code: 'field_not_boolean', details: { field: 'directoryEnabled' } });
+  });
+
+  it('turning discovery off also clears directoryEnabled', async () => {
+    setSettings({ directoryEnabled: 1 });
+    const res = await app.inject({ method: 'PATCH', url: '/api/settings/instance', payload: { discoveryEnabled: false } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ discoveryEnabled: false, directoryEnabled: false });
+    expect(readSettings().directoryEnabled).toBe(0);
+  });
+
+  it('ignores directoryLastPingAt and directoryLastError in the body', async () => {
+    setSettings({ directoryLastPingAt: 5, directoryLastError: null });
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/settings/instance',
+      payload: { directoryLastPingAt: 99, directoryLastError: { at: 1, status: 500 } },
+    });
+    expect(res.statusCode).toBe(200);
+    const row = readSettings();
+    expect(row.directoryLastPingAt).toBe(5);
+    expect(row.directoryLastError).toBeNull();
+    expect(res.json().directoryLastPingAt).toBe(5);
+  });
+});
+
+describe('PATCH /api/settings/instance dirty marks', () => {
+  it('marks dirty when directoryEnabled changes', async () => {
+    const res = await app.inject({ method: 'PATCH', url: '/api/settings/instance', payload: { directoryEnabled: true } });
+    expect(res.statusCode).toBe(200);
+    expect(markDirectoryDirty).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks dirty when discoveryEnabled changes', async () => {
+    const res = await app.inject({ method: 'PATCH', url: '/api/settings/instance', payload: { discoveryEnabled: false } });
+    expect(res.statusCode).toBe(200);
+    expect(markDirectoryDirty).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks dirty when instanceName changes', async () => {
+    const res = await app.inject({ method: 'PATCH', url: '/api/settings/instance', payload: { instanceName: 'Renamed' } });
+    expect(res.statusCode).toBe(200);
+    expect(markDirectoryDirty).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks dirty when federatedRegistrationOpen changes', async () => {
+    const res = await app.inject({ method: 'PATCH', url: '/api/settings/instance', payload: { federatedRegistrationOpen: false } });
+    expect(res.statusCode).toBe(200);
+    expect(markDirectoryDirty).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks once when discovery off clears directory in the same write', async () => {
+    setSettings({ directoryEnabled: 1 });
+    const res = await app.inject({ method: 'PATCH', url: '/api/settings/instance', payload: { discoveryEnabled: false } });
+    expect(res.statusCode).toBe(200);
+    expect(markDirectoryDirty).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not mark when the PATCH repeats the stored values', async () => {
+    setSettings({ instanceName: 'Same', directoryEnabled: 1 });
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/settings/instance',
+      payload: { instanceName: 'Same', directoryEnabled: true, discoveryEnabled: true, federatedRegistrationOpen: true },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(markDirectoryDirty).not.toHaveBeenCalled();
+  });
+
+  it('does not mark for fields outside the served document', async () => {
+    const res = await app.inject({ method: 'PATCH', url: '/api/settings/instance', payload: { registrationOpen: false, autoAcceptPeering: true } });
+    expect(res.statusCode).toBe(200);
+    expect(markDirectoryDirty).not.toHaveBeenCalled();
+  });
+});
+
+describe('PATCH /api/settings/streaming directory invariant', () => {
+  it('turning discovery off also clears directoryEnabled', async () => {
+    setSettings({ directoryEnabled: 1 });
+    const res = await app.inject({ method: 'PATCH', url: '/api/settings/streaming', payload: { discoveryEnabled: false } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().discoveryEnabled).toBe(false);
+    expect(readSettings().directoryEnabled).toBe(0);
+    expect(markDirectoryDirty).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks dirty when discoveryEnabled changes without the directory being on', async () => {
+    const res = await app.inject({ method: 'PATCH', url: '/api/settings/streaming', payload: { discoveryEnabled: false } });
+    expect(res.statusCode).toBe(200);
+    expect(markDirectoryDirty).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not mark when discoveryEnabled is unchanged or absent', async () => {
+    const same = await app.inject({ method: 'PATCH', url: '/api/settings/streaming', payload: { discoveryEnabled: true } });
+    expect(same.statusCode).toBe(200);
+    const other = await app.inject({ method: 'PATCH', url: '/api/settings/streaming', payload: { maxFramerate: 30 } });
+    expect(other.statusCode).toBe(200);
+    expect(markDirectoryDirty).not.toHaveBeenCalled();
   });
 });

@@ -7,6 +7,8 @@ Source files:
 - `packages/server/src/routes/users.ts` — Space layout (sidebar folders/ordering) persistence via `PUT /api/users/@me/space-layout`
 - `packages/web/src/stores/spaceStore.ts` — Client-side space state, multi-instance merge, LWW layout sync
 - `packages/web/src/stores/exploreStore.ts` — Explore page state, multi-instance discovery aggregation
+- `packages/web/src/stores/directoryStore.ts` - Outer Space: the directory feed, origin dedupe, connect-then-join (see [directory.md](directory.md))
+- `packages/web/src/components/chat/ExplorePage.tsx`, `SpaceCard.tsx`, `OuterSpaceSection.tsx` - the Explore page's two sections and the card both use
 - `packages/web/src/components/modals/CreateSpace.tsx` — Space creation modal (icon crop, color, visibility)
 - `packages/web/src/components/modals/JoinSpace.tsx` — Join-by-code modal with federation connect phases
 - `packages/web/src/components/modals/ExploreSpacePreviewCard.tsx` — Compact discoverable-space card rendered inside the Join Space modal
@@ -80,7 +82,9 @@ Cross-references: [database.md](database.md) (table schemas), [permissions.md](p
 **Endpoint:** `PATCH /api/spaces/:id`
 **Permission:** `MANAGE_SPACE`
 
-**Updatable fields:** name (1-100 chars), icon, banner, avatarColor (validated against AVATAR_COLORS), visibility (public/request/private), description (max 200 chars).
+**Updatable fields:** name (1-100 chars), icon, banner, avatarColor (validated against AVATAR_COLORS), visibility (public/request/private), description (max 200 chars), directoryListed (boolean).
+
+**Directory listing:** `directoryListed: true` is refused with `400 directory_private_space` when the resulting visibility is `private`, and a listed space switched to `private` has the flag cleared in the same write. A change to the flag, or to name, description, icon, banner, avatarColor or visibility while the space is listed, calls `markDirectoryDirty()` so the directory pinger tells the hub; deleting a listed space does the same. See [directory.md](directory.md) §3.
 
 **Side effects:**
 - Old icon/banner files deleted from disk when replaced
@@ -241,6 +245,10 @@ point, not a replacement.
 | `request` | Listed | Submit join request, requires approval |
 | `public` | Listed | Instant join, no invite needed |
 
+A `request` or `public` space whose owner has switched on "List in the Backspace directory" (`spaces.directoryListed`) is additionally served on `GET /api/directory/spaces` while the instance admin allows it (`instance_settings.directoryEnabled`, which itself requires discovery on), and from there appears in Outer Space on other instances. The switch lives in the space settings Discovery panel, always rendered, and disabled with the first reason that applies, read from the settings document of the instance the space lives on (`streamingLimits` for a home space; a remote space asks its own instance's `GET /api/settings/streaming` on mount, and a load whose origin changed under it writes nothing): the instance has no `DIRECTORY_ENDPOINT` (`directoryConfigured: false`), so a listing would reach no hub and the administrator's own switch cannot change that; then the administrator's listing opt-in is off (`directoryEnabled: false`); then the space is private. The endpoint is asked first because it is the fact the administrator cannot fix from the settings the second reason points at. A fourth state is not a reason: while the document is unknown the switch is disabled and says nothing, and a load that came back empty says so with a Retry (see below). The opt-in reason has a second voice for the administrator of the instance the space lives on, who is told which setting is off rather than that an administrator has to act, and is offered "Turn it on" beside it; that action confirms first and then writes the whole global rung (`discoveryEnabled` and `directoryEnabled` together, the pair the server requires). It is offered only when `settingsStore.isAdmin` is true and the space's `_instanceOrigin` is empty, because admin rights are per instance and the client holds that flag only for home, and because the write goes to home; a remote space keeps the owner-voiced sentence unchanged. The switch is followed by a one-sentence disclosure of what listing makes public. See [directory.md](directory.md) §10.
+
+The panel fetches that settings document itself when the store has none, and says so when the fetch comes back empty. `streamingLimits` is filled once per session by the WS `ready` handler and by nothing else a member can reach, so a `ready` whose fetch failed used to leave the switch disabled with no reason and no way to ask again: the round that stopped the panel guessing (`?? true` / `?? false` asserted "discovery on, not listed" from a document nobody had read) made the silence permanent. Unknown now says it is unknown, in the treatment the Streaming panel uses for its own failed load: the line from `common:states.loadSettingsFailed` under the switch and a `common:actions.retry` button that runs the load again, the remote client's `GET /settings/streaming` for a remote space and `fetchStreamingLimits` for a home one. A remote fetch that fails while home holds a document is not reported: that is the fallback doing its job.
+
 ### Explore Endpoint
 
 **Endpoint:** `GET /api/spaces/explore` (`explore.ts:exploreRoutes`)
@@ -270,14 +278,50 @@ point, not a replacement.
 
 Also returns `total` (filtered count), `totalAll` (all discoverable), `discoveryEnabled`.
 
+### Explore Page Sections
+
+One page, one search box, two sections in fixed order. **Inner Space** is the list described here (the unjoined grid, then the collapsible joined group), from `exploreStore.fetchSpaces()`. **Outer Space**, below it, is the space directory: entries from `directoryStore` read through `GET /api/directory`, minus every origin the session is connected to, paginated 50 at a time, rendered only when the home instance's `GET /api/instance/info` reports `directoryEnabled: true`. The search box drives both through one 300 ms debounce. Both sections render `SpaceCard`; an Outer card's action opens the connect-then-join dialog instead of joining directly. The home view's channel sidebar also has an "Explore" entry that routes to `/explore`. Full description in [directory.md](directory.md) §9.
+
 ### Multi-Instance Discovery (`exploreStore.ts`)
 
 `fetchSpaces()` queries home + all connected remote instances in parallel:
-1. Waits for `instanceStore._autoConnectDone` to avoid querying with incomplete instance list
-2. `Promise.allSettled` across home API + all connected instance APIs
-3. Deduplicates by `spaceId:origin` key
-4. Normalizes remote asset URLs via `resolveAssetUrl`
-5. Merges into `TaggedExploreSpace[]` with `_instanceOrigin`
+1. Takes a sequence number, so a reply for an older query cannot land on a newer one (see below)
+2. Waits for `instanceStore._autoConnectDone` to avoid querying with incomplete instance list
+3. `Promise.allSettled` across home API + all connected instance APIs
+4. Deduplicates by `spaceId:origin` key
+5. Normalizes remote asset URLs via `resolveAssetUrl`
+6. Merges into `TaggedExploreSpace[]` with `_instanceOrigin`, and records `resultsQuery`
+
+**One fan-out at a time wins.** `fetchSpaces` captures a module-level
+`fetchSeq` on entry and drops its own result if the counter moved while it
+ran, the same guard `directoryStore` runs on Outer Space. A fan-out lasts as
+long as its slowest instance, and one search box drives both stores through
+one debounce, so without it the Inner list could settle on the previous
+query's answer while Outer showed the current one. A superseded run also
+leaves `isLoading` alone: the run that superseded it is still going, and its
+spinner is not the old one's to take down. `fetchMyRequests` has the same
+guard on a counter of its own, for the same reason: it was one call to home
+before multi-instance discovery and is now a fan-out too, and the page calls
+the two together. `reset()` bumps both counters, so a fan-out still in flight
+when the session ends is orphaned rather than landing in the next one: this
+store and `directoryStore` are both cleared on sign-out, on account deletion
+and when another account signs in, through `authStore.resetUserStores`
+([auth.md](auth.md#resetuserstores)).
+
+**`resultsQuery` is the query the spaces on screen answer**, recorded when a
+fan-out lands rather than when it is asked for. The empty copy reads it, not
+`searchQuery`: the box is live and the fetch is debounced, so deciding from
+the box made the copy flip between "no matches" and "nothing yet" about a
+list that had not moved.
+
+**A failure is a state, not a sentence.** `error` is
+`ExploreFetchFailure | null`: `{ kind: 'none_answered' }` when every client in
+the fan-out rejected, and `{ kind: 'failed', cause }` when the fan-out could
+not be run at all. The words belong to the surface, so `ExplorePage` renders
+the first from `spaces:explore.inner.noneAnswered` and the second through
+`describeError(cause)`; the store keeping English text was English on screen
+for every reader of the other three languages. `JoinSpace` reads the same
+field as a boolean and has copy of its own.
 
 ### Public Join
 
@@ -321,6 +365,7 @@ Decline flow:
 
 **User's own requests:** `GET /api/users/@me/join-requests?status=<optional>`
 - Returns all requests for the current user, optionally filtered by status
+- Client side, `exploreStore.fetchMyRequests()` asks the home instance and every connected instance (`Promise.allSettled`) and tags each request with `_instanceOrigin` (`''` for home); `useSpaceJoin.isPending` matches on `(origin, spaceId)`, since space ids are local to their instance
 
 ### Space Managers Resolution (`explore.ts:getSpaceManagers`)
 
