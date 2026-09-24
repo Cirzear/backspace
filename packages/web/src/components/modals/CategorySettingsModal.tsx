@@ -53,36 +53,56 @@ function OverviewTab({
   canManageRoles: boolean;
   onTogglePrivate: () => void;
   onDeleteCategory: () => void;
-  onRename: (name: string) => void;
+  onRename: (name: string) => Promise<string>;
 }) {
   const { t } = useTranslation(['spaces', 'common']);
   const [editName, setEditName] = useState(categoryName);
+  const [isEditingName, setIsEditingName] = useState(false);
   const [isSavingName, setIsSavingName] = useState(false);
 
-  // Sync edit name when category name changes externally
+  // The store is the source of truth: resync whenever the name changes there
+  // (the server normalizes what we sent, or someone else renames the category)
+  // — but never while the user is typing, that would clobber their edit.
   useEffect(() => {
-    setEditName(categoryName);
-  }, [categoryName]);
+    if (!isEditingName) setEditName(categoryName);
+  }, [categoryName, isEditingName]);
 
-  const handleNameBlur = () => {
+  const startEditingName = () => {
+    setEditName(categoryName);
+    setIsEditingName(true);
+  };
+
+  const cancelEditingName = () => {
+    setEditName(categoryName);
+    setIsEditingName(false);
+  };
+
+  // Only the save button commits. Blur deliberately does nothing (a stray
+  // click must not rename the category) and Enter is not a submit either;
+  // Esc abandons the edit.
+  const saveName = async () => {
     const trimmed = editName.trim();
-    if (trimmed && trimmed !== categoryName) {
-      setIsSavingName(true);
-      onRename(trimmed);
-      // The parent will update the store; we just reset the saving state after a short delay
-      setTimeout(() => setIsSavingName(false), 500);
-    } else {
+    if (!trimmed || trimmed === categoryName) {
       setEditName(categoryName);
+      setIsEditingName(false);
+      return;
+    }
+    setIsSavingName(true);
+    try {
+      // Resolves with the stored name, i.e. the value after server-side
+      // normalization (trimmed, length bounded).
+      setEditName(await onRename(trimmed));
+      setIsEditingName(false);
+    } catch {
+      // The parent renders the error; keep the editor open so the typed
+      // value can be retried.
+    } finally {
+      setIsSavingName(false);
     }
   };
 
-  const handleNameKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      (e.target as HTMLInputElement).blur();
-    } else if (e.key === 'Escape') {
-      setEditName(categoryName);
-      (e.target as HTMLInputElement).blur();
-    }
+  const handleNameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape') cancelEditingName();
   };
 
   return (
@@ -92,20 +112,40 @@ function OverviewTab({
           {t('spaces:category.settings.categoryLabel')}
         </label>
         {canManageChannels ? (
-          <div className="flex items-center gap-2">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" className="opacity-60 flex-shrink-0 text-txt-primary">
+          <div className="flex items-center gap-2 text-txt-primary">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" className="opacity-60 flex-shrink-0">
               <path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z" />
             </svg>
-            <input
-              type="text"
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
-              onBlur={handleNameBlur}
-              onKeyDown={handleNameKeyDown}
-              disabled={isSavingName}
-              className="input-standard flex-1 py-1.5 px-2 text-sm"
-              maxLength={100}
-            />
+            {isEditingName ? (
+              <>
+                <input
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  onKeyDown={handleNameKeyDown}
+                  disabled={isSavingName}
+                  autoFocus
+                  className="input-standard w-48 max-w-full py-1.5 px-2 text-sm"
+                  maxLength={100}
+                />
+                <button
+                  type="button"
+                  onClick={saveName}
+                  disabled={isSavingName}
+                  className="flex-shrink-0 px-2.5 py-1.5 bg-accent-primary hover:bg-accent-primary/80 text-white text-sm font-medium rounded transition-colors disabled:opacity-50"
+                >
+                  {isSavingName ? t('common:states.saving') : t('common:actions.save')}
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={startEditingName}
+                className="-mx-1 min-w-0 truncate rounded px-1 text-left text-sm font-medium transition-colors hover:bg-interactive-hover"
+              >
+                {categoryName}
+              </button>
+            )}
           </div>
         ) : (
           <div className="flex items-center gap-2 text-txt-primary">
@@ -273,12 +313,21 @@ export function CategorySettingsModal() {
     }
   };
 
-  const handleRename = async (name: string) => {
+  const handleRename = async (name: string): Promise<string> => {
+    if (!categoryId || !currentSpaceId) return name;
     setError('');
+    const origin = space?._instanceOrigin ?? '';
+    const catApi = getApiForOrigin(origin);
     try {
-      await useSpaceStore.getState().updateCategory(categoryId, { name });
+      const updated = await catApi.categories.update(categoryId, { name });
+      useSpaceStore.setState((state) => ({
+        categories: state.categories.map((c) => (c.id === categoryId ? { ...c, ...updated } : c)),
+      }));
+      // Resolve with the stored name so the input shows the normalized value.
+      return updated.name;
     } catch (err) {
       setError(describeError(err));
+      throw err;
     }
   };
 
