@@ -146,7 +146,6 @@
       "submitting": "正在连接…"
     },
     "fallback": {
-      "notice": "{{host}} 上已存在一个同名账号，且无法识别主实例颁发的凭据。请使用您在该实例上设置的密码登录；之后将切换为该凭据。",
       "usernamePlaceholder": "您在此实例上的用户名",
       "passwordLabel": "此实例的密码",
       "passwordPlaceholder": "远端实例上的密码",
@@ -307,13 +306,13 @@
         }
       },
       "directory": {
-        "label": "列入 Backspace 目录",
+        "label": "列入全局 Backspace 目录",
         "hint": "在每个 Backspace 实例的外部空间中显示此空间。",
         "notConfigured": "本实例未配置可访问的目录，因此此空间无法列入任何目录。",
-        "adminOff": "需要实例管理员先开启全局空间发现。",
-        "adminOffSelf": "本实例已关闭全局空间发现。",
+        "adminOff": "需要实例管理员先允许列入全局目录。",
+        "adminOffSelf": "本实例不允许列入全局目录。",
         "adminOffSelfAction": "开启",
-        "adminOffSelfIntro": "这会为整个实例开启全局空间发现：此处的空间将可在“探索”中被发现，实例也会开始向公开目录上报自身。",
+        "adminOffSelfIntro": "这会为整个实例允许列入全局目录：此处的空间将可在“探索”中被发现，实例也会开始向公开目录上报自身。",
         "privateSpace": "请先将可见性设为公开或需申请加入。",
         "disclosure": "列入目录后将公开：空间的名称、描述、图标、横幅、成员数量以及本实例的地址。浏览目录的人会从本实例加载图标和横幅。"
       },
@@ -468,7 +467,6 @@
     },
     "dmList": {
       "explore": "探索",
-      "comingSoon": "敬请期待",
       "newDm": "新建私信",
       "empty": "暂无会话。",
       "leaveGroup": "退出群组",

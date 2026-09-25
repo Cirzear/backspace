@@ -6,21 +6,37 @@ import { Avatar } from '../ui/Avatar';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { parseFederatedUsername } from '../../utils/identity';
 import { useInstanceUpdateBadge } from '../../hooks/useInstanceUpdateBadge';
+import { useHubUpdateState } from '../../hooks/useHubUpdateState';
+import { BackspaceMark } from '../projectHub/BackspaceMark';
+import { HubUpdateDot } from '../projectHub/HubUpdateDot';
+
+/**
+ * A row on the You screen. `badge` is drawn at the trailing edge, before the
+ * chevron; a badge must name itself (the Backspace row passes `HubUpdateDot`,
+ * which carries its own label).
+ */
+interface ActionRow {
+  label: string;
+  icon: React.ReactNode;
+  action: () => void;
+  badge?: React.ReactNode;
+}
 
 export function MobileYouScreen() {
-  const { t } = useTranslation(['mobile', 'settings', 'common', 'admin']);
+  const { t } = useTranslation(['mobile', 'settings', 'common', 'admin', 'project']);
   const pushMobileScreen = useUIStore((s) => s.pushMobileScreen);
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const updateBadge = useInstanceUpdateBadge();
+  const hubUpdate = useHubUpdateState();
 
   if (!user) return null;
 
   const avatarUrl = user.avatar ? `/api/uploads/${user.avatar}` : null;
   const bannerUrl = user.banner ? `/api/uploads/${user.banner}` : null;
 
-  const actionRows = [
+  const actionRows: ActionRow[] = [
     {
       label: t('mobile:you.editProfile'),
       icon: (
@@ -56,6 +72,12 @@ export function MobileYouScreen() {
         </svg>
       ),
       action: () => pushMobileScreen('settings-voice'),
+    },
+    {
+      label: t('project:nav.label'),
+      icon: <BackspaceMark size={20} className="w-5 h-5" />,
+      action: () => pushMobileScreen('backspace'),
+      badge: hubUpdate.state === 'updated' ? <HubUpdateDot /> : null,
     },
   ];
 
@@ -134,6 +156,7 @@ export function MobileYouScreen() {
           >
             <span className="text-txt-secondary">{row.icon}</span>
             <span className="text-sm text-txt-primary flex-1">{row.label}</span>
+            {row.badge}
             <svg className="w-4 h-4 text-txt-tertiary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
             </svg>

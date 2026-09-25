@@ -2,10 +2,12 @@ import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../../../api/client';
 import { Toggle } from '../../ui/Toggle';
+import { DirectoryListingHint } from './DirectoryListingHint';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { useUIStore } from '../../../stores/uiStore';
 import { describeError } from '../../../i18n/errors';
 import { useFormatters } from '../../../i18n/formatters';
+import { invalidateHomeInstanceInfo } from '../../../hooks/useHomeInstanceInfo';
 import type { DirectoryPingError, InstanceAdminSettings } from '@backspace/shared';
 
 const INSTANCE_NAME_MAX_LENGTH = 32;
@@ -23,6 +25,7 @@ interface InstanceDraft {
   discoveryEnabled: boolean;
   directoryEnabled: boolean;
   directoryBrowseEnabled: boolean;
+  supportCardEnabled: boolean;
 }
 
 function draftFrom(settings: InstanceAdminSettings): InstanceDraft {
@@ -31,6 +34,7 @@ function draftFrom(settings: InstanceAdminSettings): InstanceDraft {
     discoveryEnabled: settings.discoveryEnabled,
     directoryEnabled: settings.directoryEnabled,
     directoryBrowseEnabled: settings.directoryBrowseEnabled,
+    supportCardEnabled: settings.supportCardEnabled,
   };
 }
 
@@ -38,7 +42,8 @@ function sameDraft(a: InstanceDraft, b: InstanceDraft): boolean {
   return a.instanceName === b.instanceName
     && a.discoveryEnabled === b.discoveryEnabled
     && a.directoryEnabled === b.directoryEnabled
-    && a.directoryBrowseEnabled === b.directoryBrowseEnabled;
+    && a.directoryBrowseEnabled === b.directoryBrowseEnabled
+    && a.supportCardEnabled === b.supportCardEnabled;
 }
 
 type PingReasonKey =
@@ -183,7 +188,8 @@ export function GeneralPanel() {
 
   const hasChanges = gifKeyDirty || !sameDraft(draft, draftFrom(instanceSettings));
 
-  const handleSave = async () => {
+  /** Saves the draft; resolves true when the server took it. */
+  const handleSave = async (): Promise<boolean> => {
     setSaving(true);
     setSaveError('');
     try {
@@ -192,11 +198,16 @@ export function GeneralPanel() {
         discoveryEnabled: draft.discoveryEnabled,
         directoryEnabled: draft.directoryEnabled,
         directoryBrowseEnabled: draft.directoryBrowseEnabled,
+        supportCardEnabled: draft.supportCardEnabled,
       };
       if (gifKeyDirty) {
         payload.gifApiKey = gifKeyDraft;
       }
       await updateInstanceSettings(payload);
+      // The Backspace page reads the instance name and the Support card
+      // switch from its own cached copy of the public info; reread it so the
+      // change shows there without a reload.
+      invalidateHomeInstanceInfo();
       // The server's answer is the new baseline, whatever it normalised. A
       // poll dispatched before the save and answered after it can reseed the
       // pre-save values for one interval; the next poll corrects it.
@@ -209,8 +220,10 @@ export function GeneralPanel() {
       setGifKeyDirty(false);
       setGifKeyDraft('');
       addToast(t('common:states.settingsSaved'), 'success', 2000);
+      return true;
     } catch (err) {
       setSaveError(err instanceof Error ? describeError(err) : t('common:states.saveFailed'));
+      return false;
     } finally {
       setSaving(false);
     }
@@ -371,6 +384,16 @@ export function GeneralPanel() {
                 the comment on the rung), so what it discloses is public and
                 the pinger's own history is worth reading.
               */}
+              {/*
+                The rung allows listing and lists nothing by itself, which is
+                the one thing admins picking it kept missing. Said only while
+                no space here has opted in: once one has, the count in the
+                status line below answers the same question. Gated on the
+                endpoint for the same reason as the note after it.
+              */}
+              {instanceSettings.directoryListedSpaceCount === 0 && !noDirectoryEndpoint && (
+                <DirectoryListingHint saveFirst={hasChanges ? handleSave : null} saving={saving} />
+              )}
               {!instanceSettings.federatedRegistrationOpen && !noDirectoryEndpoint && (
                 <div className="p-2.5 bg-accent-amber/10 border border-accent-amber/30 rounded text-[13px] text-accent-amber space-y-2">
                   <p>{t('admin:general.directory.registrationClosed')}</p>
@@ -387,6 +410,11 @@ export function GeneralPanel() {
               {/* What the pinger last did, the same shape as the telemetry panel's line */}
               <div className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3 space-y-1">
                 <div className="text-xs text-txt-tertiary">{pingLabel}</div>
+                {instanceSettings.directoryListedSpaceCount > 0 && (
+                  <div className="text-xs text-txt-tertiary">
+                    {t('admin:general.directory.listedCount', { count: instanceSettings.directoryListedSpaceCount })}
+                  </div>
+                )}
                 {lastError !== null && (
                   <div className="text-xs text-txt-danger">
                     {t('admin:general.directory.status.lastError', {
@@ -465,6 +493,27 @@ export function GeneralPanel() {
               </button>
             )}
           </div>
+        </div>
+      </div>
+
+      {/*
+        The Support card on the Backspace page. Hides only that card: the
+        page's other links stay.
+      */}
+      <div>
+        <div className="text-[11px] font-semibold text-txt-tertiary uppercase tracking-wider mb-1.5">{t('admin:general.supportCard.label')}</div>
+        <div className="rounded-lg bg-white/[0.02] p-3.5">
+          <label className="flex items-center justify-between gap-3 cursor-pointer">
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-txt-primary">{t('admin:general.supportCard.toggleLabel')}</div>
+              <div className="text-xs text-txt-tertiary mt-0.5">{t('admin:general.supportCard.toggleDescription')}</div>
+            </div>
+            <Toggle
+              enabled={draft.supportCardEnabled}
+              onChange={(value) => setDraft({ ...draft, supportCardEnabled: value })}
+              ariaLabel={t('admin:general.supportCard.toggleLabel')}
+            />
+          </label>
         </div>
       </div>
 

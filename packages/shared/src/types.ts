@@ -832,6 +832,19 @@ export interface InstanceAdminSettings {
   /** Read-only on the wire; the server ignores them on PATCH. */
   directoryLastPingAt: number | null;
   directoryLastError: DirectoryPingError | null;
+  /**
+   * Spaces here that have opted in to the directory and are not private,
+   * counted whatever `directoryEnabled` says. Read-only, ignored on PATCH.
+   * The instance switch lists nothing by itself; this is how the admin sees
+   * whether any space has taken it up.
+   */
+  directoryListedSpaceCount: number;
+  /**
+   * The web client's Backspace page shows the Support card, which links to
+   * the project's Ko-fi page. Hides only that card; the server does nothing
+   * else with it. Default true. Also on `InstanceInfoResponse`.
+   */
+  supportCardEnabled: boolean;
 }
 
 export interface InstanceStreamingLimits {
@@ -895,6 +908,10 @@ export interface InstanceInfoResponse {
   directoryConfigured: boolean;
   directoryAvailable: boolean;
   directoryEnabled: boolean;
+  // The admin's switch for the Support card on the web client's Backspace
+  // page. It only hides that card in the web client and changes nothing the
+  // server does.
+  supportCardEnabled: boolean;
 }
 
 /**
