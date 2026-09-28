@@ -70,3 +70,6 @@ export const GROUP_DM_ICON_MIME_PREFIX = 'image/';
 
 /** Member-list headings stay short enough to identify the owner at a glance. */
 export const MAX_OWNER_TITLE_LENGTH = 32;
+
+/** Space-local member labels, independent of account names. */
+export const MAX_MEMBER_NICKNAME_LENGTH = 32;

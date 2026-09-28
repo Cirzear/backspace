@@ -12,6 +12,8 @@ import { parseFederatedUsername, isFederationGlobeApplicable, userDisplayName } 
 import { useCanonicalUserView } from '../../utils/userViewLookup';
 import { useDelayedLoading } from '../../hooks/useDelayedLoading';
 import { OwnerTitleHeading } from './OwnerTitleHeading';
+import { useMemberContextMenu } from './memberMenu/useMemberContextMenu';
+import { useContextMenuStore } from '../../stores/contextMenuStore';
 
 /**
  * Owner headings are editable separately; online and role groups keep their
@@ -66,6 +68,11 @@ function getMemberGroup(member: MemberWithUser, ownerId: string | undefined): Me
   };
 }
 
+function memberNameTone(isOffline: boolean, colored: boolean): string {
+  if (colored) return isOffline ? 'opacity-60' : '';
+  return isOffline ? 'text-txt-tertiary' : 'text-txt-primary';
+}
+
 function MemberSidebarRow({
   member,
   isOffline,
@@ -74,6 +81,7 @@ function MemberSidebarRow({
   isRichActivity,
   accentClass,
   onClickMember,
+  onContextMenuMember,
 }: {
   member: MemberWithUser;
   isOffline: boolean;
@@ -81,10 +89,11 @@ function MemberSidebarRow({
   activities: Activity[];
   isRichActivity: boolean;
   accentClass: string;
+  onContextMenuMember: (e: React.MouseEvent, member: MemberWithUser, user: MemberWithUser['user']) => void;
   onClickMember: (e: React.MouseEvent, member: MemberWithUser, user: MemberWithUser['user']) => void;
 }) {
   const canonical = useCanonicalUserView(member.user);
-  const displayName = userDisplayName(canonical);
+  const displayName = member.nickname ?? userDisplayName(canonical);
 
   const rowClass = isRichActivity
     ? `flex items-center gap-2.5 px-2.5 py-2 rounded-[10px] mb-1 cursor-pointer transition-colors glass-pill border-l-2 ${accentClass}`
@@ -94,6 +103,8 @@ function MemberSidebarRow({
     <div
       key={member.userId}
       onClick={(e) => onClickMember(e, member, canonical)}
+      onContextMenu={(e) => onContextMenuMember(e, member, canonical)}
+      data-context-menu
       className={rowClass}
     >
       <Avatar
@@ -138,6 +149,7 @@ export function MemberSidebar() {
 
   const space = spaces.find(s => s.id === currentSpaceId);
   const ownerId = space?.ownerId;
+  const memberMenu = useMemberContextMenu(space);
   const spaceOrigin = space?._instanceOrigin ?? '';
 
   const { roleGroups, offlineMembers } = useMemo(() => {
@@ -180,6 +192,8 @@ export function MemberSidebar() {
 
   const handleMemberClick = (e: React.MouseEvent, member: MemberWithUser, user: MemberWithUser['user']) => {
     e.stopPropagation();
+    // Left click always means profile, regardless of the viewer's permissions.
+    useContextMenuStore.getState().close();
     openUserProfile(user, e.currentTarget.getBoundingClientRect(), 'left', { spaceId: member.spaceId, userId: member.userId });
   };
 
@@ -206,11 +220,14 @@ export function MemberSidebar() {
         isRichActivity={isRichActivity}
         accentClass={accentClass}
         onClickMember={handleMemberClick}
+        onContextMenuMember={memberMenu.open}
       />
     );
   };
 
   return (
+    <>
+    {memberMenu.dialogs}
     <div className="w-60 bg-surface-members flex-shrink-0 overflow-y-auto select-none no-scrollbar hidden desktop:block border-l border-border-hard">
       {showMemberSkeleton ? (
         <div className="px-3 pt-4" role="status" aria-label={t('spaces:members.loading')}>
@@ -259,5 +276,6 @@ export function MemberSidebar() {
       </div>
       )}
     </div>
+    </>
   );
 }

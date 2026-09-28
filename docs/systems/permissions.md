@@ -437,3 +437,9 @@ to each recipient's notification settings and channel visibility.
 ## Owner display title
 
 Changing `ownerTitle` is restricted to the space owner. `MANAGE_SPACE` alone does not grant this ability; changing the label never changes ownership or permission resolution.
+
+## Member nicknames and context menus
+
+Members may update their own per-space nickname without role-management permission. Updating another member requires `MANAGE_SPACE` and cannot target the owner. Role updates remain gated by `MANAGE_ROLES` and cannot target self or the owner. Combined role/nickname updates must satisfy both rules before any write. Nicknames are display-only and do not affect identity or permission resolution.
+
+The member menu exposes role, kick and ban actions only under their respective permissions, with self/owner protections; server checks remain authoritative. Social actions resolve canonical federated home addresses, while space-management requests retain instance-local member IDs.

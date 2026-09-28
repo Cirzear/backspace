@@ -63,7 +63,7 @@ PK: (spaceId, userId)
 |--------|------|-------|
 | spaceId | text NOT NULL | FK → spaces.id CASCADE |
 | userId | text NOT NULL | FK → users.id CASCADE |
-| nickname | text | Per-space display name |
+| nickname | text | Nullable per-space display name; member updates trim and validate 1–32 single-line characters, or clear with null. Uses the existing column; no migration is required. |
 | joinedAt | integer NOT NULL | |
 
 ### channel_categories

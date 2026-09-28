@@ -127,9 +127,11 @@ PATCH  /spaces/:id/transfer-ownership  { newOwnerId }                          �
 ### Members
 ```
 GET    /spaces/:id/members                               → { members[] }
-PATCH  /spaces/:id/members/:uid  { nickname?, roles? }   → { member }  [MANAGE_ROLES]
+PATCH  /spaces/:id/members/:uid  { nickname?, roleIds? } → { member }  [field-specific permissions]
 DELETE /spaces/:id/members/:uid                          → { success }  [KICK_MEMBERS|self]
 ```
+
+`PATCH /api/spaces/:id/members/:uid` requires membership and at least one recognized field. `nickname` accepts null to clear, or a trimmed, non-empty, single-line string of at most 32 characters. Members may rename themselves; renaming another non-owner member requires `MANAGE_SPACE`. `roleIds` requires `MANAGE_ROLES`, rejects self/owner changes, duplicates, roles from other spaces and the implicit everyone role. All supplied fields are validated before one transaction, so mixed patches cannot partially succeed. The response and `member_updated` event include the persisted nickname and populated roles. Route IDs are instance-local membership IDs, not canonical federated home IDs.
 
 ### Bans
 ```
