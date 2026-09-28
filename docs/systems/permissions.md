@@ -433,3 +433,7 @@ tokens render with role names/colors rather than user-profile links.
 `@here` currently has the same real-time recipient semantics as `@everyone`;
 there is no separate online-only audience check. Actual alerts remain subject
 to each recipient's notification settings and channel visibility.
+
+## Owner display title
+
+Changing `ownerTitle` is restricted to the space owner. `MANAGE_SPACE` alone does not grant this ability; changing the label never changes ownership or permission resolution.

@@ -616,3 +616,7 @@ Fields: nullable `level` (all/mentions/nothing; null inherits), nullable
 `Number.MAX_SAFE_INTEGER` represents permanent mute. Settings live on the
 instance hosting the target, including for replicated users; no home-instance
 preference replication is required. Read states are unchanged.
+
+## Space owner display title
+
+Migration `0022_space_owner_title.sql` adds nullable `spaces.owner_title`. Existing spaces retain their owner and use the localized default owner heading when the value is null. This is a display label, not a role or a permission.

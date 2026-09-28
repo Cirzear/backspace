@@ -162,6 +162,13 @@
       "when": 1790621580067,
       "tag": "0022_persistent_channel_pokes",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1790621580068,
+      "tag": "0023_space_owner_title",
+      "breakpoints": true
     }
   ]
 }

@@ -51,6 +51,7 @@ export const users = sqliteTable('users', {
 }));
 
 export const spaces = sqliteTable('spaces', {
+  ownerTitle: text('owner_title'),
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   icon: text('icon'),

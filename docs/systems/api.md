@@ -659,3 +659,7 @@ The boolean suppression flags are space-only: channel requests with either
 flag true are rejected, not silently rewritten. Responses contain the body
 plus `targetType` and `targetId`. Writes upsert only the authenticated user's
 row and publish `notification_setting_updated` to all their local sessions.
+
+## Space owner display title
+
+`PATCH /api/spaces/:id` accepts `ownerTitle: string | null`. Only the instance-local space owner may change it, even if another member has `MANAGE_SPACE`. The server trims text, rejects empty values, line breaks and values longer than 32 characters, and accepts null to reset the heading. The persisted field is returned as `Space.ownerTitle` and included in `space_updated` and ready snapshots.
