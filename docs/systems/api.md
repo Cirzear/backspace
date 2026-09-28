@@ -95,6 +95,8 @@ GET    /users/:id                                        → { user }
 GET    /users/:id/mutuals     ?homeUserId=               → { mutualFriends[], mutualSpaces[] }
 ```
 
+**Status:** `status` is the user's chosen status: `online`, `idle` or `dnd`; anything else, including `offline`, is 400 `status_invalid`. It is stored in `users.chosen_status` and published as live presence (local `presence_update` and S2S relay) while the user is connected; see activity-presence.md "DB Persistence". A body with only `status` is a valid update.
+
 **Write protection:** If the authenticated user is a replicated user (`homeInstance` is set **and** `federationHomeOrphaned !== 1`), the following fields are rejected with 403: `displayName`, `avatar`, `banner`, `accentColor`, `avatarColor`, `bio`. These fields are managed by the home instance via S2S relay. **Exception — detached accounts** (`federationHomeOrphaned === 1`): a federated account whose home instance was reset/lost is a sovereign local account with no home managing its profile, so it edits these durable fields locally like a native user (detach design §4.4). Detached edits are NOT relayed (the S2S profile-relay path stays gated on `!homeInstance`).
 
 **Self-view flag:** `GET /users/@me`, the login response, and the WS `ready` payload all sanitize the row with `isSelf=true` and include `federationHomeOrphaned: boolean` (detach design §4.7) — self-view only; it is never exposed to other users and never on the deleted/tombstone branch.
@@ -144,6 +146,7 @@ DELETE /spaces/:id/roles/:rid                                                   
 POST   /spaces/:id/members/:uid/roles { roleId }                                 → { success }  [MANAGE_ROLES]
 DELETE /spaces/:id/members/:uid/roles/:rid                                        → { success }  [MANAGE_ROLES]
 ```
+`DELETE /spaces/:id/roles/:rid` answers `404 role_not_in_space` for a role id that is not in the space, and otherwise deletes the role together with every channel and category override that names it (overrides carry no foreign key to the role).
 
 ## Channels (`routes/channels.ts`) — auth required
 ```
@@ -156,10 +159,11 @@ PATCH  /spaces/:id/channels/reorder  { order }           → reordered  [MANAGE_
 
 ### Channel Overrides
 ```
-GET    /channels/:id/overrides                                      → { overrides[] }  [MANAGE_CHANNELS]
-PUT    /channels/:id/overrides  { targetType, targetId, permissions } → { override }  [MANAGE_CHANNELS]
-DELETE /channels/:id/overrides/:targetType/:targetId                 → { success }  [MANAGE_CHANNELS]
+GET    /channels/:id/overrides                                   → { overrides[] }  [MANAGE_ROLES]
+PUT    /channels/:id/overrides  { targetType, targetId, allow, deny } → { success }  [MANAGE_ROLES]
+DELETE /channels/:id/overrides/:targetType/:targetId              → { success }  [MANAGE_ROLES]
 ```
+All three check `MANAGE_ROLES` space-wide (permissions.md, "Client gating"). `DELETE` removes the override row, so the target falls back to its space-wide permissions in that channel; the category routes below do the same for a category. A `PUT` or `DELETE` is followed by `channel_updated` (with the recipient's new `myPermissions`) or `channel_deleted` for each connected member of the space, and a category write also sends `category_updated`. The editor stages removals and sends them on Save.
 
 ### Categories
 ```
@@ -167,7 +171,7 @@ POST   /spaces/:id/categories        { name }              → { category }  [MA
 PATCH  /categories/:id               { name?, position? }  → { category }  [MANAGE_CHANNELS]
 DELETE /categories/:id                                      → { success }  [MANAGE_CHANNELS]
 GET    /categories/:id/overrides                            → { overrides[] }  [MANAGE_ROLES]
-PUT    /categories/:id/overrides     { targetType, targetId, permissions } → { success }  [MANAGE_ROLES]
+PUT    /categories/:id/overrides     { targetType, targetId, allow, deny } → { success }  [MANAGE_ROLES]
 DELETE /categories/:id/overrides/:tt/:tid                   → { success }  [MANAGE_ROLES]
 ```
 
@@ -299,8 +303,9 @@ Permissions checked: CONNECT, SPEAK, STREAM (space channels). DM calls: always f
 
 ## Instance (`routes/instance.ts`) — public
 ```
-GET /instance/info → { name, version, registrationOpen, federatedRegistrationOpen, instanceId, sourceCodeUrl, commit, directoryConfigured, directoryAvailable, directoryEnabled }
+GET /instance/info → { name, version, registrationOpen, federatedRegistrationOpen, instanceId, sourceCodeUrl, commit, directoryConfigured, directoryAvailable, directoryEnabled, supportCardEnabled }
 ```
+`supportCardEnabled` is `instance_settings.supportCardEnabled` (default true): whether the web client's Backspace page shows the Support card. The web client is its only reader; the server does nothing else with it. Written by the admin through `PATCH /settings/instance`.
 Three directory facts, reported separately because folding any two of them leaves a client unable to tell which is false. `directoryConfigured` is `config.directory.endpoint !== ''` on its own: whether this instance has a hub to talk to at all, which is what the pinger, the proxy and Outer Space all rest on; every surface that promises the directory will do something gates on it. `directoryAvailable` is `directoryConfigured` **and** `instance_settings.directoryBrowseEnabled`: whether people here browse, the endpoint checked first so no setting can advertise a directory the instance cannot reach. The Explore page reads it here to decide whether to render the Outer Space section (directory.md §9). `directoryEnabled` is `instance_settings.directoryEnabled`: whether the admin allows spaces here to be listed. The two are independent; the space settings panel reads the latter through `GET /settings/streaming`, not from here.
 `federatedRegistrationOpen` is a UX hint consumed by the Connections add-instance pre-flight (see `client-federation.md`). The 403 from `POST /auth/register` remains the security boundary.
 
@@ -314,17 +319,20 @@ GET   /settings/streaming    (auth)        → { streamingLimits }
 PATCH /settings/streaming    (admin)       → { streamingLimits }
 GET   /settings/instance     (admin)       → { instanceName, registrationOpen, federatedRegistrationOpen, discoveryEnabled,
                                                directoryEnabled, directoryBrowseEnabled, directoryLastPingAt,
-                                               directoryLastError, ... }
+                                               directoryLastError, directoryListedSpaceCount, supportCardEnabled, ... }
 PATCH /settings/instance     (admin)       { instanceName?, registrationOpen?, federatedRegistrationOpen?,
                                              discoveryEnabled?, directoryEnabled?, directoryBrowseEnabled?,
+                                             supportCardEnabled?,
                                              gifApiKey?, maxUploadSizeMb?,
                                              federationRelayEnabled?, federationRelayTtlDays? } → { settings }
 ```
 `registrationOpen` and `federatedRegistrationOpen` are **independent** toggles. PATCH validates `federatedRegistrationOpen` is `boolean` if provided; rejects 400 otherwise. `registrationOpen` is stored as a nullable column (null = fall back to `config.registrationOpen` env default); `federatedRegistrationOpen` is NOT NULL with default 1.
 
-`directoryEnabled` (space directory, see [directory.md](directory.md)) must be a boolean (`400 field_not_boolean`) and needs discovery on: `directoryEnabled: true` while the resulting `discoveryEnabled` is off is `400 directory_requires_discovery`. Both PATCH routes enforce the invariant the other way round too: a write that leaves discovery off clears `directoryEnabled` in the same write, on `/settings/instance` and on `/settings/streaming` (which carries `discoveryEnabled` but not `directoryEnabled`). `directoryLastPingAt` and `directoryLastError` are read-only; the PATCH ignores them in the body. `InstanceStreamingLimits.directoryEnabled` is also carried on `GET /settings/streaming`, read-only there, so a non-admin's space settings can tell whether the instance allows listing. `directoryConfigured` rides with it, also read-only and also from configuration rather than the row (`config.directory.endpoint !== ''`, the same fact `GET /instance/info` reports). It is here because this is the one settings document any signed-in user may read **on any instance**: a space that lives on a peer is gated by that peer's endpoint, which the home instance's `/instance/info` cannot answer for. Neither field is accepted on either PATCH; a body carrying one is ignored, as `directoryLastPingAt` is. A change to `directoryEnabled`, `discoveryEnabled`, `instanceName` or `federatedRegistrationOpen` marks the directory dirty; repeating a stored value does not.
+`directoryEnabled` (space directory, see [directory.md](directory.md)) must be a boolean (`400 field_not_boolean`) and needs discovery on: `directoryEnabled: true` while the resulting `discoveryEnabled` is off is `400 directory_requires_discovery`. Both PATCH routes enforce the invariant the other way round too: a write that leaves discovery off clears `directoryEnabled` in the same write, on `/settings/instance` and on `/settings/streaming` (which carries `discoveryEnabled` but not `directoryEnabled`). `directoryLastPingAt`, `directoryLastError` and `directoryListedSpaceCount` are read-only; the PATCH ignores them in the body. The count is the number of spaces that are public or request to join and have opted in to the directory, whatever `directoryEnabled` says. `InstanceStreamingLimits.directoryEnabled` is also carried on `GET /settings/streaming`, read-only there, so a non-admin's space settings can tell whether the instance allows listing. `directoryConfigured` rides with it, also read-only and also from configuration rather than the row (`config.directory.endpoint !== ''`, the same fact `GET /instance/info` reports). It is here because this is the one settings document any signed-in user may read **on any instance**: a space that lives on a peer is gated by that peer's endpoint, which the home instance's `/instance/info` cannot answer for. Neither field is accepted on either PATCH; a body carrying one is ignored, as `directoryLastPingAt` is. A change to `directoryEnabled`, `discoveryEnabled`, `instanceName` or `federatedRegistrationOpen` marks the directory dirty; repeating a stored value does not.
 
 `directoryBrowseEnabled` is the other directory axis: whether people on this instance see spaces from other instances in Explore. It must be a boolean (`400 field_not_boolean`), is independent of `directoryEnabled` (nothing clears it, and the discovery invariant does not touch it), is carried only on `/settings/instance` and not on `/settings/streaming`, and changing it never marks the directory dirty, since it is nowhere in the served document. It gates `GET /directory` and `directoryAvailable` on `GET /instance/info`. Default true. See [directory.md](directory.md).
+
+`supportCardEnabled` must be a boolean (`400 field_not_boolean` with `{ field: 'supportCardEnabled' }`). It is carried only on `/settings/instance` and not on `/settings/streaming`, is reported publicly on `GET /instance/info`, and never marks the directory dirty. Default true. What it hides: [admin.md](admin.md), General panel.
 
 ## Admin (`routes/admin.ts`) — admin required
 ```
@@ -450,7 +458,7 @@ type InviteRedemption = {
 
 ## Federation (`routes/federation.ts`)
 ```
-POST   /federation/peer/initiate   (admin)     { remoteOrigin }                    → { peer, verified } (200) | 409 { code:'PEER_EXISTS_RESET_REQUIRED' }
+POST   /federation/peer/initiate   (admin)     { remoteOrigin }                    → { peer, verified } (200) | { peer } (202, remote queued it) | 409 { code:'PEER_EXISTS_RESET_REQUIRED' } | 409 (handshake in progress, or awaiting remote approval)
 POST   /federation/peer/accept     (public, IP rate-limited 10/min) { sourceOrigin, challenge, hmacSecret, instanceName?, instanceId?, approvalToken? } → { accepted:true, instanceName, instanceId } (200) | queued (202 + { approvalToken }) | 409 { accepted:false, code:'PEER_EXISTS_RESET_REQUIRED', instanceName, instanceId }
 GET    /federation/peers           (admin)                                          → { peers[] } (no secrets; each peer carries needsAttentionReason)
 GET    /federation/reset-events     (admin)                                          → FederationResetEventsResponse
@@ -468,7 +476,9 @@ POST   /users/@me/reattach         (JWT as detached account, rate-limited 5/15mi
 
 **Handshake epoch exchange.** The handshake carries the **instance epoch** bidirectionally, mirroring `instanceName`: the request body's `instanceId` is the initiator's epoch (written to `federation_peers.peer_instance_id` on every authenticated activation path), and the 200 response body's `instanceId` is the responder's epoch. Older peers omit the field; the column stays `null` until the epoch-refresh/relay backstop fills it. Both are authenticated baselines — never overwritten by the unauthenticated `/instance/info` probe. **`FederationRelayRequest.sourceInstanceId`** stamps the sender's current epoch on every relay; because the whole body is HMAC-verified, a valid relay authentically carries the sender's incarnation id and populates `peer_instance_id` when null (fast-path baseline). See `federation.md` "Instance Epoch".
 
-**Trust re-establishment (verify-before-activate).** `/peer/initiate` no longer treats any `response.ok` as success. On remote 200 it performs a signed `fetchPeerEpoch` (`POST /federation/epoch`) round-trip to PROVE the responder adopted the negotiated secret, then either activates (`200 { peer, verified: true }`, storing the cryptographically-verified epoch as `peer_instance_id`) or parks the peer in `needs_attention`/`repeer_incomplete` (`200 { peer, verified: false }`). On remote `409 PEER_EXISTS_RESET_REQUIRED` it deletes its pending row and returns `409 { code: 'PEER_EXISTS_RESET_REQUIRED' }`. `/peer/accept` returns that same `409 { accepted: false, code: 'PEER_EXISTS_RESET_REQUIRED', instanceName, instanceId }` for an existing `active`/`needs_attention` row (honest refusal — anti-hijack guard unchanged, never adopts the caller's secret) instead of the old false `200 { accepted: true }`. The handshake `sourceOrigin` is `getOurOrigin()` (honors `PUBLIC_ORIGIN`), so it matches the `X-Federation-Origin` used for all S2S auth. See `federation.md` "Trust re-establishment contract".
+**Trust re-establishment (verify-before-activate).** `/peer/initiate` no longer treats any `response.ok` as success. On remote 200 it performs a signed `fetchPeerEpoch` (`POST /federation/epoch`) round-trip to PROVE the responder adopted the negotiated secret, then either activates (`200 { peer, verified: true }`, storing the cryptographically-verified epoch as `peer_instance_id`) or parks the peer in `needs_attention`/`repeer_incomplete` (`200 { peer, verified: false }`). On remote `409 PEER_EXISTS_RESET_REQUIRED` it deletes its pending row (or hands a taken-over row back, see below) and returns `409 { code: 'PEER_EXISTS_RESET_REQUIRED' }`. `/peer/accept` returns that same `409 { accepted: false, code: 'PEER_EXISTS_RESET_REQUIRED', instanceName, instanceId }` for an existing `active`/`needs_attention` row (honest refusal — anti-hijack guard unchanged, never adopts the caller's secret) instead of the old false `200 { accepted: true }`. The handshake `sourceOrigin` is `getOurOrigin()` (honors `PUBLIC_ORIGIN`), so it matches the `X-Federation-Origin` used for all S2S auth. See `federation.md` "Trust re-establishment contract".
+
+**Existing `pending` row.** A `pending` row that local traffic created (`initiatedBy: 'auto'`) is taken over: the route keeps the row, its secret and its queued outbox entries, marks it `initiatedBy: 'admin'` and runs the handshake. If the handshake fails the row goes back to `'auto'` with its entries and the attempt counted on the outbox worker's retry pacing; the response is the same error a fresh initiate would get. A `pending` row an admin or the remote created, or any handshake with the origin already in flight on this instance, answers `409` ("already in progress"). See `federation.md` "Outbound Peering Gate" (`/peer/initiate` and an existing `pending` row).
 
 **`GET /api/federation/reset-events`** — admin-only, read-only. Backs the "Reset cleanup" admin surface (instance-epoch self-healing §6.4). Returns the durable `federation_reset_events` journal, each row augmented with the origin's current orphaned real accounts (`federationHomeOrphaned = 1`) for disposition:
 

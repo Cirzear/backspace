@@ -17,7 +17,8 @@ IDs: Snowflake text, permissions: bigint decimal strings
 | displayName | text | | |
 | passwordHash | text NOT NULL | | bcrypt; `'!federation-replicated'` for stubs |
 | avatar | text | | Upload filename |
-| status | text | `'offline'` | online/idle/dnd/offline |
+| status | text | `'offline'` | Live presence: online/idle/dnd/offline. On a row that owns its choice, the user's `chosenStatus` while they have a connection and `'offline'` without one (written at socket auth, by a status change while connected, by `finalizeDisconnect` and by the boot reset). On a replicated row, the home instance's S2S projection, plus this instance's own connect/disconnect writes. See activity-presence.md "DB Persistence" |
+| chosenStatus | text NOT NULL | `'online'` | The status the user picked: online/idle/dnd, never offline. Written by `PATCH /api/users/@me` and the WS `presence_update` client event (`ws/presence.ts:applyChosenStatus`); read at socket auth (`utils/presenceStatus.ts:statusOnConnect`) and published as `status`, so idle and dnd survive disconnects, restarts and the boot reset. Meaningful only on rows that own their choice, native or detached (`ownsChosenStatus` in `@backspace/shared`: `home_instance IS NULL OR federation_home_orphaned = 1`); a replicated row's copy is never written or read. Migration `0019_chosen_status`, which also copies `status` into it, under the same rule, for accounts that are idle or dnd at upgrade time |
 | customStatus | text | | |
 | isAdmin | integer | 0 | First registered user = 1 |
 | homeInstance | text | | Federation origin URL (null = local) |
@@ -399,6 +400,7 @@ The user INSERT, `usedCount` increment, and redemption row INSERT all run in a s
 | directoryLastPingAt | integer | | Epoch ms of the last directory ping the hub accepted, null before the first. |
 | directoryLastError | text | | JSON `DirectoryPingError` (`{ at, status, reason? }`) of the last failed directory ping, null after a success. Also the per-day guard for the daily slot: the pinger will not retry a failing hub by the slot on a day that already recorded an error. See [directory.md](directory.md). |
 | directoryBrowseEnabled | integer NOT NULL | 1 | The admin allows people on this instance to see spaces from other instances in Explore ("Outer Space"). The incoming half of the directory, independent of `directoryEnabled`, which is the outgoing half. `GET /api/directory` answers `404 directory_disabled` while it is 0, and `instance/info` reports `directoryAvailable: false`. Default 1, which is what every instance did before the column existed. `DIRECTORY_ENDPOINT` sits above it: with no endpoint there is nothing to browse whatever it says. Nowhere in the served document, so changing it never marks `directoryDirty`. See [directory.md](directory.md). |
+| supportCardEnabled | integer (boolean mode) NOT NULL | 1 | The web client's Backspace page shows the Support card, which links to the project's Ko-fi page. Read only by the web client, through `supportCardEnabled` on `GET /api/instance/info`; it hides only that card and changes nothing the server does. Default 1; migration `0017_fat_rafael_vega.sql` adds it, and an existing row takes the default. Written through `PATCH /api/settings/instance`. |
 | installedAt | integer | | First-boot timestamp (epoch ms). Backfilled by `ensureDefaults` from the oldest local non-deleted account, or `Date.now()` on a fresh DB, so it is non-null after boot and never overwritten. |
 | updatedAt | integer NOT NULL | | |
 
@@ -488,8 +490,8 @@ Per-user "I want this peering relationship" subscriber rows attached to outbound
 | id | text PK | Snowflake |
 | requestId | text NOT NULL | FK → peer_approval_requests.id CASCADE — parent deletion (admin approve→active fanout, admin deny, last-subscriber cancel, expiry) automatically clears subscriber rows. |
 | userId | text NOT NULL | FK → users.id CASCADE |
-| triggerReason | text NOT NULL | `'friend_add'` \| `'space_join'` \| `'direct_message'` (`PeeringTriggerReason` enum in `packages/shared/src/types.ts`). |
-| triggerTarget | text NOT NULL | Action target — for `friend_add` this is `username@instance`; for `space_join` an invite code or space ID; for `direct_message` a recipient handle. Never stores message bodies, attachments, or user content. |
+| triggerReason | text NOT NULL | `'friend_add'` \| `'space_join'` \| `'direct_message'` \| `'instance_connect'` (`PeeringTriggerReason` enum in `packages/shared/src/types.ts`). Rows written by `/peer/ensure` before `instance_connect` existed said `friend_add` with an origin URL as target; migration `0018_peering_reason_instance_connect` relabels them (see [peer_approval_notifications](#peer_approval_notifications)). |
+| triggerTarget | text NOT NULL | Action target — for `friend_add` this is `username@instance`; for `space_join` an invite code or space ID; for `direct_message` a recipient handle; for `instance_connect` the remote instance's origin. Never stores message bodies, attachments, or user content. |
 | createdAt | integer NOT NULL | Epoch ms |
 
 **UNIQUE:** `(request_id, user_id, trigger_reason, trigger_target)` — same user retriggering the gate with the same reason+target updates rather than duplicates.
@@ -512,6 +514,8 @@ Terminal-state notifications for peering events (approved / denied / expired). S
 **Index:** `idx_peer_approval_notifications_user_id` on `(user_id)` — supports the user-facing list and unread-filter queries.
 
 Inserted by `onPeerActivated` (`'approved'`), the outbound `/deny` handler (`'denied'`), and the storage janitor outbound expiry pass (`'expired'`). Read rows older than 30 days are auto-cleaned by the janitor; unread rows are never auto-cleaned.
+
+**Migration `0018_peering_reason_instance_connect` (data only).** Before `instance_connect` existed, `POST /api/federation/peer/ensure` stored every call as `trigger_reason = 'friend_add'` with the remote's `URL.origin` as `trigger_target`, although only connection flows called it. The migration relabels those rows in both `peer_approval_subscribers` and `peer_approval_notifications` to `'instance_connect'`, keeping the target, which is already the shape the current code writes. It matches a `friend_add` row only when the target starts with `http://` or `https://` and contains no `@`; a genuine friend-add target is `name@domain` with a `[a-z0-9_]` username, so it never matches. On subscribers it first deletes a legacy row whose `instance_connect` twin (same request, user and target) already exists, which would otherwise break the unique key. It is idempotent. Unread notifications are never auto-cleaned, which is why this is a migration and not left to expiry: an unmigrated approved row keeps offering to retry a friend request prefilled with a URL.
 
 ### federation_outbox
 UNIQUE: (peerId, entityId)

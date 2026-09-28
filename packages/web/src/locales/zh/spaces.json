@@ -49,11 +49,14 @@
     },
     "settings": {
       "title": "频道设置",
+      "rename": "重命名频道",
+      "nameLabel": "频道名称",
       "channelLabel": "频道",
       "private": {
         "label": "私密频道",
         "description": "仅选定的成员和身份组可以查看此频道。",
-        "note": "没有显式访问权限的成员将无法看到此频道。拥有管理员权限的用户或空间拥有者始终可以查看所有频道。"
+        "note": "没有显式访问权限的成员将无法看到此频道。拥有管理员权限的用户或空间拥有者始终可以查看所有频道。",
+        "unhideOnSave": "保存后，所有成员都将看到此频道。"
       },
       "deleteButton": "删除频道"
     },
@@ -76,11 +79,14 @@
     },
     "settings": {
       "title": "分类设置",
+      "rename": "重命名分类",
+      "nameLabel": "分类名称",
       "categoryLabel": "分类",
       "private": {
         "label": "私密分类",
         "description": "仅选定的成员和身份组可以查看此分类下的频道。",
-        "note": "没有显式访问权限的成员将无法看到此分类。除非具体频道显式覆盖，否则其中的频道将继承此限制。"
+        "note": "没有显式访问权限的成员将无法看到此分类。除非具体频道显式覆盖，否则其中的频道将继承此限制。",
+        "unhideOnSave": "保存后，所有成员都将看到此分类以及其中未单独隐藏的频道。"
       },
       "deleteButton": "删除分类"
     },
@@ -146,7 +152,6 @@
       "submitting": "正在连接…"
     },
     "fallback": {
-      "notice": "{{host}} 上已存在一个同名账号，且无法识别主实例颁发的凭据。请使用您在该实例上设置的密码登录；之后将切换为该凭据。",
       "usernamePlaceholder": "您在此实例上的用户名",
       "passwordLabel": "此实例的密码",
       "passwordPlaceholder": "远端实例上的密码",
@@ -307,13 +312,13 @@
         }
       },
       "directory": {
-        "label": "列入 Backspace 目录",
+        "label": "列入全局 Backspace 目录",
         "hint": "在每个 Backspace 实例的外部空间中显示此空间。",
         "notConfigured": "本实例未配置可访问的目录，因此此空间无法列入任何目录。",
-        "adminOff": "需要实例管理员先开启全局空间发现。",
-        "adminOffSelf": "本实例已关闭全局空间发现。",
+        "adminOff": "需要实例管理员先允许列入全局目录。",
+        "adminOffSelf": "本实例不允许列入全局目录。",
         "adminOffSelfAction": "开启",
-        "adminOffSelfIntro": "这会为整个实例开启全局空间发现：此处的空间将可在“探索”中被发现，实例也会开始向公开目录上报自身。",
+        "adminOffSelfIntro": "这会为整个实例允许列入全局目录：此处的空间将可在“探索”中被发现，实例也会开始向公开目录上报自身。",
         "privateSpace": "请先将可见性设为公开或需申请加入。",
         "disclosure": "列入目录后将公开：空间的名称、描述、图标、横幅、成员数量以及本实例的地址。浏览目录的人会从本实例加载图标和横幅。"
       },
@@ -428,6 +433,10 @@
     },
     "overrideCount_other": "{{count}} 个权限覆盖",
     "removeOverride": "移除权限覆盖",
+    "removeOverrideFor": "移除 {{name}} 的权限覆盖",
+    "removeOverrideHint": "移除后，此处沿用整个空间的权限。",
+    "noRoleOverrides": "暂无身份组权限覆盖。此处每个身份组都沿用整个空间的权限。",
+    "noMemberOverrides": "暂无成员权限覆盖。",
     "roleOverrides": "身份组权限覆盖",
     "memberOverrides": "成员权限覆盖",
     "addRole": "添加身份组",
@@ -475,7 +484,6 @@
     },
     "dmList": {
       "explore": "探索",
-      "comingSoon": "敬请期待",
       "newDm": "新建私信",
       "empty": "暂无会话。",
       "leaveGroup": "退出群组",

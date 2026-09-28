@@ -3,9 +3,9 @@ import * as schema from '../db/schema.js';
 import { eq, and, inArray } from 'drizzle-orm';
 import { generateSnowflake } from './snowflake.js';
 import crypto from 'node:crypto';
-import type { FederationRelayEvent, FederationRelayParticipant, FederationRelayAttachment, DmMessageWithUser, FederationRelayRequest, DmCallUndeliverableReason } from '@backspace/shared';
+import type { FederationRelayEvent, FederationRelayParticipant, FederationRelayAttachment, DmMessageWithUser, FederationRelayRequest, DmCallUndeliverableReason, FederationMessageRef, FederationMessageTarget } from '@backspace/shared';
 import { getOurOrigin, buildFederationHeaders } from './federationAuth.js';
-import { extractDomain } from '../routes/federation.js';
+import { extractDomain, relayActorOfUser } from '../routes/federation.js';
 import { racePeering, ensurePeered, createAutoPlaceholderPeer } from './federationPeering.js';
 import { federationFetch } from './federationFetch.js';
 
@@ -421,12 +421,23 @@ export function getDmParticipants(dmChannelId: string): FederationRelayParticipa
  * hand a local-only conversation to unrelated instances.
  */
 export function getGroupDmTargetOrigins(dmChannelId: string): string[] {
-  const participants = getDmParticipants(dmChannelId);
+  return relayTargetOrigins(getDmParticipants(dmChannelId));
+}
+
+/**
+ * The peer origins a conversation among `members` is relayed to: every
+ * instance that hosts one of them, minus our own origin. A member without a
+ * `homeInstance` is homed here. `getGroupDmTargetOrigins` is this applied to a
+ * stored conversation's members; the relay receiver also applies it to the two
+ * people a 1-on-1 is between before any local copy of it exists.
+ */
+export function relayTargetOrigins(members: ReadonlyArray<{ homeInstance: string | null }>): string[] {
   const ourOrigin = getOurOrigin();
 
   const origins = new Set<string>();
-  for (const p of participants) {
-    const normalized = p.homeInstance.startsWith('http') ? p.homeInstance : `https://${p.homeInstance}`;
+  for (const m of members) {
+    const home = m.homeInstance || ourOrigin;
+    const normalized = home.startsWith('http') ? home : `https://${home}`;
     if (normalized !== ourOrigin) {
       origins.add(normalized);
     }
@@ -478,11 +489,23 @@ export function queueDmRelay(
     .where(eq(schema.dmChannels.id, dmChannelId))
     .get();
 
+  // An edit names the message it changes; the editor is its author (the
+  // edit paths are author-only).
+  const target = eventType === 'update'
+    ? dmMessageMutationTarget({
+      id: message.id,
+      dmChannelId,
+      sourceInstance: message.sourceInstance ?? null,
+      sourceMessageId: message.sourceMessageId ?? null,
+    }, message.userId)
+    : null;
+
   appendMutationLog(message.id, dmChannelId, eventType);
   queueOutboxEvent(message.id, dmChannelId, eventType, JSON.stringify({
     ...(channel?.federatedId && channel.ownerId ? { federatedId: channel.federatedId } : {}),
+    ...(target ? { target } : {}),
     message: {
-      ...buildRelayPayload(message, message.user),
+      ...buildRelayPayload(message, message.user, dmReplyRefForRelay(dmChannelId, message.replyToId)),
       attachments: attachments.length > 0 ? attachments : undefined,
     },
     participants,
@@ -497,15 +520,51 @@ export function queueDmRelay(
  * targeting (a delete carries the channel and message coordinates, which are
  * only ever another participant instance's business).
  */
-export function queueDmMessageDeleteRelay(messageId: string, dmChannelId: string): void {
-  appendMutationLog(messageId, dmChannelId, 'delete');
+export function queueDmMessageDeleteRelay(
+  messageId: string,
+  dmChannelId: string,
+  target: FederationMessageTarget | null,
+): void {
+  // The mutation log keeps the target too: the row is gone by the time the
+  // sync endpoint replays this delete, so it cannot be rebuilt then.
+  appendMutationLog(messageId, dmChannelId, 'delete', target ? JSON.stringify({ target }) : undefined);
   queueOutboxEvent(
     messageId,
     dmChannelId,
     'delete',
-    JSON.stringify({ deleted: true }),
+    JSON.stringify({ deleted: true, ...(target ? { target } : {}) }),
     getGroupDmTargetOrigins(dmChannelId),
   );
+}
+
+/**
+ * The `target` an edit or delete relay carries (`FederationMessageTarget`):
+ * the message in shared coordinates, the conversation's `federatedId`, and the
+ * acting user's federated identity. Null when the conversation has no
+ * `federatedId` or the actor has no comparable identity; the event then goes
+ * out in the old shape, matched by the sender's local id.
+ *
+ * Callers that delete must build it before removing the row.
+ */
+export function dmMessageMutationTarget(
+  row: { id: string; dmChannelId: string; sourceInstance: string | null; sourceMessageId: string | null },
+  actorUserId: string,
+): FederationMessageTarget | null {
+  const db = getDb();
+  const channel = db
+    .select({ federatedId: schema.dmChannels.federatedId })
+    .from(schema.dmChannels)
+    .where(eq(schema.dmChannels.id, row.dmChannelId))
+    .get();
+  if (!channel?.federatedId) return null;
+  const actorRow = db
+    .select({ id: schema.users.id, homeUserId: schema.users.homeUserId, homeInstance: schema.users.homeInstance })
+    .from(schema.users)
+    .where(eq(schema.users.id, actorUserId))
+    .get();
+  const actor = actorRow ? relayActorOfUser(actorRow) : null;
+  if (!actor) return null;
+  return { message: dmMessageFederationRef(row), federatedId: channel.federatedId, actor };
 }
 
 /**
@@ -542,8 +601,54 @@ export function getFriendEventTargets(
 }
 
 /**
+ * Name a DM message row in federation coordinates (`FederationMessageRef`).
+ *
+ * Each instance holds its own copy of a federated message under its own local
+ * id. A row this instance created is named by its id and our origin; a relayed
+ * copy is named by the id and origin it arrived with, which is the message's
+ * id on the instance that created it. Every relay event that points at an
+ * existing message (reply, reaction) names it this way, and the receiver turns
+ * it back into its own row with `resolveLocalDmMessage`.
+ */
+export function dmMessageFederationRef(row: {
+  id: string;
+  sourceInstance: string | null;
+  sourceMessageId: string | null;
+}): FederationMessageRef {
+  if (row.sourceInstance && row.sourceMessageId) {
+    return { messageId: row.sourceMessageId, messageHomeInstance: row.sourceInstance };
+  }
+  return { messageId: row.id, messageHomeInstance: getOurOrigin() };
+}
+
+/**
+ * The reply reference a relayed message carries: the replied-to message in
+ * federation coordinates, or null when the message is not a reply or its
+ * target is not in `dmChannelId` (the create paths refuse that, and a row
+ * predating the check is not relayed as one).
+ */
+export function dmReplyRefForRelay(
+  dmChannelId: string,
+  replyToId: string | null | undefined,
+): FederationMessageRef | null {
+  if (!replyToId) return null;
+  const target = getDb()
+    .select({
+      id: schema.dmMessages.id,
+      sourceInstance: schema.dmMessages.sourceInstance,
+      sourceMessageId: schema.dmMessages.sourceMessageId,
+    })
+    .from(schema.dmMessages)
+    .where(and(eq(schema.dmMessages.id, replyToId), eq(schema.dmMessages.dmChannelId, dmChannelId)))
+    .get();
+  return target ? dmMessageFederationRef(target) : null;
+}
+
+/**
  * Build the relay payload object for a DM message.
- * Used internally by queueDmRelay and the sync endpoint.
+ * Used internally by queueDmRelay; the sync endpoint builds the same shape.
+ * `replyTo` comes from `dmReplyRefForRelay`: `replyToId` is this instance's
+ * local id and only `replyTo` means anything to the receiver.
  */
 export function buildRelayPayload(
   message: {
@@ -559,6 +664,7 @@ export function buildRelayPayload(
     homeUserId: string | null;
     homeInstance: string | null;
   },
+  replyTo: FederationMessageRef | null = null,
 ): NonNullable<FederationRelayEvent['message']> {
   return {
     userId: user.id,
@@ -567,6 +673,7 @@ export function buildRelayPayload(
     ...(message.type === 'system' ? { type: 'system' as const } : {}),
     content: message.content,
     replyToId: message.replyToId ?? null,
+    ...(replyTo ? { replyTo } : {}),
     editedAt: message.editedAt ?? null,
     createdAt: message.createdAt,
   };

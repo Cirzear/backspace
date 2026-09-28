@@ -7,15 +7,16 @@ import type { VoiceRoom, DmRoomMeta, SpaceRoomMeta } from './handler.js';
 import { isMember, getChannelSpaceId, isDmMember, isDeadOneOnOne, hasPermission, computePermissions, PermissionBits } from '../utils/permissions.js';
 import { broadcastDmMessage, getDmMessageWithUser, isDmReplyTargetInChannel } from '../routes/dm.js';
 import { fetchReplyToMessages, isReplyTargetInChannel } from '../routes/messages.js';
-import { MAX_MESSAGE_LENGTH, type MessageWithUser, type Attachment, type DmMessageWithUser, type Embed, type Activity, type ActivityType, type ActivityTimestamps, type ActivityAssets, type ServerEvent, type DmCallUndeliverableFailure, type DmCallUndeliverableReason } from '@backspace/shared';
+import { MAX_MESSAGE_LENGTH, isChosenUserStatus, type MessageWithUser, type Attachment, type DmMessageWithUser, type Embed, type Activity, type ActivityType, type ActivityTimestamps, type ActivityAssets, type ServerEvent, type DmCallUndeliverableFailure, type DmCallUndeliverableReason } from '@backspace/shared';
 import type { CallRelayResult, CallFanoutFailure } from '../utils/federationOutbox.js';
 import { mapCallReasonToEventReason } from '../utils/federationOutbox.js';
 import { ACTIVITY_LIMITS } from '@backspace/shared/src/activities.js';
 import { sanitizeUser } from '../utils/sanitize.js';
 import { collectProfileBroadcastTargetIds } from '../utils/userDeletion.js';
+import { applyChosenStatus } from './presence.js';
 import { deleteAttachmentFiles } from '../utils/fileCleanup.js';
 import { resolveEmbeds, reResolveEmbeds, embedRowToEmbed } from '../utils/embedResolver.js';
-import { appendMutationLog, queueOutboxEvent, queueDmRelay, queueDmMessageDeleteRelay, getGroupDmTargetOrigins, sendCallRelay, computeFederatedId, sendTypingRelay, queueReadStateRelay } from '../utils/federationOutbox.js';
+import { appendMutationLog, dmMessageFederationRef, dmMessageMutationTarget, queueOutboxEvent, queueDmRelay, queueDmMessageDeleteRelay, getGroupDmTargetOrigins, sendCallRelay, computeFederatedId, sendTypingRelay, queueReadStateRelay } from '../utils/federationOutbox.js';
 import { canonicalizeHomeInstance, getOurOrigin, normalizeOriginForCompare } from '../utils/federationAuth.js';
 import { generateFederatedCallToken } from '../routes/livekit.js';
 import { config } from '../config.js';
@@ -169,10 +170,10 @@ export function handleClientEvent(
       handleDmMessageDelete(event, userId);
       break;
     case 'reaction_add':
-      handleReactionAdd(event, userId, isFederated);
+      handleReactionAdd(event, userId);
       break;
     case 'reaction_remove':
-      handleReactionRemove(event, userId, isFederated);
+      handleReactionRemove(event, userId);
       break;
     case 'channel_ack':
       handleChannelAck(event, userId, isFederated);
@@ -477,36 +478,11 @@ function validateActivities(raw: unknown): Activity[] | null {
 }
 
 function handlePresenceUpdate(event: Record<string, unknown>, userId: string): void {
-  const status = event.status as string;
-
-  if (!status || !['online', 'idle', 'dnd'].includes(status)) {
+  if (!isChosenUserStatus(event.status)) {
     connectionManager.sendToUser(userId, { type: 'error', message: 'Status must be "online", "idle", or "dnd"' });
     return;
   }
-
-  const db = getDb();
-  db.update(schema.users).set({ status }).where(eq(schema.users.id, userId)).run();
-
-  connectionManager.setUserStatus(userId, status);
-  const activities = connectionManager.getUserActivities(userId);
-
-  // Broadcast to friends + DM co-members + space co-members.
-  const payload = {
-    type: 'presence_update' as const,
-    userId,
-    status,
-    ...(activities.length > 0 ? { activities } : {}),
-  };
-  const targets = collectProfileBroadcastTargetIds(userId);
-  for (const uid of targets) connectionManager.sendToUser(uid, payload);
-
-  // Also send to self (other tabs)
-  connectionManager.sendToUser(userId, payload);
-
-  // S2S: project to all active peers
-  void import('../utils/federationPresence.js').then(({ queuePresenceRelay }) => {
-    try { queuePresenceRelay(userId, status as 'online' | 'idle' | 'dnd', activities); } catch (e) { console.warn('[ws] queuePresenceRelay(manual) failed', e); }
-  });
+  applyChosenStatus(userId, event.status);
 }
 
 function handleActivityUpdate(event: Record<string, unknown>, userId: string): void {
@@ -1071,6 +1047,10 @@ function handleDmMessageDelete(event: Record<string, unknown>, userId: string): 
     return;
   }
 
+  // The relay names the message by its shared coordinates, read from the row
+  // before it is gone.
+  const relayTarget = dmMessageMutationTarget(msg, userId);
+
   // Collect attachment filenames before deletion
   const dmAttachmentRows = db.select({ filename: schema.attachments.filename })
     .from(schema.attachments).where(eq(schema.attachments.dmMessageId, messageId)).all();
@@ -1105,12 +1085,12 @@ function handleDmMessageDelete(event: Record<string, unknown>, userId: string): 
   }
 
   // Federation: log mutation and queue for relay
-  queueDmMessageDeleteRelay(messageId, msg.dmChannelId);
+  queueDmMessageDeleteRelay(messageId, msg.dmChannelId, relayTarget);
 }
 
 // ─── Reaction Handlers ─────────────────────────────────────────────────────
 
-function handleReactionAdd(event: Record<string, unknown>, userId: string, isFederated: boolean): void {
+function handleReactionAdd(event: Record<string, unknown>, userId: string): void {
   const messageId = event.messageId as string;
   const emoji = event.emoji as string;
 
@@ -1155,8 +1135,9 @@ function handleReactionAdd(event: Record<string, unknown>, userId: string, isFed
     return;
   }
 
-  // Fall through to DM message
-  if (isFederated) return;
+  // Fall through to DM message. A federated account reacts here like anyone
+  // else: it is a member of the DM on this instance, and the relay carries its
+  // home identity back to its home instance.
   const dmMsg = db.select().from(schema.dmMessages).where(eq(schema.dmMessages.id, messageId)).get();
   if (!dmMsg || !isDmMember(dmMsg.dmChannelId, userId)) return;
   // Read-only enforcement: a dead 1-on-1 thread (partner tombstoned) accepts no
@@ -1184,9 +1165,9 @@ function handleReactionAdd(event: Record<string, unknown>, userId: string, isFed
       reaction: { id: reactionId, messageId, userId, emoji, createdAt: now, user: userObj },
     });
 
-    // Federation: log reaction mutation and queue for relay
-    const canonicalMessageId = dmMsg.sourceMessageId || messageId;
-    const messageHomeInstance = dmMsg.sourceInstance || getOurOrigin();
+    // Federation: log reaction mutation and queue for relay. The relay names
+    // the message in shared coordinates; `messageId` is only local here.
+    const target = dmMessageFederationRef(dmMsg);
     appendMutationLog(messageId, dmMsg.dmChannelId, 'reaction_add', JSON.stringify({
       userId,
       homeUserId: reactionUser?.homeUserId || userId,
@@ -1197,8 +1178,8 @@ function handleReactionAdd(event: Record<string, unknown>, userId: string, isFed
     const reactionAddTargetOrigins = getGroupDmTargetOrigins(dmMsg.dmChannelId);
     queueOutboxEvent(reactionId, dmMsg.dmChannelId, 'reaction_add', JSON.stringify({
       reaction: {
-        messageId: canonicalMessageId,
-        messageHomeInstance,
+        messageId: target.messageId,
+        messageHomeInstance: target.messageHomeInstance,
         userId,
         homeUserId: reactionUser?.homeUserId || userId,
         homeInstance: reactionUser?.homeInstance || getOurOrigin(),
@@ -1211,7 +1192,7 @@ function handleReactionAdd(event: Record<string, unknown>, userId: string, isFed
   }
 }
 
-function handleReactionRemove(event: Record<string, unknown>, userId: string, isFederated: boolean): void {
+function handleReactionRemove(event: Record<string, unknown>, userId: string): void {
   const messageId = event.messageId as string;
   const emoji = event.emoji as string;
 
@@ -1244,8 +1225,9 @@ function handleReactionRemove(event: Record<string, unknown>, userId: string, is
     return;
   }
 
-  // Fall through to DM message
-  if (isFederated) return;
+  // Fall through to DM message. A federated account reacts here like anyone
+  // else: it is a member of the DM on this instance, and the relay carries its
+  // home identity back to its home instance.
   const dmMsg = db.select().from(schema.dmMessages).where(eq(schema.dmMessages.id, messageId)).get();
   if (!dmMsg || !isDmMember(dmMsg.dmChannelId, userId)) return;
   // Read-only enforcement: a dead 1-on-1 thread (partner tombstoned) accepts no
@@ -1270,8 +1252,7 @@ function handleReactionRemove(event: Record<string, unknown>, userId: string, is
 
     // Federation: log reaction removal and queue for relay
     const removingUser = db.select().from(schema.users).where(eq(schema.users.id, userId)).get();
-    const canonicalMessageId = dmMsg.sourceMessageId || messageId;
-    const messageHomeInstance = dmMsg.sourceInstance || getOurOrigin();
+    const target = dmMessageFederationRef(dmMsg);
     appendMutationLog(messageId, dmMsg.dmChannelId, 'reaction_remove', JSON.stringify({
       userId,
       homeUserId: removingUser?.homeUserId || userId,
@@ -1285,8 +1266,8 @@ function handleReactionRemove(event: Record<string, unknown>, userId: string, is
       'reaction_remove',
       JSON.stringify({
         reaction: {
-          messageId: canonicalMessageId,
-          messageHomeInstance,
+          messageId: target.messageId,
+          messageHomeInstance: target.messageHomeInstance,
           userId,
           homeUserId: removingUser?.homeUserId || userId,
           homeInstance: removingUser?.homeInstance || getOurOrigin(),

@@ -441,6 +441,153 @@ describe('outbox worker — terminal rejection reasons + rollback invocation', (
 
     expect(invokeRollbackMock).not.toHaveBeenCalled();
   });
+
+  it('attribution_unproven is retryable: row kept, no rollback, next attempt on the backoff schedule', async () => {
+    seedPeer('peer-r6');
+    seedOutboxEntry('entry-r6', 'peer-r6', 'msg-6', 'create');
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      new Response(JSON.stringify({
+        accepted: [],
+        rejected: [{ messageId: 'msg-6', reason: 'attribution_unproven' }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
+
+    const before = Date.now();
+    const { processOutboxTick } = await import('./federationWorker.js');
+    await processOutboxTick();
+
+    const remaining = testDb.select().from(schema.federationOutbox)
+      .where(eq(schema.federationOutbox.id, 'entry-r6')).get();
+    expect(remaining).toBeDefined();
+    expect(remaining!.attempts).toBe(1);
+    // First step of BACKOFF_SCHEDULE_MS is 30s.
+    expect(remaining!.nextRetryAt).toBeGreaterThanOrEqual(before + 30_000);
+    expect(invokeRollbackMock).not.toHaveBeenCalled();
+  });
+
+  it('a non-terminal rejection is not re-sent on the next tick, it waits out its backoff', async () => {
+    seedPeer('peer-r7');
+    seedOutboxEntry('entry-r7', 'peer-r7', 'msg-7', 'create');
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      new Response(JSON.stringify({
+        accepted: [],
+        rejected: [{ messageId: 'msg-7', reason: 'channel_not_found' }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
+
+    const { processOutboxTick } = await import('./federationWorker.js');
+    await processOutboxTick();
+    await processOutboxTick();
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const remaining = testDb.select().from(schema.federationOutbox)
+      .where(eq(schema.federationOutbox.id, 'entry-r7')).get();
+    expect(remaining?.attempts).toBe(1);
+  });
+
+  it('an accepted entry beside a retryable one is removed, and only the retryable one is backed off', async () => {
+    seedPeer('peer-r8');
+    seedOutboxEntry('entry-r8a', 'peer-r8', 'msg-8a', 'create');
+    seedOutboxEntry('entry-r8b', 'peer-r8', 'msg-8b', 'create');
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      new Response(JSON.stringify({
+        accepted: ['msg-8a'],
+        rejected: [{ messageId: 'msg-8b', reason: 'attribution_unproven' }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
+
+    const { processOutboxTick } = await import('./federationWorker.js');
+    await processOutboxTick();
+
+    const rows = testDb.select().from(schema.federationOutbox).all();
+    expect(rows.map(r => r.id)).toEqual(['entry-r8b']);
+    expect(rows[0]!.attempts).toBe(1);
+  });
+
+  it('tells the receiver it retries attribution_unproven', async () => {
+    seedPeer('peer-r9');
+    seedOutboxEntry('entry-r9', 'peer-r9', 'msg-9', 'create');
+
+    let sentBody: unknown = null;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      sentBody = JSON.parse(String((init as RequestInit).body));
+      return new Response(JSON.stringify({ accepted: ['msg-9'], rejected: [] }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    const { processOutboxTick } = await import('./federationWorker.js');
+    await processOutboxTick();
+
+    expect(sentBody).toMatchObject({ capabilities: ['attribution_unproven'] });
+  });
+
+  it('sends the target of an edit or delete, and treats not_message_author as terminal', async () => {
+    seedPeer('peer-r11');
+    const target = {
+      message: { messageId: 'orig-11', messageHomeInstance: 'https://peer.example' },
+      federatedId: 'fid-11',
+      actor: { homeUserId: 'u', homeInstance: 'https://test.example' },
+    };
+    testDb.insert(schema.federationOutbox).values({
+      id: 'entry-r11', peerId: 'peer-r11', contextId: 'ch-1', entityId: 'local-11',
+      contextType: 'dm', eventType: 'delete', payload: JSON.stringify({ deleted: true, target }),
+      encryptionVersion: 0, attempts: 0, nextRetryAt: Date.now() - 1000,
+      expiresAt: Date.now() + 30 * 86_400_000, createdAt: Date.now(),
+    }).run();
+
+    let sentBody = '';
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      sentBody = String(init?.body ?? '');
+      return new Response(JSON.stringify({
+        accepted: [],
+        rejected: [{ messageId: 'local-11', reason: 'not_message_author' }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+
+    const { processOutboxTick } = await import('./federationWorker.js');
+    await processOutboxTick();
+
+    const sent = JSON.parse(sentBody) as { events: Array<{ messageId: string; target?: unknown }> };
+    expect(sent.events.find(e => e.messageId === 'local-11')?.target).toEqual(target);
+    const remaining = testDb.select().from(schema.federationOutbox)
+      .where(eq(schema.federationOutbox.id, 'entry-r11')).get();
+    expect(remaining).toBeUndefined();
+  });
+
+  it('an unknown_message rejection is backed off and leaves the peer healthy (#295)', async () => {
+    seedPeer('peer-r10');
+    seedOutboxEntry('entry-r10', 'peer-r10', 'reaction-10', 'reaction_add');
+    seedOutboxEntry('entry-r10b', 'peer-r10', 'msg-10b', 'create');
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      new Response(JSON.stringify({
+        accepted: ['msg-10b'],
+        rejected: [{ messageId: 'reaction-10', reason: 'unknown_message' }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
+
+    const { processOutboxTick } = await import('./federationWorker.js');
+    const before = Date.now();
+    await processOutboxTick();
+
+    const retained = testDb.select().from(schema.federationOutbox)
+      .where(eq(schema.federationOutbox.id, 'entry-r10')).get()!;
+    expect(retained.attempts).toBe(1);
+    expect(retained.nextRetryAt).toBeGreaterThanOrEqual(before + 30_000);
+
+    // The peer answered the request, so the peer itself is healthy.
+    const peer = testDb.select().from(schema.federationPeers)
+      .where(eq(schema.federationPeers.id, 'peer-r10')).get()!;
+    expect(peer.consecutiveFailures).toBe(0);
+
+    fetchSpy.mockClear();
+    await processOutboxTick();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe('unreachable transition resets probe pacing', () => {

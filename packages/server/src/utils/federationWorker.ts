@@ -12,8 +12,9 @@ import { connectionManager } from '../ws/handler.js';
 import { generateThumbnail } from './thumbnail.js';
 import { safeFetch } from './ssrf.js';
 import { federationFetch } from './federationFetch.js';
-import type { FederationRelayRequest, FederationRelayResponse, FederationRelayEvent } from '@backspace/shared';
+import type { FederationRelayCapability, FederationRelayRequest, FederationRelayResponse, FederationRelayEvent } from '@backspace/shared';
 import { startupBootstrapSync, onPeerDeactivated } from './federationPeerActivation.js';
+import { ensurePeered, isHandshakeInFlight } from './federationPeering.js';
 import { probePeerReachable, recoverOrDetectReset, detectResetOnNeedsAttentionPeers, detectResetForPeer } from './federationRecovery.js';
 import { backfillReplicatedProfileAssets, sweepDeadIncarnationArtifacts, reconcileDriftedDmFederatedIds } from '../routes/federation.js';
 import { invokePermanentFailureCallback } from './federationRollback.js';
@@ -33,7 +34,11 @@ const FILE_QUEUE_INTERVAL_MS = 30_000;    // 30 seconds
 // and trip spurious auth failures on the other peer.
 const HEALTH_CHECK_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
 const RECOVERY_TICK_INTERVAL_MS = 5_000;   // 5 seconds — demand-driven recovery scan
-/** Per-peer recovery-probe backoff (ms), indexed by probe_attempts (0-based). */
+/**
+ * Per-peer attempt backoff (ms), indexed by probe_attempts (0-based). Paces both
+ * the recovery probe of an `unreachable` peer and the handshake retry of a
+ * `pending` peer; see isPeerAttemptDue.
+ */
 const RECOVERY_BACKOFF_MS: readonly number[] = [30_000, 60_000, 300_000, 900_000];
 const JANITOR_INTERVAL_MS = 3_600_000;     // 1 hour
 
@@ -65,16 +70,31 @@ const PEER_UNREACHABLE_THRESHOLD = 10;
  * 'duplicate' is treated as terminal-but-no-rollback (the receiver already has
  * the event; nothing to roll back locally).
  *
+ * Every other rejection is retryable: the entry stays and waits out the next
+ * step of BACKOFF_SCHEDULE_MS, until the janitor drops it at its TTL. That
+ * includes `attribution_unproven` (the receiver does not hold the proof that
+ * our user has an account here yet; it arrives from the user's client) and
+ * reasons such as `channel_not_found` that resolve once an earlier event lands.
+ *
  * 5xx responses, network errors, and timeouts are NOT in this set — they are
  * transient and retried via the existing backoff schedule.
  */
 const TERMINAL_REJECTION_REASONS = new Set<string>([
   'duplicate',            // peer already has it (existing behavior)
   'recipient_not_found',  // receiver doesn't know the target user
-  'attribution_mismatch', // payload claims a homeInstance the source can't authoritatively speak for
+  'attribution_mismatch', // the source can never speak for this actor (third-instance, malformed, or no such user)
   'unknown_event_type',   // peer doesn't understand this eventType — never will
   'self_target_invalid',  // payload's from-identity equals to-identity (sender's self-check should have caught this)
+  'not_message_author',   // relayed edit/delete names a message the actor did not write
+  'invalid_target',       // edit/delete/reaction target malformed or from a non-peer; 1-on-1 create or reaction by a non-member; group op on a 1-on-1; unacceptable bootstrap
 ]);
+
+/**
+ * What this sender tells receivers it handles (`FederationRelayRequest.capabilities`).
+ * `attribution_unproven` is listed because the reason is not in
+ * TERMINAL_REJECTION_REASONS, so it is retried on the backoff schedule.
+ */
+const RELAY_CAPABILITIES: FederationRelayCapability[] = ['attribution_unproven'];
 
 // ─── Worker State ───────────────────────────────────────────────────────────
 
@@ -83,6 +103,14 @@ let fileQueueTimer: ReturnType<typeof setTimeout> | null = null;
 let healthCheckTimer: ReturnType<typeof setTimeout> | null = null;
 let recoveryTimer: ReturnType<typeof setTimeout> | null = null;
 let janitorTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Handshake attempts the outbox worker has started for `pending` peers, keyed by
+ * origin. They run detached from the outbox tick, so an origin that never
+ * answers cannot hold up delivery to active peers; this map is what keeps a
+ * second attempt for the same origin from starting while one is outstanding.
+ */
+const pendingPeerHandshakes = new Map<string, Promise<void>>();
 
 let outboxAbortController: AbortController | null = null;
 let fileQueueAbortController: AbortController | null = null;
@@ -97,6 +125,25 @@ let recoveryAbortController: AbortController | null = null;
 function getBackoffMs(attempt: number): number {
   const index = Math.min(attempt - 1, BACKOFF_SCHEDULE_MS.length - 1);
   return BACKOFF_SCHEDULE_MS[Math.max(0, index)] ?? 86_400_000;
+}
+
+/**
+ * Whether a peer's next attempt is due on the per-peer pacing shared by
+ * unreachable-peer recovery and pending-peer handshakes. `last_probe_at` is when
+ * the last attempt started and `probe_attempts` counts the failed attempts since
+ * the pacing was last reset. A peer with queued outbox mail is paced on
+ * RECOVERY_BACKOFF_MS; a silent one falls back to the health-check interval.
+ */
+function isPeerAttemptDue(
+  peer: { probeAttempts: number; lastProbeAt: number | null },
+  hasQueuedMail: boolean,
+  now: number,
+): boolean {
+  if (peer.lastProbeAt === null) return true;
+  const interval = hasQueuedMail
+    ? RECOVERY_BACKOFF_MS[Math.min(peer.probeAttempts, RECOVERY_BACKOFF_MS.length - 1)]!
+    : HEALTH_CHECK_INTERVAL_MS;
+  return now - peer.lastProbeAt >= interval;
 }
 
 /**
@@ -136,6 +183,10 @@ export async function processOutboxTick(): Promise<void> {
   const db = getDb();
   const now = Date.now();
 
+  // Start any due handshakes for pending peers first. They run detached, so
+  // they overlap this tick's delivery instead of delaying it.
+  resolvePendingPeers(now);
+
   // Fetch outbox entries ready for delivery, joined with active peers
   const entries = db
     .select({
@@ -171,9 +222,6 @@ export async function processOutboxTick(): Promise<void> {
     .all();
 
   if (entries.length === 0) {
-    // No active-peer entries to deliver, but pending peers may still need
-    // handshake resolution. Always run resolvePendingPeers() before returning.
-    await resolvePendingPeers();
     return;
   }
 
@@ -216,6 +264,7 @@ export async function processOutboxTick(): Promise<void> {
       if (parsed.message) evt.message = parsed.message;
       if (parsed.reactions) evt.reactions = parsed.reactions;
       if (parsed.reaction) evt.reaction = parsed.reaction;
+      if (parsed.target) evt.target = parsed.target;
       if (parsed.membership) evt.membership = parsed.membership;
       if (parsed.ownership) evt.ownership = parsed.ownership;
       if (parsed.group) evt.group = parsed.group;
@@ -242,6 +291,7 @@ export async function processOutboxTick(): Promise<void> {
       // populate-if-null baseline (design §3.2). A reset instance cannot sign a
       // valid relay, so this never carries a *new* epoch post-reset.
       sourceInstanceId: getInstanceId(),
+      capabilities: RELAY_CAPABILITIES,
       events,
     };
 
@@ -297,6 +347,16 @@ export async function processOutboxTick(): Promise<void> {
               .where(inArray(schema.federationOutbox.id, terminalOutboxIds))
               .run();
           }
+        }
+
+        // Everything else in the batch was not delivered and may be retried:
+        // non-terminal rejections, and any entry the receiver did not mention.
+        // It moves to the next step of the backoff schedule. Leaving it due
+        // would resend it on every tick, and a run of such rows at the head of
+        // the createdAt-ordered batch would crowd newer events out of it.
+        const retryable = peerEntries.filter((e) => !terminalEntityIds.has(e.entityId));
+        if (retryable.length > 0) {
+          applyOutboxEntryBackoff(db, retryable, now);
         }
 
         // Invoke registered rollback callbacks AFTER deleting the outbox row,
@@ -436,9 +496,6 @@ export async function processOutboxTick(): Promise<void> {
       handleOutboxDeliveryFailure(db, peerId, peerEntries, now);
     }
   }
-
-  // ─── Resolve pending peers with queued outbox entries ────────────────────
-  await resolvePendingPeers();
 }
 
 function applyOutboxEntryBackoff(
@@ -503,18 +560,25 @@ function handleOutboxDeliveryFailure(
 // ─── Pending Peer Resolution ───────────────────────────────────────────────
 
 /**
- * Find pending peers that have outbox entries waiting, and attempt to
- * establish peering via ensurePeered(). Runs after active delivery to
- * avoid blocking it with handshake I/O.
+ * Start a handshake for every pending peer that has outbox entries waiting and
+ * whose next attempt is due. Does not wait for them: each attempt runs detached
+ * (see pendingPeerHandshakes), so a pending origin that never answers costs the
+ * outbox tick nothing, and a given origin has at most one attempt outstanding.
+ *
+ * Attempts are paced like unreachable-peer recovery (isPeerAttemptDue with
+ * RECOVERY_BACKOFF_MS, on the same `last_probe_at` / `probe_attempts` columns):
+ * the first is immediate, each failure moves the next one further out.
  */
-async function resolvePendingPeers(): Promise<void> {
+function resolvePendingPeers(now: number): void {
   const db = getDb();
 
-  // Find distinct pending peer origins with queued outbox entries
+  // Find distinct pending peers with queued outbox entries
   const pendingWithEntries = db
     .selectDistinct({
       peerId: schema.federationPeers.id,
       peerOrigin: schema.federationPeers.origin,
+      probeAttempts: schema.federationPeers.probeAttempts,
+      lastProbeAt: schema.federationPeers.lastProbeAt,
     })
     .from(schema.federationPeers)
     .innerJoin(
@@ -524,48 +588,87 @@ async function resolvePendingPeers(): Promise<void> {
     .where(eq(schema.federationPeers.status, 'pending'))
     .all();
 
-  if (pendingWithEntries.length === 0) return;
+  for (const peer of pendingWithEntries) {
+    if (pendingPeerHandshakes.has(peer.peerOrigin)) continue;
+    if (!isPeerAttemptDue(peer, true, now)) continue;
 
-  const { ensurePeered } = await import('./federationPeering.js');
+    const attempt = resolvePendingPeer(peer.peerId, peer.peerOrigin, now)
+      .catch((err) => {
+        console.error(`[federation-worker] Auto-peer attempt with ${peer.peerOrigin} failed:`, err);
+      })
+      .finally(() => {
+        pendingPeerHandshakes.delete(peer.peerOrigin);
+      });
+    pendingPeerHandshakes.set(peer.peerOrigin, attempt);
+  }
+}
 
-  for (const { peerId, peerOrigin } of pendingWithEntries) {
-    console.log(`[federation-worker] Attempting auto-peer with ${peerOrigin}...`);
+/**
+ * One handshake attempt for a pending peer, via ensurePeered(). A transient
+ * failure advances the peer's pacing; `startedAt` is recorded as the attempt's
+ * time, as the recovery probe records its tick time.
+ */
+async function resolvePendingPeer(peerId: string, peerOrigin: string, startedAt: number): Promise<void> {
+  const db = getDb();
 
-    const result = await ensurePeered(peerOrigin, { kind: 'system' });
+  // Another caller (a DM send, a friend add, an admin's /peer/initiate) is
+  // already handshaking with this origin. Its outcome settles the row; starting
+  // a second exchange would only race it. Not an attempt, so pacing is untouched.
+  if (isHandshakeInFlight(peerOrigin)) return;
 
-    switch (result.status) {
-      case 'active':
-        console.log(`[federation-worker] Auto-peered with ${peerOrigin} — entries will deliver next tick`);
-        // Notify admins of peer state change
-        connectionManager.sendToAdmins({ type: 'federation_peers_changed' as const });
-        break;
+  console.log(`[federation-worker] Attempting auto-peer with ${peerOrigin}...`);
 
-      case 'rejected': {
-        console.warn(`[federation-worker] Auto-peering rejected by ${peerOrigin}: ${result.error}`);
+  const result = await ensurePeered(peerOrigin, { kind: 'system' });
 
-        const contextMap = buildContextMapForPeer(db, peerId);
+  switch (result.status) {
+    case 'active':
+      console.log(`[federation-worker] Auto-peered with ${peerOrigin} — entries will deliver next tick`);
+      // Notify admins of peer state change
+      connectionManager.sendToAdmins({ type: 'federation_peers_changed' as const });
+      break;
 
-        // Purge outbox entries (NOT mutation log)
-        db.delete(schema.federationOutbox)
-          .where(eq(schema.federationOutbox.peerId, peerId))
-          .run();
+    case 'rejected': {
+      console.warn(`[federation-worker] Auto-peering rejected by ${peerOrigin}: ${result.error}`);
 
-        onPeerDeactivated(peerId, 'remote_rejected').catch(err =>
-          console.error('[federation-worker] onPeerDeactivated from resolvePendingPeers rejected failed:', err)
-        );
+      const contextMap = buildContextMapForPeer(db, peerId);
 
-        // Push federation_peer_rejected WS event to affected users
-        pushPeerRejectedEvent(peerOrigin, contextMap);
-        // Notify admins of peer state change
-        connectionManager.sendToAdmins({ type: 'federation_peers_changed' as const });
-        break;
-      }
+      // Purge outbox entries (NOT mutation log)
+      db.delete(schema.federationOutbox)
+        .where(eq(schema.federationOutbox.peerId, peerId))
+        .run();
 
-      case 'failed':
-        console.warn(`[federation-worker] Auto-peer with ${peerOrigin} failed (transient): ${result.error}`);
-        // Leave entries — will retry next tick
-        break;
+      onPeerDeactivated(peerId, 'remote_rejected').catch(err =>
+        console.error('[federation-worker] onPeerDeactivated from resolvePendingPeers rejected failed:', err)
+      );
+
+      // Push federation_peer_rejected WS event to affected users
+      pushPeerRejectedEvent(peerOrigin, contextMap);
+      // Notify admins of peer state change
+      connectionManager.sendToAdmins({ type: 'federation_peers_changed' as const });
+      break;
     }
+
+    case 'failed':
+      console.warn(`[federation-worker] Auto-peer with ${peerOrigin} failed (transient): ${result.error}`);
+      // Leave the entries and advance the pacing; the next attempt waits out
+      // the next step of RECOVERY_BACKOFF_MS.
+      db.update(schema.federationPeers)
+        .set({
+          probeAttempts: sql`${schema.federationPeers.probeAttempts} + 1`,
+          lastProbeAt: startedAt,
+        })
+        .where(and(
+          eq(schema.federationPeers.id, peerId),
+          eq(schema.federationPeers.status, 'pending'),
+        ))
+        .run();
+      break;
+
+    case 'pending':
+    case 'admin_required':
+      // The row left `pending` (now awaiting_approval) or the outbound gate
+      // removed it; either way this worker has nothing further to retry.
+      break;
   }
 }
 
@@ -1072,12 +1175,7 @@ export async function processRecoveryTick(): Promise<void> {
       .limit(1)
       .get();
 
-    const interval = pending
-      ? RECOVERY_BACKOFF_MS[Math.min(peer.probeAttempts, RECOVERY_BACKOFF_MS.length - 1)]!
-      : HEALTH_CHECK_INTERVAL_MS;
-
-    const due = peer.lastProbeAt === null || (now - peer.lastProbeAt) >= interval;
-    if (!due) continue;
+    if (!isPeerAttemptDue(peer, pending !== undefined, now)) continue;
 
     recoveryAbortController = new AbortController();
     const probe = await probePeerReachable(peer.origin, recoveryAbortController.signal);

@@ -1,6 +1,6 @@
 import { getDb } from '../db/index.js';
 import * as schema from '../db/schema.js';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, notExists } from 'drizzle-orm';
 import { generateSnowflake } from './snowflake.js';
 import { getOurOrigin, generateHmacSecret } from './federationAuth.js';
 import { validateOrigin } from '../routes/federation.js';
@@ -212,9 +212,104 @@ export function createAutoPlaceholderPeer(
     .get() ?? null;
 }
 
+/**
+ * The `error` a Backspace `/peer/accept` answers with when its row for us is
+ * `revoked` (`routes/federation/handlers/peerHandshake.ts`, the `revoked`
+ * branch). That 403 carries no `code`, so this exact string is the only way to
+ * tell it from a 403 sent by something in front of the remote. It has not
+ * changed since the handshake was introduced, so every released version sends
+ * it.
+ */
+const REMOTE_REVOKED_ERROR = 'Peering with this instance has been revoked';
+
+// ─── Settled peer rows ──────────────────────────────────────────────────────
+
+/**
+ * The answer `ensurePeered` gives for a peer row whose status is settled, or
+ * `null` for a `pending` row, which still needs a handshake (or the gate).
+ * Settled answers are read from the row alone: no network, no writes.
+ */
+function settledResultFor(
+  peer: Pick<typeof schema.federationPeers.$inferSelect, 'id' | 'status'>,
+): EnsurePeeredResult | null {
+  switch (peer.status) {
+    case 'active':
+      return { status: 'active', peerId: peer.id };
+    case 'rejected':
+      return { status: 'rejected', error: 'Remote instance requires manual peering approval' };
+    case 'revoked':
+      return { status: 'rejected', error: 'Peer was revoked by admin' };
+    case 'unreachable':
+      // Unreachable peers were previously active — treat as active for peering
+      // (the health check will restore them; don't re-handshake)
+      return { status: 'active', peerId: peer.id };
+    case 'needs_attention':
+      // Admin intervention required — do not auto-heal via performHandshake
+      return { status: 'rejected', error: 'Peer in needs_attention — admin Reset required' };
+    case 'awaiting_approval':
+      return { status: 'pending', error: 'Awaiting admin approval on remote instance' };
+    default:
+      // `pending` (and any status this code does not know, which the column
+      // does not constrain) still needs a handshake or the gate.
+      return null;
+  }
+}
+
+/**
+ * What `ensurePeered(origin)` would answer without doing any work, or `null`
+ * when it would have to handshake or run the outbound gate. Lets
+ * `POST /api/federation/peer/ensure` confirm an existing peering without
+ * charging the caller's rate limit, which exists to bound handshakes.
+ */
+export function settledPeeringResult(origin: string): EnsurePeeredResult | null {
+  const normalized = validateOrigin(origin);
+  if (!normalized) return null;
+  const peer = getDb()
+    .select({ id: schema.federationPeers.id, status: schema.federationPeers.status })
+    .from(schema.federationPeers)
+    .where(eq(schema.federationPeers.origin, normalized))
+    .get();
+  return peer ? settledResultFor(peer) : null;
+}
+
 // ─── In-flight deduplication ─────────────────────────────────────────────────
 
 const inFlightPeering = new Map<string, Promise<EnsurePeeredResult>>();
+
+/**
+ * Origins an admin's `POST /peer/initiate` is handshaking with right now. That
+ * route runs its own exchange instead of going through ensurePeered, so it
+ * claims the origin here; while the claim is held ensurePeered starts no
+ * handshake of its own for that origin. Two `/peer/accept` requests in flight
+ * with the same origin race on the remote, and the loser's answer (409
+ * PEER_EXISTS_RESET_REQUIRED) makes /peer/initiate discard its row.
+ */
+const adminHandshakes = new Set<string>();
+
+/**
+ * Whether a handshake with `origin` is in flight on this instance, from
+ * ensurePeered or from an admin's /peer/initiate. `origin` must be normalized
+ * (validateOrigin), as both maps are keyed by the normalized origin.
+ */
+export function isHandshakeInFlight(origin: string): boolean {
+  return inFlightPeering.has(origin) || adminHandshakes.has(origin);
+}
+
+/**
+ * Claim `origin` for an admin-initiated handshake. Returns false, claiming
+ * nothing, when a handshake with it is already in flight. A successful claim
+ * must be released with releaseAdminHandshake once the exchange has settled.
+ */
+export function claimAdminHandshake(origin: string): boolean {
+  if (isHandshakeInFlight(origin)) return false;
+  adminHandshakes.add(origin);
+  return true;
+}
+
+/** Release a claim taken with claimAdminHandshake. */
+export function releaseAdminHandshake(origin: string): void {
+  adminHandshakes.delete(origin);
+}
 
 /**
  * Ensure we have an active peering relationship with the given origin.
@@ -251,26 +346,15 @@ export async function ensurePeered(
     .get();
 
   if (existing) {
-    switch (existing.status) {
-      case 'active':
-        return { status: 'active', peerId: existing.id };
-      case 'rejected':
-        return { status: 'rejected', error: 'Remote instance requires manual peering approval' };
-      case 'revoked':
-        return { status: 'rejected', error: 'Peer was revoked by admin' };
-      case 'unreachable':
-        // Unreachable peers were previously active — treat as active for peering
-        // (the health check will restore them; don't re-handshake)
-        return { status: 'active', peerId: existing.id };
-      case 'needs_attention':
-        // Admin intervention required — do not auto-heal via performHandshake
-        return { status: 'rejected', error: 'Peer in needs_attention — admin Reset required' };
-      case 'awaiting_approval':
-        return { status: 'pending', error: 'Awaiting admin approval on remote instance' };
-      case 'pending':
-        // Fall through to dedup logic below
-        break;
-    }
+    const settled = settledResultFor(existing);
+    if (settled) return settled;
+  }
+
+  // An admin's /peer/initiate owns this origin's handshake right now. Its
+  // outcome settles the row; a second exchange would only race it, and
+  // neither gate below may act on the row while the admin's exchange runs.
+  if (adminHandshakes.has(normalized)) {
+    return { status: 'failed', error: 'An admin-initiated handshake with this instance is in progress' };
   }
 
   // Pre-handshake gate: refuse if we have an unresolved inbound approval-request
@@ -485,45 +569,39 @@ async function performHandshake(
       return { status: 'active', peerId };
     }
 
-    // Check for explicit rejection (autoAcceptPeering = 0)
     let code: string | undefined;
+    let remoteError: string | undefined;
     let errorMessage = `Remote rejected peering (HTTP ${response.status})`;
     try {
       const body = (await response.json()) as { error?: string; code?: string };
       if (body.error) errorMessage = body.error;
+      remoteError = body.error;
       code = body.code;
     } catch {
-      // Ignore parse failures
+      // Non-JSON body (an HTML error page from something in front of the remote)
     }
 
-    if (response.status === 403 && code === 'PEERING_REQUIRES_APPROVAL') {
-      // Explicit rejection — set rejected status (sticky)
-      db.update(schema.federationPeers)
-        .set({ status: 'rejected' })
-        .where(eq(schema.federationPeers.id, peerId))
-        .run();
-      const { connectionManager } = await import('../ws/handler.js');
-      connectionManager.sendToAdmins({ type: 'federation_peers_changed' as const });
-      onPeerDeactivated(peerId, 'remote_rejected').catch(err =>
-        console.error('[federation] onPeerDeactivated from performHandshake rejected failed:', err)
-      );
-      return { status: 'rejected', error: errorMessage };
+    // Settle only on the two refusals a Backspace `/peer/accept` sends, both
+    // permanent: `PEERING_REQUIRES_APPROVAL` (its admin denied us) and the
+    // revoked answer (its row for us is `revoked`). Retrying either only
+    // repeats the refusal, so the row settles as `rejected` (sticky) and the
+    // caller hears it. Any other 403 (a WAF, an IP block, a proxy deny rule, a
+    // default vhost during a redeploy) is not the remote's answer and stays
+    // transient below.
+    if (
+      response.status === 403 &&
+      (code === 'PEERING_REQUIRES_APPROVAL' || remoteError === REMOTE_REVOKED_ERROR)
+    ) {
+      console.warn(`[federation] handshake with ${origin} refused (${code ?? 'revoked'}): ${errorMessage}`);
+      return settleRejectedHandshake(peerId, errorMessage);
     }
 
     // Other errors (4xx, 5xx) — transient, clean up pending peer
-    if (!existingPeerId) {
-      db.delete(schema.federationPeers)
-        .where(eq(schema.federationPeers.id, peerId))
-        .run();
-    }
+    if (!existingPeerId) discardCreatedPendingPeer(peerId, origin);
     return { status: 'failed', error: errorMessage };
   } catch (err: unknown) {
     // Network or timeout error — transient, clean up pending peer
-    if (!existingPeerId) {
-      db.delete(schema.federationPeers)
-        .where(eq(schema.federationPeers.id, peerId))
-        .run();
-    }
+    if (!existingPeerId) discardCreatedPendingPeer(peerId, origin);
 
     const message = err instanceof Error ? err.message : 'Unknown error';
     if (err instanceof DOMException && err.name === 'TimeoutError') {
@@ -533,9 +611,96 @@ async function performHandshake(
   }
 }
 
-/** Clear in-flight peering map (for tests). */
+/**
+ * Settle the row a handshake ran on as `rejected` after the remote refused us.
+ *
+ * Only a row that is still `pending` is settled. While our request is in
+ * flight the remote can run its own `/peer/accept` against us, which promotes
+ * this same row to `active`; that row is then the real outcome and is returned
+ * as it stands instead of being overwritten.
+ */
+async function settleRejectedHandshake(peerId: string, error: string): Promise<EnsurePeeredResult> {
+  const db = getDb();
+  const settled = db.update(schema.federationPeers)
+    .set({ status: 'rejected' })
+    .where(and(
+      eq(schema.federationPeers.id, peerId),
+      eq(schema.federationPeers.status, 'pending'),
+    ))
+    .run();
+
+  if (settled.changes === 0) {
+    const row = db
+      .select({ id: schema.federationPeers.id, status: schema.federationPeers.status })
+      .from(schema.federationPeers)
+      .where(eq(schema.federationPeers.id, peerId))
+      .get();
+    return (row ? settledResultFor(row) : null) ?? { status: 'failed', error };
+  }
+
+  const { connectionManager } = await import('../ws/handler.js');
+  connectionManager.sendToAdmins({ type: 'federation_peers_changed' as const });
+  onPeerDeactivated(peerId, 'remote_rejected').catch(err =>
+    console.error('[federation] onPeerDeactivated from performHandshake rejected failed:', err)
+  );
+  return { status: 'rejected', error };
+}
+
+/**
+ * Remove the `pending` row a failed handshake created, unless local traffic has
+ * queued outbox entries against it in the meantime.
+ *
+ * The row is inserted before the handshake's first await, so it is visible to
+ * everything that runs while the request is in flight. In the DM send path
+ * that is the normal order: the typing-stop relay's warm-up starts the
+ * handshake, and `queueOutboxEvent` then finds this `pending` row and queues
+ * the message against it instead of creating a placeholder of its own.
+ * Deleting the row would cascade those entries away and leave nothing for the
+ * outbox worker to retry, so the first messages to an instance that was
+ * briefly unreachable would wait for some later event to bring peering up.
+ * A row with entries is exactly what `createAutoPlaceholderPeer` would have
+ * produced (`pending`, `initiatedBy: 'auto'`, created behind the same gate),
+ * and `resolvePendingPeers` retries it on the next tick.
+ *
+ * Only a row that is still `pending` is removed. The remote's own
+ * `/peer/accept` can promote this row to `active` while our request is in
+ * flight, and our request failing afterwards says nothing about that peering.
+ *
+ * One statement, so no entry can be queued and no status can change between
+ * the check and the delete.
+ */
+function discardCreatedPendingPeer(peerId: string, origin: string): void {
+  const db = getDb();
+  const result = db.delete(schema.federationPeers)
+    .where(and(
+      eq(schema.federationPeers.id, peerId),
+      eq(schema.federationPeers.status, 'pending'),
+      notExists(
+        db.select({ id: schema.federationOutbox.id })
+          .from(schema.federationOutbox)
+          .where(eq(schema.federationOutbox.peerId, peerId)),
+      ),
+    ))
+    .run();
+  if (result.changes > 0) return;
+
+  const kept = db
+    .select({ status: schema.federationPeers.status })
+    .from(schema.federationPeers)
+    .where(eq(schema.federationPeers.id, peerId))
+    .get();
+  if (!kept) return;
+  if (kept.status === 'pending') {
+    console.log(`[federation] handshake with ${origin} failed; keeping its pending row for the queued outbox entries`);
+  } else {
+    console.log(`[federation] handshake with ${origin} failed, but its row is now ${kept.status} (settled by the remote while the request was in flight); leaving it`);
+  }
+}
+
+/** Clear in-flight peering state (for tests). */
 export function _clearInFlightPeering(): void {
   inFlightPeering.clear();
+  adminHandshakes.clear();
 }
 
 /**

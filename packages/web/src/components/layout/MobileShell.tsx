@@ -23,16 +23,21 @@ import { MobileVoiceFullScreen } from './MobileVoiceFullScreen';
 import { MobileMembersScreen } from './MobileMembersScreen';
 import { MobileGroupDmInfo } from './MobileGroupDmInfo';
 import { FriendsPage } from '../chat/FriendsPage';
+import { ProjectHubPage } from '../projectHub/ProjectHubPage';
+import type { ProjectLinks } from '../../utils/projectLinks';
 import { ExplorePage } from '../chat/ExplorePage';
 import { UserProfileModal } from '../modals/UserProfileModal';
-import { GeneralPanel } from '../modals/instanceSettingsPanels/GeneralPanel';
-import { UpdatesPanel } from '../modals/instanceSettingsPanels/UpdatesPanel';
-import { TelemetryPanel } from '../modals/instanceSettingsPanels/TelemetryPanel';
-import { RegistrationPanel } from '../modals/instanceSettingsPanels/RegistrationPanel';
-import { FederationPanel } from '../modals/instanceSettingsPanels/FederationPanel';
-import { StreamingPanel } from '../modals/instanceSettingsPanels/StreamingPanel';
-import { StoragePanel } from '../modals/instanceSettingsPanels/StoragePanel';
-import { UsersPanel } from '../modals/instanceSettingsPanels/UsersPanel';
+import {
+  GeneralPanel,
+  UpdatesPanel,
+  TelemetryPanel,
+  RegistrationPanel,
+  FederationPanel,
+  StreamingPanel,
+  StoragePanel,
+  UsersPanel,
+  SettingsPanelSuspense,
+} from '../modals/lazySettingsPanels';
 
 /**
  * Wrapper for the Federation sub-panel that forwards FederationPanel's
@@ -47,13 +52,31 @@ function MobileFederationPanelWrapper() {
     <div className="flex flex-col h-full bg-surface-base">
       <MobileScreenHeader title={t('instance.tabs.federation')} rightActions={<TransferIndicator />} />
       <div className="flex-1 overflow-y-auto p-4">
-        <FederationPanel onApprovalCountChange={setApprovalCount} />
+        <SettingsPanelSuspense><FederationPanel onApprovalCountChange={setApprovalCount} /></SettingsPanelSuspense>
       </div>
     </div>
   );
 }
 
-const screenMap: Record<string, (params?: Record<string, string>) => React.ReactNode> = {
+/**
+ * The Backspace page as a pushed screen: the screen header in place of the
+ * page's own top bar. `links` defaults to the real constant, as on the page;
+ * the design workbench passes filled-in values.
+ */
+export function MobileBackspaceScreen({ links }: { links?: ProjectLinks }) {
+  const { t } = useTranslation('project');
+  return (
+    <div className="flex flex-col h-full bg-surface-base">
+      <MobileScreenHeader title={t('nav.label')} />
+      {/* min-h-0 lets this fill only what the header leaves: the page's root
+          is h-full, which as a direct flex item would floor its height at the
+          whole screen and push its last 48px under the stack's clip. */}
+      <div className="flex-1 min-h-0 flex flex-col"><ProjectHubPage links={links} showTopBar={false} /></div>
+    </div>
+  );
+}
+
+export const mobileScreenMap: Readonly<Record<string, (params?: Record<string, string>) => React.ReactNode>> = {
   'channel-chat': (params) => <MobileChatScreen params={params} />,
   'friends': () => <FriendsPage mobile />,
   'settings': () => <MobileSettingsScreen />,
@@ -68,55 +91,61 @@ const screenMap: Record<string, (params?: Record<string, string>) => React.React
   'settings-instance-general': () => (
     <div className="flex flex-col h-full bg-surface-base">
       <MobileScreenHeader title={i18n.t('settings:instance.tabs.general')} rightActions={<TransferIndicator />} />
-      <div className="flex-1 overflow-y-auto p-4"><GeneralPanel /></div>
+      <div className="flex-1 overflow-y-auto p-4"><SettingsPanelSuspense><GeneralPanel /></SettingsPanelSuspense></div>
     </div>
   ),
   'settings-instance-registration': () => (
     <div className="flex flex-col h-full bg-surface-base">
       <MobileScreenHeader title={i18n.t('settings:instance.tabs.registration')} rightActions={<TransferIndicator />} />
-      <div className="flex-1 overflow-y-auto p-4"><RegistrationPanel /></div>
+      <div className="flex-1 overflow-y-auto p-4"><SettingsPanelSuspense><RegistrationPanel /></SettingsPanelSuspense></div>
     </div>
   ),
   'settings-instance-federation': () => <MobileFederationPanelWrapper />,
   'settings-instance-streaming': () => (
     <div className="flex flex-col h-full bg-surface-base">
       <MobileScreenHeader title={i18n.t('settings:instance.tabs.streaming')} rightActions={<TransferIndicator />} />
-      <div className="flex-1 overflow-y-auto p-4"><StreamingPanel /></div>
+      <div className="flex-1 overflow-y-auto p-4"><SettingsPanelSuspense><StreamingPanel /></SettingsPanelSuspense></div>
     </div>
   ),
   'settings-instance-storage': () => (
     <div className="flex flex-col h-full bg-surface-base">
       <MobileScreenHeader title={i18n.t('settings:instance.tabs.storage')} rightActions={<TransferIndicator />} />
-      <div className="flex-1 overflow-y-auto p-4"><StoragePanel /></div>
+      <div className="flex-1 overflow-y-auto p-4"><SettingsPanelSuspense><StoragePanel /></SettingsPanelSuspense></div>
     </div>
   ),
   'settings-instance-updates': () => (
     <div className="flex flex-col h-full bg-surface-base">
       <MobileScreenHeader title={i18n.t('settings:instance.tabs.updates')} rightActions={<TransferIndicator />} />
-      <div className="flex-1 overflow-y-auto p-4"><UpdatesPanel /></div>
+      <div className="flex-1 overflow-y-auto p-4"><SettingsPanelSuspense><UpdatesPanel /></SettingsPanelSuspense></div>
     </div>
   ),
   'settings-instance-users': () => (
     <div className="flex flex-col h-full bg-surface-base">
       <MobileScreenHeader title={i18n.t('settings:instance.tabs.users')} rightActions={<TransferIndicator />} />
-      <div className="flex-1 overflow-y-auto p-4"><UsersPanel /></div>
+      <div className="flex-1 overflow-y-auto p-4"><SettingsPanelSuspense><UsersPanel /></SettingsPanelSuspense></div>
     </div>
   ),
   'settings-instance-telemetry': () => (
     <div className="flex flex-col h-full bg-surface-base">
       <MobileScreenHeader title={i18n.t('settings:instance.tabs.telemetry')} rightActions={<TransferIndicator />} />
-      <div className="flex-1 overflow-y-auto p-4"><TelemetryPanel /></div>
+      <div className="flex-1 overflow-y-auto p-4"><SettingsPanelSuspense><TelemetryPanel /></SettingsPanelSuspense></div>
     </div>
   ),
   'members': (params) => <MobileMembersScreen params={params} />,
   'group-dm-info': (params) => <MobileGroupDmInfo params={params} />,
   'voice-full': () => <MobileVoiceFullScreen />,
   'explore': () => <ExplorePage />,
+  'backspace': () => <MobileBackspaceScreen />,
   'user-profile': (params) => {
     // Open the user profile modal with the userId from params
     if (params?.userId) {
-      // Set modalData so UserProfileModal can read it
-      useUIStore.getState().openModal('userProfile', { userId: params.userId });
+      // Set modalData so UserProfileModal can read it. A profile opened for a
+      // space member carries that member, so the modal can show their roles
+      // and read their user from the space rather than the home instance.
+      const member = params.spaceId && params.memberUserId
+        ? { spaceId: params.spaceId, userId: params.memberUserId }
+        : null;
+      useUIStore.getState().openModal('userProfile', { userId: params.userId, member });
     }
     return <UserProfileModal />;
   },
@@ -173,7 +202,7 @@ export function MobileShell() {
     <div className="flex flex-col" style={{ height: shellHeight }}>
       <MobileScreenStack
         rootScreen={rootScreens[mobileScreen]}
-        screenMap={screenMap}
+        screenMap={mobileScreenMap}
       />
 
       {/* Voice mini-bar — shown when in a voice call */}

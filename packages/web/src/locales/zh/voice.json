@@ -27,7 +27,9 @@
     "userVolume": "用户音量"
   },
   "incomingCall": {
-    "status": "收到语音通话来电…"
+    "status": "收到语音通话来电…",
+    "notificationTitle": "来电",
+    "notificationBody": "{{name}} 正在呼叫您"
   },
   "grid": {
     "waitingForOthers": "正在等待其他人加入…",
@@ -106,6 +108,7 @@
   },
   "streamSettings": {
     "title": "推流设置",
+    "hostLimits": "限制由 {{host}} 设定",
     "resolution": "分辨率",
     "frameRate": "帧率",
     "contentMode": "内容模式",
@@ -122,12 +125,16 @@
     "custom": "自定义",
     "auto": "自动",
     "customBitrateDisabled": "管理员已禁用自定义码率",
+    "customBitrateDisabledByHost": "{{host}} 已禁用自定义码率",
     "systemAudio": "系统音频",
     "chromeEchoNote": "当捕获类型支持时，Chrome 可以排除 Backspace 自身的音频",
     "electronWindowsAudioNote": "当不支持 restrictOwnAudio 时，Windows 环回可能会捕获通话音频",
     "electronMacAudioNote": "macOS 13+ 需要“屏幕与系统音频录制”权限",
     "electronLinuxAudioNote": "Linux 需要 PulseAudio 兼容性；Backspace 音频也可能会被捕获",
     "systemAudioStartFailed": "无法携带系统音频启动推流。如果此平台不支持，请关闭共享系统音频。",
+    "systemAudioAddFailed": "无法将系统音频添加到直播中。",
+    "systemAudioAdding": "正在添加系统音频…",
+    "systemAudioLiveUnavailable": "系统音频只能在开始直播时添加。请重新开始直播以包含系统音频。",
     "softwareH264Fallback": "硬件 H264 编码不可用。正在使用软件 OpenH264；切换为 VP9 可能会获得更好的性能。",
     "degradation": {
       "maintainResolution": "保持分辨率",

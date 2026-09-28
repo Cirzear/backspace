@@ -4,19 +4,42 @@ import { getDb, getRawDb, schema } from '../../../db/index.js';
 import { getOurOrigin, normalizeOriginForCompare, parseFederationHeaders, verifyPeerSignature } from '../../../utils/federationAuth.js';
 import { sendSignedJson } from './signedResponse.js';
 import { getInstanceId } from '../../../utils/federationEpoch.js';
-import { getDmParticipants } from '../../../utils/federationOutbox.js';
+import { dmMessageFederationRef, dmMessageMutationTarget, dmReplyRefForRelay, getDmParticipants } from '../../../utils/federationOutbox.js';
 import { deleteAttachmentFiles } from '../../../utils/fileCleanup.js';
 import { sanitizeUser } from '../../../utils/sanitize.js';
 import { collectDeletionBroadcastTargets, tombstoneUser } from '../../../utils/userDeletion.js';
 import { connectionManager } from '../../../ws/handler.js';
 import { and, eq, isNull, or } from 'drizzle-orm';
-import type { FederationIdentityDeleteS2SRequest, FederationRelayAttachment, FederationRelayEvent, FederationRelayRequest, FederationRelayResponse, FederationSyncRequest, FederationSyncResponse } from '@backspace/shared';
+import type { FederationIdentityDeleteS2SRequest, FederationMessageTarget, FederationRelayAttachment, FederationRelayEvent, FederationRelayRequest, FederationRelayResponse, FederationSyncRequest, FederationSyncResponse } from '@backspace/shared';
 import type { FastifyInstance } from 'fastify';
 import { processRelayEvents } from '../events/dispatch.js';
 import { extractDomain } from '../identity.js';
 import { resolveLocalOrigin } from '../origin.js';
 import { isRelayRateLimited } from '../rateLimits.js';
 import { authenticateS2SPeer } from './s2sAuth.js';
+
+/**
+ * The rejection list as it goes on the wire to the sender of this batch.
+ *
+ * `attribution_unproven` is only sent to a sender that listed it in
+ * `FederationRelayRequest.capabilities`. Any other sender receives v1's
+ * `attribution_mismatch` for the same case, which it already treats as final.
+ * Sending it the new reason instead would be worse than the old answer: a
+ * sender that predates it does not recognise it, keeps the outbox row, and
+ * (having no backoff for rejections it does not recognise) resends it on every
+ * outbox tick until the row expires.
+ *
+ * `capabilities` comes from the request body and is untrusted; anything other
+ * than an array counts as an empty list.
+ */
+function rejectionsForSender(
+  rejected: Array<{ messageId: string; reason: string }>,
+  capabilities: unknown,
+): Array<{ messageId: string; reason: string }> {
+  const retriesUnproven = Array.isArray(capabilities) && capabilities.includes('attribution_unproven');
+  if (retriesUnproven) return rejected;
+  return rejected.map(r => (r.reason === 'attribution_unproven' ? { ...r, reason: 'attribution_mismatch' } : r));
+}
 
 export function registerRelayRoutes(app: FastifyInstance): void {
   // ─── DELETE /api/federation/identity ──────────────────────────────────────
@@ -197,7 +220,7 @@ export function registerRelayRoutes(app: FastifyInstance): void {
 
       const response: FederationRelayResponse = {
         accepted,
-        rejected,
+        rejected: rejectionsForSender(rejected, body.capabilities),
         maxUploadSize: settings?.maxUploadSizeBytes ?? config.maxUploadSize,
         ...(undeliverable.length > 0 ? { undeliverable } : {}),
       };
@@ -551,13 +574,23 @@ export function registerRelayRoutes(app: FastifyInstance): void {
         }
 
         if (mutationType === 'delete') {
-          // For deletes, we don't need the message content — just the ID and channel
+          // For deletes, we don't need the message content — just the ID and
+          // channel, plus the target the delete path logged (the row is gone).
+          let deleteTarget: FederationMessageTarget | undefined;
+          if (mutation.payload) {
+            try {
+              deleteTarget = (JSON.parse(mutation.payload) as { target?: FederationMessageTarget }).target;
+            } catch {
+              deleteTarget = undefined;
+            }
+          }
           events.push({
             eventType: 'delete',
             dmChannelId: mutation.context_id,
             messageId: mutation.entity_id,
             encryptionVersion: 0,
             timestamp: mutation.mutated_at,
+            ...(deleteTarget ? { target: deleteTarget } : {}),
           });
           continue;
         }
@@ -573,6 +606,21 @@ export function registerRelayRoutes(app: FastifyInstance): void {
               continue;
             }
 
+            // Name the message in shared coordinates, as the live relay does:
+            // `entity_id` is this instance's local id, which the peer does not
+            // hold when our row is a relayed copy.
+            const reactedMessage = db
+              .select({
+                id: schema.dmMessages.id,
+                sourceInstance: schema.dmMessages.sourceInstance,
+                sourceMessageId: schema.dmMessages.sourceMessageId,
+              })
+              .from(schema.dmMessages)
+              .where(eq(schema.dmMessages.id, mutation.entity_id))
+              .get();
+            if (!reactedMessage) continue;
+            const target = dmMessageFederationRef(reactedMessage);
+
             events.push({
               eventType: mutationType,
               dmChannelId: mutation.context_id,
@@ -580,6 +628,8 @@ export function registerRelayRoutes(app: FastifyInstance): void {
               encryptionVersion: 0,
               timestamp: mutation.mutated_at,
               reaction: {
+                messageId: target.messageId,
+                messageHomeInstance: target.messageHomeInstance,
                 userId: reactionData.userId,
                 homeUserId: reactionData.homeUserId,
                 homeInstance: reactionData.homeInstance || getOurOrigin(),
@@ -734,6 +784,11 @@ export function registerRelayRoutes(app: FastifyInstance): void {
           .where(eq(schema.dmChannels.id, mutation.context_id))
           .get();
 
+        const replyRef = dmReplyRefForRelay(mutation.context_id, message.replyToId);
+        const updateTarget = mutationType === 'update'
+          ? dmMessageMutationTarget(message, message.userId)
+          : null;
+
         events.push({
           eventType: mutationType,
           ...(syncChannel?.federatedId && syncChannel.ownerId ? { federatedId: syncChannel.federatedId } : {}),
@@ -742,12 +797,14 @@ export function registerRelayRoutes(app: FastifyInstance): void {
           encryptionVersion: 0,
           timestamp: mutation.mutated_at,
           participants: getDmParticipants(mutation.context_id),
+          ...(updateTarget ? { target: updateTarget } : {}),
           message: {
             userId: message.userId,
             homeUserId,
             homeInstance,
             content: message.content,
             replyToId: message.replyToId ?? null,
+            ...(replyRef ? { replyTo: replyRef } : {}),
             editedAt: message.editedAt ?? null,
             createdAt: message.createdAt,
             attachments: attachments.length > 0 ? attachments : undefined,

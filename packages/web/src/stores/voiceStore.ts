@@ -15,6 +15,22 @@ export interface ScreenShareConfig {
   codec: 'vp9' | 'h264';
 }
 
+/**
+ * What the live screen share has in the way of system audio. Kept apart from
+ * `ScreenShareConfig.shareAudio`, which is the user's preference: a share can
+ * want audio and have none (a browser capture without it, a failed loopback).
+ *
+ * - `published`: the audio track is on the publication.
+ * - `held`: captured, but withdrawn by the toggle; turning it on republishes it.
+ * - `acquiring`: a loopback capture for the running share is being taken.
+ * - `acquirable`: nothing captured, and the desktop app can add loopback audio
+ *   for the same source without a prompt.
+ * - `unavailable`: nothing captured and no silent way to add it (browsers
+ *   grant audio only with the capture; portal and prompted desktop pickers
+ *   would ask again).
+ */
+export type ScreenShareAudioState = 'published' | 'held' | 'acquiring' | 'acquirable' | 'unavailable';
+
 export type VoiceConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 export type VoiceConnectionQuality = 'excellent' | 'good' | 'poor' | 'lost' | 'unknown';
 
@@ -33,6 +49,16 @@ interface VoiceState {
   isDeafened: boolean;
   isCameraOn: boolean;
   isScreenSharing: boolean;
+  /**
+   * Origin of the instance that issued the current LiveKit token (`''` = home),
+   * recorded by `useLiveKit.connect`. That instance hosts the room, so its
+   * streaming limits are the ones a screen share obeys. Null when the token was
+   * relayed from an instance this client holds no session with (a federated DM
+   * call hosted elsewhere): its limits cannot be asked for. Not persisted.
+   */
+  livekitHostOrigin: string | null;
+  /** System audio of the live share; null while not sharing. Not persisted. */
+  screenShareAudio: ScreenShareAudioState | null;
   participants: ParticipantInfo[];
   speakingParticipantIds: Set<string>;
   speakingUserIds: Set<string>;
@@ -177,6 +203,29 @@ interface VoiceState {
   reset: () => void;
 }
 
+/**
+ * True while this client is in a voice session that a page reload would end:
+ * - a LiveKit room that is live, being joined or reconnecting;
+ * - a DM call ringing in either direction. The caller is not in LiveKit until
+ *   `dm_call_accepted`, and the server tears the ringing room down when the
+ *   caller's socket goes away; the callee's ring prompt lives only in this
+ *   store and is not replayed after a reload;
+ * - an accepted DM call on its way into LiveKit (the caller between
+ *   `dm_call_accepted` and the connect setting 'connecting').
+ *
+ * Not a session: a space channel or DM call kept after LiveKit gave up
+ * reconnecting (status 'disconnected' with a `connectionError`). The store
+ * keeps them only so the UI can offer a retry, nothing is live, and a laptop
+ * that slept in a call would otherwise count as in one for days.
+ */
+export function hasVoiceSession(
+  state: Pick<VoiceState, 'voiceConnectionStatus' | 'connectionError' | 'activeDmCall' | 'outgoingCall' | 'incomingCall'>,
+): boolean {
+  if (state.voiceConnectionStatus !== 'disconnected') return true;
+  if (state.outgoingCall !== null || state.incomingCall !== null) return true;
+  return state.activeDmCall !== null && state.connectionError === null;
+}
+
 export const useVoiceStore = create<VoiceState>()(
   persist(
     (set, get) => ({
@@ -188,6 +237,8 @@ export const useVoiceStore = create<VoiceState>()(
       isDeafened: false,
       isCameraOn: false,
       isScreenSharing: false,
+      screenShareAudio: null,
+      livekitHostOrigin: '',
       micPermissionDenied: false,
       participants: [],
       speakingParticipantIds: new Set(),

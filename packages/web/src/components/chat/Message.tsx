@@ -4,9 +4,9 @@ import { createPortal } from 'react-dom';
 import { Trans, useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { formatters, useFormatters } from '../../i18n/formatters';
-import type { MessageWithUser, Embed, User } from '@backspace/shared';
+import type { MessageWithUser, Embed, Reaction, User } from '@backspace/shared';
 import { MarkdownRenderer } from './MarkdownRenderer';
-import { MentionBadge } from './MentionBadge';
+import { InlineMessageText } from './InlineMessageText';
 import { Avatar } from '../ui/Avatar';
 import { ProfileAvatar } from '../ui/ProfileAvatar';
 import { useContextMenuStore } from '../../stores/contextMenuStore';
@@ -31,6 +31,9 @@ import {
   type PendingAttachmentView,
 } from '../../stores/pendingMessageStore';
 import { useTransferStore } from '../../stores/transferStore';
+import { useMessageJump } from './messageJumpContext';
+import { ReactionPill } from './ReactionPill';
+import { isOwnReaction } from './reactionSummary';
 
 interface MessageProps {
   message: MessageWithUser | PendingMessageView;
@@ -87,16 +90,6 @@ function formatHoverTime(timestamp: number): string {
   return formatters.formatTime(timestamp);
 }
 
-/** Lightweight inline renderer that resolves <@userId> mentions to MentionBadge components. */
-function renderInlineWithMentions(content: string): React.ReactNode {
-  const parts = content.split(/(<@[a-zA-Z0-9_-]+>)/g);
-  return parts.map((part, i) => {
-    const match = part.match(/^<@([a-zA-Z0-9_-]+)>$/);
-    if (match) return <MentionBadge key={i} userId={match[1]!} />;
-    return part;
-  });
-}
-
 const GIF_URL_REGEX = /^https:\/\/(?:media\.tenor\.com|static\.klipy\.com)\/.+$/;
 
 function isGifOnlyMessage(content: string | null): boolean {
@@ -140,6 +133,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
   const deleteMessage = useChatStore((s) => s.deleteMessage);
   const members = useSpaceStore((s) => s.members);
   const openUserProfile = useUIStore((s) => s.openUserProfile);
+  const jumpToMessage = useMessageJump();
 
   const pending = isPendingMessage(message) ? message.__pending : null;
   const showInteractions = !pending;
@@ -220,13 +214,10 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
   const _rawReplyUser = (!isPendingMessage(message) && message.replyTo?.user) ? message.replyTo.user : null;
   const _canonicalReplyUser = useCanonicalUserView(_rawReplyUser ?? _FALLBACK_USER);
 
-  const isOwnReaction = (r: { userId: string; user?: { id: string; username: string; homeInstance?: string | null } | null }) =>
-    r.user ? isSelf(r.user, currentUser) : r.userId === currentUser?.id;
-
   const toggleReaction = (emoji: string) => {
     // Read-only: a dead 1-on-1 DM accepts no reaction mutations (add OR remove).
     if (isDeadDmThread) return;
-    const hasReacted = message.reactions?.some(r => isOwnReaction(r) && r.emoji === emoji);
+    const hasReacted = message.reactions?.some(r => isOwnReaction(r, currentUser) && r.emoji === emoji);
     if (hasReacted) {
       removeReaction(message.id, emoji);
     } else if (canAddReactions) {
@@ -234,15 +225,13 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     }
   };
 
-  const reactionGroups = (message.reactions || []).reduce((acc, r) => {
-    const group = acc[r.emoji] || { count: 0, me: false };
-    group.count++;
-    if (isOwnReaction(r)) {
-      group.me = true;
-    }
-    acc[r.emoji] = group;
-    return acc;
-  }, {} as Record<string, { count: number; me: boolean }>);
+  // Reactions grouped by emoji, in the order each emoji first appeared.
+  const reactionGroups = new Map<string, Reaction[]>();
+  for (const r of message.reactions || []) {
+    const group = reactionGroups.get(r.emoji);
+    if (group) group.push(r);
+    else reactionGroups.set(r.emoji, [r]);
+  }
 
   // Auto-cancel delete confirmation after timeout
   const startDeleteConfirm = useCallback(() => {
@@ -293,12 +282,6 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     addReaction(message.id, emoji.native);
     setShowReactionPicker(false);
   }, [addReaction, message.id]);
-
-  const handleUsernameClick = (e: React.MouseEvent) => {
-    if (!message.user) return;
-    e.stopPropagation();
-    openUserProfile(message.user, e.currentTarget.getBoundingClientRect());
-  };
 
   const handleContextMenu = (e: React.MouseEvent) => {
     if (pending) {
@@ -409,6 +392,19 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
 
   const roleColor = getMemberDisplayColor(message.userId);
 
+  // A space message's author is a member of the space it was posted in; the
+  // profile opened from it shows their roles there. message.userId is the id
+  // on the space's instance, the same id the loaded member list carries.
+  const authorMember = !isDmMessage && currentSpaceId
+    ? { spaceId: currentSpaceId, userId: message.userId }
+    : undefined;
+
+  const handleUsernameClick = (e: React.MouseEvent) => {
+    if (!message.user) return;
+    e.stopPropagation();
+    openUserProfile(message.user, e.currentTarget.getBoundingClientRect(), undefined, authorMember);
+  };
+
   const replyRoleColor = (msg: { userId: string }) => getMemberDisplayColor(msg.userId);
 
   // Self-mention highlighting
@@ -417,7 +413,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
   const content = (
     <div
       id={`msg-${message.id}`}
-      className={`group relative flex gap-4 px-5 py-[3px] transition-colors ${isFirstInGroup || message.replyTo ? 'mt-[1.0625rem]' : ''} ${
+      className={`group relative flex gap-4 px-5 py-[3px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-primary/60 ${isFirstInGroup || message.replyTo ? 'mt-[1.0625rem]' : ''} ${
         isMentioned
           ? 'bg-accent-amber/10 border-l-2 border-l-accent-amber hover:bg-accent-amber/15'
           : 'hover:bg-[rgba(255,255,255,0.025)]'
@@ -445,6 +441,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
               name={displayName}
               size={40}
               user={displayIdentity}
+              member={authorMember}
               className="hover:drop-shadow-md transition-all active:translate-y-[1px]"
             />
           </div>
@@ -458,23 +455,38 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
       {/* Content */}
       <div className="flex-1 min-w-0">
         {message.replyTo && (() => {
-          const _rawReply = resolveDisplayIdentity(message.replyTo.user, currentUser);
+          const replyTo = message.replyTo;
+          const _rawReply = resolveDisplayIdentity(replyTo.user, currentUser);
           const replyIdentity = (!isSelf(_rawReply, currentUser) && _rawReplyUser)
             ? _canonicalReplyUser
             : _rawReply;
           const replyDisplayName = replyIdentity.displayName ?? replyIdentity.username;
-          return (
-            <div className="flex items-center gap-1 mb-1 ml-[-4px] opacity-80 hover:opacity-100 cursor-pointer group/reply">
+          const preview = (
+            <>
               <Avatar src={replyIdentity.avatar} name={replyDisplayName} size={16} user={replyIdentity} />
               <Username
                 username={replyDisplayName}
-                className="text-[14px] font-bold text-txt-primary hover:underline"
-                style={replyRoleColor(message.replyTo)}
+                className="text-[14px] font-bold text-txt-primary"
+                style={replyRoleColor(replyTo)}
               />
-              <span className="text-[14px] text-txt-message truncate max-w-[400px] hover:text-txt-primary">
-                {message.replyTo.content ? renderInlineWithMentions(message.replyTo.content) : ''}
+              <span className="text-[14px] text-txt-message truncate max-w-[400px] group-hover/reply:text-txt-primary transition-colors">
+                {replyTo.content ? <InlineMessageText content={replyTo.content} /> : ''}
               </span>
-            </div>
+            </>
+          );
+          // Outside a message list (no jump handle) the preview stays inert.
+          if (!jumpToMessage) {
+            return <div className="flex items-center gap-1 mb-1 ml-[-4px] opacity-80 min-w-0">{preview}</div>;
+          }
+          return (
+            <button
+              type="button"
+              onClick={() => jumpToMessage(replyTo.id)}
+              className="group/reply flex items-center gap-1 max-w-full min-w-0 mb-1 ml-[-8px] pl-1 pr-1.5 rounded-md text-left opacity-80 hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-accent-primary/60 transition-opacity cursor-pointer"
+            >
+              <span className="sr-only">{t('chat:message.reply.jump')}</span>
+              {preview}
+            </button>
           );
         })()}
 
@@ -643,20 +655,15 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
             )}
 
             {/* Reactions */}
-            {showInteractions && Object.keys(reactionGroups).length > 0 && (
+            {showInteractions && reactionGroups.size > 0 && (
               <div className="flex flex-wrap gap-1">
-                {Object.entries(reactionGroups).map(([emoji, { count, me }]) => (
-                  <button
+                {[...reactionGroups].map(([emoji, reactions]) => (
+                  <ReactionPill
                     key={emoji}
-                    onClick={() => toggleReaction(emoji)}
-                    className={`glass-pill flex items-center gap-1 rounded-[6px] cursor-pointer transition-all duration-[120ms] ease-out ${
-                      me ? 'glass-pill-mine' : ''
-                    }`}
-                    style={{ padding: '2px 8px', fontSize: '13px', lineHeight: 1 }}
-                  >
-                    <span style={{ fontSize: '14px', lineHeight: 1 }}>{emoji}</span>
-                    <span className={`font-semibold ${me ? 'text-accent-mint' : 'text-txt-secondary'}`} style={{ fontSize: '12px' }}>{count}</span>
-                  </button>
+                    emoji={emoji}
+                    reactions={reactions}
+                    onToggle={() => toggleReaction(emoji)}
+                  />
                 ))}
               </div>
             )}

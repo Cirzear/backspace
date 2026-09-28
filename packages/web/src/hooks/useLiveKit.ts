@@ -16,6 +16,7 @@ import {
   TrackEvent,
 } from 'livekit-client';
 import { getApiForOrigin, getChannelOrigin, getMyUserIdForOrigin, useSpaceStore } from '../stores/spaceStore';
+import { refreshStreamHostLimits, useStreamHostLimits } from '../utils/streamHostLimits';
 import { wsSend } from './useWebSocket';
 import { useVoiceStore, type VoiceConnectionQuality } from '../stores/voiceStore';
 import { useAuthStore } from '../stores/authStore';
@@ -33,10 +34,13 @@ import {
   republishScreenShare,
   getRequestedPublishedScreenShareCodec,
   handleScreenShareUnpublished,
+  handleScreenShareAudioUnpublished,
   isScreenShareRepublishing,
   resolveNativeOverdrive,
+  syncScreenShareAudio,
 } from '../utils/screenShare';
-import { parseStreamWatch } from '../utils/streamWatchProtocol';
+import { isStreamRepublish, parseStreamWatch } from '../utils/streamWatchProtocol';
+import { StreamRepublishTracker } from '../utils/streamRepublish';
 import { getMediaStreamTrack } from '../utils/livekitInternals';
 import { deactivate as deactivateHwOverdrive } from '../utils/hwOverdrive';
 
@@ -160,6 +164,33 @@ export function parseIdentity(identity: string): { userId: string; username: str
   return { userId: parts[0] ?? identity, username: parts[1] ?? identity };
 }
 
+/**
+ * The userId this client knows a LiveKit participant by. In a federated DM call
+ * the identity carries the member's home id, which is resolved to the DM
+ * member's local id; otherwise it is the identity's own id. `updateParticipants`
+ * lists participants under it, and stream state (`watchingStreams`, stream
+ * volume and mute) is keyed by it, since `StreamTile` watches by the listed id.
+ * Reads only the DM membership, never the participant list, so it still
+ * resolves while a participant who is leaving has already been dropped from it.
+ */
+function resolveParticipantUserId(identity: string): string {
+  const rawId = parseIdentity(identity).userId;
+  const activeDmCall = useVoiceStore.getState().activeDmCall;
+  if (!activeDmCall) return rawId;
+  const dmChannel = useSpaceStore.getState().dmChannels.find((d) => d.id === activeDmCall.dmChannelId);
+  const match = dmChannel?.members.find((m) => m.homeUserId === rawId || m.id === rawId);
+  return match?.id ?? rawId;
+}
+
+/** A remote screen share ended: drop the watch and the per-stream audio settings. */
+function endRemoteStream(identity: string): void {
+  const userId = resolveParticipantUserId(identity);
+  const state = useVoiceStore.getState();
+  state.unwatchStream(userId);
+  state.clearStreamVolume(userId);
+  state.clearStreamMute(userId);
+}
+
 let _connectGeneration = 0;
 
 /** Null-safe Room.disconnect() wrapper — lets the SDK tear down its own internals cleanly. */
@@ -219,6 +250,8 @@ export function useLiveKit() {
   const [connectedChannelId, setConnectedChannelId] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const roomRef = useRef<Room | null>(null);
+  /** Screen shares being republished by their sharers, for the current room. */
+  const republishRef = useRef<StreamRepublishTracker | null>(null);
   const connectedChannelRef = useRef<string | null>(null);
   const switchCameraGenRef = useRef(0);
   
@@ -227,6 +260,9 @@ export function useLiveKit() {
   const isCameraOn = useVoiceStore((s) => s.isCameraOn);
   const isScreenSharing = useVoiceStore((s) => s.isScreenSharing);
   const screenShareConfig = useVoiceStore((s) => s.screenShareConfig);
+  // The host's limits shape the effective config, so a document that arrives
+  // after the share started must reach the running encoder too.
+  const { limits: streamHostLimits } = useStreamHostLimits();
   const voiceUserStates = useVoiceStore((s) => s.voiceUserStates);
   const spaceMutedUserIds = useVoiceStore((s) => s.spaceMutedUserIds);
   const spaceDeafenedUserIds = useVoiceStore((s) => s.spaceDeafenedUserIds);
@@ -256,20 +292,8 @@ export function useLiveKit() {
     const allParticipants: ParticipantInfo[] = [];
     const processParticipant = (p: Participant, isLocal: boolean) => {
       if (!p.identity) return;
-      const { userId: rawId, username } = parseIdentity(p.identity);
-
-      // Resolve identity: for federated calls rawId may be homeUserId from another instance.
-      // Check DM members for a user whose homeUserId matches.
-      let userId = rawId;
-      const activeDmCall = useVoiceStore.getState().activeDmCall;
-      if (activeDmCall) {
-        const dmChannels = useSpaceStore.getState().dmChannels;
-        const dmChannel = dmChannels.find(d => d.id === activeDmCall.dmChannelId);
-        if (dmChannel) {
-          const match = dmChannel.members.find(m => m.homeUserId === rawId || m.id === rawId);
-          if (match) userId = match.id;
-        }
-      }
+      const { username } = parseIdentity(p.identity);
+      const userId = resolveParticipantUserId(p.identity);
 
       const memberMatch = useSpaceStore.getState().members.find(m => m.userId === userId);
       let cachedUser: User | null;
@@ -345,7 +369,11 @@ export function useLiveKit() {
         isMuted: isPartMuted,
         isDeafened: isPartDeafened,
         isCameraOn: hasCameraPublication && p.isCameraEnabled, // True even when unsubscribed
-        isScreenSharing: hasScreenSharePublication, // True even when unsubscribed
+        // True even when unsubscribed, and across a sharer's announced
+        // republish, so the gap between the two publications is not a share
+        // ending and starting again (no tile loss, no stream_ended/started cue).
+        isScreenSharing: hasScreenSharePublication
+          || (!isLocal && (republishRef.current?.isBridging(p.identity) ?? false)),
         isLocal,
         audioTrack,
         videoTrack,
@@ -370,6 +398,11 @@ export function useLiveKit() {
         // viewer's full LiveKit identity ("userId:username"); we key by identity
         // so ParticipantDisconnected can evict cleanly.
         useVoiceStore.getState().recordStreamWatch(sw.target, participant.identity, sw.watching);
+        return;
+      }
+      if (isStreamRepublish(payload)) {
+        // The sender's next screen-share unpublish is a codec swap, not the end.
+        republishRef.current?.announce(participant.identity);
         return;
       }
     }
@@ -662,32 +695,47 @@ export function useLiveKit() {
     try {
       let token: string;
       let url: string;
+      // The instance that issues the token hosts the LiveKit room, so its
+      // streaming limits are the ones a screen share here obeys. Null when the
+      // token was relayed from a host this client has no session with.
+      let hostOrigin: string | null;
 
       // For federated calls, use the stored token from S2S relay
       const { federatedCallToken, federatedCallUrl, clearFederatedCallData } = useVoiceStore.getState();
       if (isDm && federatedCallToken && federatedCallUrl) {
         token = federatedCallToken;
         url = federatedCallUrl;
+        hostOrigin = null;
         clearFederatedCallData();
       } else {
-        const client = getApiForOrigin(getChannelOrigin(channelId));
+        hostOrigin = getChannelOrigin(channelId);
+        const client = getApiForOrigin(hostOrigin);
         const resp = isDm ? await client.livekit.dmToken(channelId) : await client.livekit.token(channelId);
         token = resp.token;
         url = resp.url;
       }
       if (gen !== _connectGeneration) return;
-    //   const newRoom = new Room({ adaptiveStream: true, dynacast: true, publishDefaults: { videoCodec: 'h264', simulcast: true } });
-    const newRoom = new Room({
-      adaptiveStream: true,
-      dynacast: true,
-      publishDefaults: {
-        videoCodec: 'h264',
-        simulcast: true,
-        audioPreset: AudioPresets.musicHighQualityStereo,
-        dtx: false,
-      }
-    });
+      useVoiceStore.setState({ livekitHostOrigin: hostOrigin });
+      // Refreshed per join; home's document arrives with every home `ready`.
+      if (hostOrigin) void refreshStreamHostLimits(hostOrigin);
+      const newRoom = new Room({
+        adaptiveStream: true,
+        dynacast: true,
+        publishDefaults: {
+          videoCodec: 'h264',
+          simulcast: true,
+          audioPreset: AudioPresets.musicHighQualityStereo,
+          dtx: false,
+        },
+      });
       roomRef.current = newRoom;
+      republishRef.current?.clear();
+      republishRef.current = new StreamRepublishTracker((identity) => {
+        // The announced republish never produced a new track: the share ended.
+        if (roomRef.current !== newRoom) return;
+        endRemoteStream(identity);
+        updateParticipants();
+      });
       let initialConnectPending = true;
 
       const guardedUpdate = () => { if (roomRef.current === newRoom) updateParticipants(); };
@@ -711,6 +759,8 @@ export function useLiveKit() {
       });
       newRoom.on(RoomEvent.ParticipantDisconnected, (participant: RemoteParticipant) => {
         useVoiceStore.getState().evictWatcher(participant.identity);
+        // Left between a republish's two publications: its share ends with it.
+        if (republishRef.current?.cancel(participant.identity)) endRemoteStream(participant.identity);
         guardedUpdate();
         // Clean up stale WS-based voice status for the departed participant
         const { userId } = parseIdentity(participant.identity);
@@ -800,7 +850,10 @@ export function useLiveKit() {
             useVoiceStore.getState().unwatchStream(userId);
           }
           // OS-level "Stop sharing" fires this without going through stopScreenShare
-          handleScreenShareUnpublished();
+          handleScreenShareUnpublished(newRoom);
+        }
+        if (publication.source === Track.Source.ScreenShareAudio) {
+          handleScreenShareAudioUnpublished();
         }
         guardedUpdate();
       });
@@ -813,16 +866,31 @@ export function useLiveKit() {
           publication.source !== Track.Source.ScreenShareAudio
         ) {
           publication.setSubscribed(true);
+        } else if (publication.source === Track.Source.ScreenShareAudio) {
+          // Stream tracks follow the watch state, and the watch click only
+          // subscribed what was published then. System Audio can be turned on
+          // mid-stream, so audio arriving for a stream being watched joins it.
+          if (useVoiceStore.getState().watchingStreams.has(resolveParticipantUserId(participant.identity))) {
+            publication.setSubscribed(true);
+          }
+        } else if (republishRef.current?.completeWithPublication(participant.identity)) {
+          // The new track of an announced republish: a viewer who was watching
+          // keeps watching without clicking Watch again. Its audio, published
+          // after the video, is picked up by the branch above.
+          if (useVoiceStore.getState().watchingStreams.has(resolveParticipantUserId(participant.identity))) {
+            publication.setSubscribed(true);
+          }
         }
         guardedUpdate();
       });
       newRoom.on(RoomEvent.TrackUnpublished, (publication: RemoteTrackPublication, participant: RemoteParticipant) => {
-        if (publication.source === Track.Source.ScreenShare) {
-          const { userId } = parseIdentity(participant.identity);
-          const state = useVoiceStore.getState();
-          state.unwatchStream(userId);
-          state.clearStreamVolume(userId);
-          state.clearStreamMute(userId);
+        // An announced republish keeps the watch and the stream's audio
+        // settings for the next publication; anything else ends the share.
+        if (
+          publication.source === Track.Source.ScreenShare
+          && !republishRef.current?.bridgeRemoval(participant.identity)
+        ) {
+          endRemoteStream(participant.identity);
         }
         guardedUpdate();
       });
@@ -867,6 +935,7 @@ export function useLiveKit() {
       });
       newRoom.on(RoomEvent.Disconnected, (reason?: DisconnectReason) => {
         if (roomRef.current !== newRoom) return;
+        republishRef.current?.clear();
         // The SDK emits Disconnected before rejecting an initial connect.
         // Keep that attempt current so its catch can report the failure.
         if (!initialConnectPending) _connectGeneration++;
@@ -962,6 +1031,7 @@ export function useLiveKit() {
       const roomToDestroy = roomRef.current;
       roomRef.current = null;
       _activeRoom = null;
+      republishRef.current?.clear();
       await destroyRoom(roomToDestroy);
       if (gen !== _connectGeneration) return;
     }
@@ -991,6 +1061,9 @@ export function useLiveKit() {
     const updateActiveTracks = async () => {
       if (superseded) return;
       if (isScreenSharing) {
+        // System Audio first: a toggle change publishes or withdraws only the
+        // audio track, never the video.
+        await syncScreenShareAudio(room);
         const opts = buildScreenShareOptions(screenShareConfig);
         // Codec changed mid-stream — the codec is baked into SDP negotiation,
         // so republish the same track under the new options (no re-capture).
@@ -1022,7 +1095,7 @@ export function useLiveKit() {
     };
     _activeTrackUpdate = _activeTrackUpdate.then(updateActiveTracks).catch(() => {});
     return () => { superseded = true; };
-  }, [room, screenShareConfig, isScreenSharing, isCameraOn]);
+  }, [room, screenShareConfig, streamHostLimits, isScreenSharing, isCameraOn]);
 
   useEffect(() => {
     return () => {

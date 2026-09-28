@@ -25,7 +25,7 @@ vi.mock('../../stores/instanceStore', async (importOriginal) => {
 import { ConnectedInstances } from './ConnectedInstances';
 import { Modal } from '../ui/Modal';
 import { HttpError } from '../../api/client';
-import { useInstanceStore, DifferentPasswordError } from '../../stores/instanceStore';
+import { useInstanceStore, RemoteLoginRequiredError } from '../../stores/instanceStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useFederationStore } from '../../stores/federationStore';
 
@@ -50,22 +50,25 @@ const homeUser: User = {
 const probeInstance = vi.fn();
 const loginToRemote = vi.fn();
 
+/** What the probe answers for retro.example: open to federated registration. */
+const RETRO_PROBE = {
+  name: 'Retro',
+  version: '1.0.0',
+  registrationOpen: true,
+  federatedRegistrationOpen: true,
+  instanceId: 'retro',
+  sourceCodeUrl: null,
+  commit: null,
+  directoryAvailable: true,
+  directoryEnabled: false,
+  origin: 'https://retro.example',
+};
+
 beforeEach(() => {
   connectToInstance.mockReset();
   probeInstance.mockReset();
   loginToRemote.mockReset();
-  probeInstance.mockResolvedValue({
-    name: 'Retro',
-    version: '1.0.0',
-    registrationOpen: true,
-    federatedRegistrationOpen: true,
-    instanceId: 'retro',
-    sourceCodeUrl: null,
-    commit: null,
-    directoryAvailable: true,
-    directoryEnabled: false,
-    origin: 'https://retro.example',
-  });
+  probeInstance.mockResolvedValue(RETRO_PROBE);
   useInstanceStore.setState({ instances: [], registry: new Map(), probeInstance, loginToRemote });
   useAuthStore.setState({ user: homeUser });
   useFederationStore.setState({
@@ -108,14 +111,14 @@ describe('AddInstanceFlow', () => {
 
   it('falls back to the remote login form when the home credential is refused', async () => {
     const user = userEvent.setup();
-    connectToInstance.mockResolvedValue({ kind: 'needs-remote-password', remoteUsername: 'jannis-old' });
+    connectToInstance.mockResolvedValue({ kind: 'needs-remote-password', remoteUsername: 'jannis-old', reason: 'credential-refused' });
     loginToRemote.mockResolvedValue(undefined);
     await openPasswordStep(user);
 
     await user.type(screen.getByPlaceholderText('The one you sign in with'), 'hunter2');
     await user.click(screen.getByRole('button', { name: 'Connect' }));
 
-    expect(await screen.findByText(/An account already exists on this instance/)).toBeInTheDocument();
+    expect(await screen.findByText(/An account already exists on retro\.example/)).toBeInTheDocument();
     expect(screen.getByDisplayValue('jannis-old')).toBeInTheDocument();
 
     await user.type(screen.getByPlaceholderText('Password on the remote instance'), 'other-pw');
@@ -123,6 +126,26 @@ describe('AddInstanceFlow', () => {
 
     await waitFor(() => expect(loginToRemote).toHaveBeenCalledWith('https://retro.example', 'jannis-old', 'other-pw'));
     expect(await screen.findByRole('button', { name: '+ Add Instance' })).toBeInTheDocument();
+  });
+
+  // The reported case: an instance closed to federated registration, where
+  // the user has no account at all. Nothing may claim one exists; the login
+  // form stays on offer for an account that does.
+  it('on a closed instance, offers the login without claiming an account exists', async () => {
+    const user = userEvent.setup();
+    probeInstance.mockResolvedValue({ ...RETRO_PROBE, federatedRegistrationOpen: false });
+    connectToInstance.mockResolvedValue({ kind: 'needs-remote-password', remoteUsername: 'jannis@home.example', reason: 'registration-closed' });
+    await openPasswordStep(user);
+    expect(screen.getByText(/has disabled new federated registrations/)).toBeInTheDocument();
+
+    await user.type(screen.getByPlaceholderText('The one you sign in with'), 'hunter2');
+    await user.click(screen.getByRole('button', { name: 'Connect' }));
+
+    expect(await screen.findByText(
+      'retro.example is not accepting new accounts from other instances, so none could be created for you there. If you already have an account on retro.example, sign in with it below.',
+    )).toBeInTheDocument();
+    expect(screen.queryByText(/already exists/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Login & Connect' })).toBeInTheDocument();
   });
 });
 
@@ -188,7 +211,7 @@ describe('RegistryRow re-authentication', () => {
   it('a different password on the instance moves the row to the per-instance login and restores from it', async () => {
     const user = userEvent.setup();
     const reauthenticateInstance = vi.fn(async () => {
-      throw new DifferentPasswordError('jannis@home.example');
+      throw new RemoteLoginRequiredError('jannis@home.example', 'credential-refused');
     });
     const loginToRemote = vi.fn(async (origin: string) => {
       const registry = new Map(useInstanceStore.getState().registry);
@@ -353,5 +376,91 @@ describe('RegistryRow reason', () => {
     await user.click(screen.getByText('Zwiss'));
 
     expect(screen.getByText('Token expired')).toBeInTheDocument();
+  });
+});
+
+describe('peering waits and outcomes started by a connection', () => {
+  const CONNECT_SUBSCRIPTION = {
+    id: 'sub-1',
+    requestId: 'req-1',
+    peerOrigin: 'https://orbit.example',
+    peerInstanceName: 'Orbit',
+    triggerReason: 'instance_connect' as const,
+    triggerTarget: 'https://orbit.example',
+    createdAt: 1,
+  };
+
+  function renderPanel() {
+    render(
+      <MemoryRouter>
+        <ConnectedInstances />
+      </MemoryRouter>,
+    );
+  }
+
+  it('lists a pending connection as a connection to the host', async () => {
+    useFederationStore.setState({ peeringSubscriptions: [CONNECT_SUBSCRIPTION] });
+    renderPanel();
+
+    expect(await screen.findByText('Connect to orbit.example')).toBeInTheDocument();
+    expect(screen.queryByText(/Friend request to/)).not.toBeInTheDocument();
+  });
+
+  it('offers no friend-request retry once a connection is approved', async () => {
+    useFederationStore.setState({
+      peeringNotifications: [{
+        id: 'n-1',
+        kind: 'approved',
+        peerOrigin: 'https://orbit.example',
+        triggerReason: 'instance_connect',
+        triggerTarget: 'https://orbit.example',
+        createdAt: 1,
+        readAt: null,
+      }],
+    });
+    renderPanel();
+
+    expect(await screen.findByText('Original action: Connect to orbit.example')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Retry/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('an approved notification written by the old /peer/ensure', () => {
+  // The old endpoint stored connections as friend_add with the origin as
+  // target. Migration 0018_peering_reason_instance_connect relabels exactly
+  // those rows to instance_connect and keeps the target. Both shapes are
+  // rendered here: the row as it was, and the row as the migration leaves it.
+  const legacy = {
+    id: 'n-legacy',
+    kind: 'approved' as const,
+    peerOrigin: 'https://orbit.example',
+    triggerReason: 'friend_add' as const,
+    triggerTarget: 'https://orbit.example',
+    createdAt: 1,
+    readAt: null,
+  };
+
+  function renderPanel() {
+    render(
+      <MemoryRouter>
+        <ConnectedInstances />
+      </MemoryRouter>,
+    );
+  }
+
+  it('as it was: offered to retry a friend request to a URL', async () => {
+    useFederationStore.setState({ peeringNotifications: [legacy] });
+    renderPanel();
+
+    expect(await screen.findByText('Original action: Friend request to https://orbit.example')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry your friend request' })).toBeInTheDocument();
+  });
+
+  it('as the migration leaves it: a connection, with no friend-request retry', async () => {
+    useFederationStore.setState({ peeringNotifications: [{ ...legacy, triggerReason: 'instance_connect' }] });
+    renderPanel();
+
+    expect(await screen.findByText('Original action: Connect to orbit.example')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Retry/ })).not.toBeInTheDocument();
   });
 });

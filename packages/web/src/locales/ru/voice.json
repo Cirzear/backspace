@@ -27,7 +27,9 @@
     "userVolume": "Громкость пользователя"
   },
   "incomingCall": {
-    "status": "Входящий голосовой звонок…"
+    "status": "Входящий голосовой звонок…",
+    "notificationTitle": "Входящий звонок",
+    "notificationBody": "{{name}} звонит вам"
   },
   "grid": {
     "waitingForOthers": "Ждём, пока присоединятся другие…",
@@ -106,6 +108,7 @@
   },
   "streamSettings": {
     "title": "Настройки трансляции",
+    "hostLimits": "Ограничения задаёт {{host}}",
     "resolution": "Разрешение",
     "frameRate": "Частота кадров",
     "contentMode": "Тип контента",
@@ -122,12 +125,16 @@
     "custom": "Вручную",
     "auto": "Авто",
     "customBitrateDisabled": "Пользовательский битрейт отключён администратором",
+    "customBitrateDisabledByHost": "Пользовательский битрейт отключён на {{host}}",
     "systemAudio": "Системный звук",
     "chromeEchoNote": "Chrome может исключить звук Backspace, если это поддерживает выбранный тип захвата",
     "electronWindowsAudioNote": "Windows loopback может захватить звук звонка, если restrictOwnAudio не поддерживается",
     "electronMacAudioNote": "На macOS 13+ требуется разрешение на запись экрана и системного звука",
     "electronLinuxAudioNote": "В Linux требуется совместимость с PulseAudio; звук Backspace также может попасть в трансляцию",
     "systemAudioStartFailed": "Не удалось запустить трансляцию с системным звуком. Отключите системный звук, если платформа его не поддерживает.",
+    "systemAudioAddFailed": "Не удалось добавить системный звук в трансляцию.",
+    "systemAudioAdding": "Добавление системного звука…",
+    "systemAudioLiveUnavailable": "Системный звук можно добавить только при запуске трансляции. Перезапустите трансляцию, чтобы включить его.",
     "softwareH264Fallback": "Аппаратное кодирование H264 недоступно. Используется программный OpenH264; VP9 может работать быстрее.",
     "degradation": {
       "maintainResolution": "приоритет разрешения",

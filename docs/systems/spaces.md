@@ -192,7 +192,7 @@ Public route at `/join/:inviteCode`. Handles five phases:
 |-------|---------|-----|
 | `preview` | Initial load | Space preview card + join button (auth) or login/register links (unauth) |
 | `connect` | `NotConnectedError` on join attempt | Password prompt for federation connect |
-| `fallback` | `DifferentPasswordError` on connect | Username + password for existing remote account |
+| `fallback` | `RemoteLoginRequiredError` on connect | Username + password for an account on the remote, under the `FallbackNotice` its `reason` selects |
 | `other-instance` | User clicks "I use another instance" | Domain input for federation redirect |
 | `already-member` | Join returns "already a member" | Green checkmark + auto-redirect (2s timer) |
 
@@ -245,7 +245,7 @@ point, not a replacement.
 | `request` | Listed | Submit join request, requires approval |
 | `public` | Listed | Instant join, no invite needed |
 
-A `request` or `public` space whose owner has switched on "List in the Backspace directory" (`spaces.directoryListed`) is additionally served on `GET /api/directory/spaces` while the instance admin allows it (`instance_settings.directoryEnabled`, which itself requires discovery on), and from there appears in Outer Space on other instances. The switch lives in the space settings Discovery panel, always rendered, and disabled with the first reason that applies, read from the settings document of the instance the space lives on (`streamingLimits` for a home space; a remote space asks its own instance's `GET /api/settings/streaming` on mount, and a load whose origin changed under it writes nothing): the instance has no `DIRECTORY_ENDPOINT` (`directoryConfigured: false`), so a listing would reach no hub and the administrator's own switch cannot change that; then the administrator's listing opt-in is off (`directoryEnabled: false`); then the space is private. The endpoint is asked first because it is the fact the administrator cannot fix from the settings the second reason points at. A fourth state is not a reason: while the document is unknown the switch is disabled and says nothing, and a load that came back empty says so with a Retry (see below). The opt-in reason has a second voice for the administrator of the instance the space lives on, who is told which setting is off rather than that an administrator has to act, and is offered "Turn it on" beside it; that action confirms first and then writes the whole global rung (`discoveryEnabled` and `directoryEnabled` together, the pair the server requires). It is offered only when `settingsStore.isAdmin` is true and the space's `_instanceOrigin` is empty, because admin rights are per instance and the client holds that flag only for home, and because the write goes to home; a remote space keeps the owner-voiced sentence unchanged. The switch is followed by a one-sentence disclosure of what listing makes public. See [directory.md](directory.md) §10.
+A `request` or `public` space whose owner has switched on "List in the global Backspace directory" (`spaces.directoryListed`) is additionally served on `GET /api/directory/spaces` while the instance admin allows it (`instance_settings.directoryEnabled`, which itself requires discovery on), and from there appears in Outer Space on other instances. The switch lives in the space settings Discovery panel, always rendered, and disabled with the first reason that applies, read from the settings document of the instance the space lives on (`streamingLimits` for a home space; a remote space asks its own instance's `GET /api/settings/streaming` on mount, and a load whose origin changed under it writes nothing): the instance has no `DIRECTORY_ENDPOINT` (`directoryConfigured: false`), so a listing would reach no hub and the administrator's own switch cannot change that; then the administrator's listing opt-in is off (`directoryEnabled: false`); then the space is private. The endpoint is asked first because it is the fact the administrator cannot fix from the settings the second reason points at. A fourth state is not a reason: while the document is unknown the switch is disabled and says nothing, and a load that came back empty says so with a Retry (see below). The opt-in reason has a second voice for the administrator of the instance the space lives on, who is told which setting is off rather than that an administrator has to act, and is offered "Turn it on" beside it; that action confirms first and then writes the whole global rung (`discoveryEnabled` and `directoryEnabled` together, the pair the server requires). It is offered only when `settingsStore.isAdmin` is true and the space's `_instanceOrigin` is empty, because admin rights are per instance and the client holds that flag only for home, and because the write goes to home; a remote space keeps the owner-voiced sentence unchanged. The switch is followed by a one-sentence disclosure of what listing makes public. See [directory.md](directory.md) §10.
 
 The panel fetches that settings document itself when the store has none, and says so when the fetch comes back empty. `streamingLimits` is filled once per session by the WS `ready` handler and by nothing else a member can reach, so a `ready` whose fetch failed used to leave the switch disabled with no reason and no way to ask again: the round that stopped the panel guessing (`?? true` / `?? false` asserted "discovery on, not listed" from a document nobody had read) made the silence permanent. Unknown now says it is unknown, in the treatment the Streaming panel uses for its own failed load: the line from `common:states.loadSettingsFailed` under the switch and a `common:actions.retry` button that runs the load again, the remote client's `GET /settings/streaming` for a remote space and `fetchStreamingLimits` for a home one. A remote fetch that fails while home holds a document is not reported: that is the fallback doing its job.
 
@@ -522,7 +522,7 @@ Updates `spaces.ownerId`, broadcasts `space_updated` WS event.
 
 | Field | Validation |
 |-------|------------|
-| name | Required, trimmed, lowercased, spaces→hyphens, 1-100 chars |
+| name | Required, a string; stored as `normalizeChannelName(name)` from `@backspace/shared` (trimmed, lowercased, each whitespace run → one hyphen), 1-100 chars |
 | type | Required, `'text'` or `'voice'` |
 | topic | Optional, trimmed |
 | categoryId | Optional, validated against space's categories |
@@ -541,7 +541,7 @@ Position: `max(existing positions) + 1`.
 **Permission:** `MANAGE_CHANNELS` (checked with channel-level override context)
 **Body:** `{ name?, topic?, position?, categoryId? }`
 
-- Name: same normalization as create
+- Name: same normalization as create; a non-string answers `channel_name_required`
 - Position: non-negative number
 - categoryId: `null` to unassign, or valid category ID in same space
 
@@ -549,10 +549,12 @@ Position: `max(existing positions) + 1`.
 - If `categoryId` changed: calls `broadcastOverrideChange` (per-user VIEW_CHANNEL recheck, may send `channel_deleted` to users who lost access)
 - Otherwise: simple `channel_updated` broadcast to channel viewers
 
+**Client:** the Overview tab of channel settings renames through the `updateChannel` store action, which sends the request to the space's own instance and applies the returned row, so the editor shows the stored (normalized) name at once. The editor is the shared `InlineNameEditor` (`components/ui/`): Save or Enter commits, Cancel or Escape abandons, blur does nothing, and Escape never reaches the settings modal's own close handler. It compares edits with `normalizeChannelName` and sends nothing when the stored name would not change. The control shows when the user holds `MANAGE_CHANNELS` on that channel (see "Client gating" in permissions.md).
+
 ### Delete Channel
 
 **Endpoint:** `DELETE /api/channels/:id`
-**Permission:** `MANAGE_CHANNELS`
+**Permission:** `MANAGE_CHANNELS` (checked with channel-level override context)
 
 **Cleanup sequence:**
 1. Disconnect all voice participants (if voice channel)
@@ -568,7 +570,7 @@ Position: `max(existing positions) + 1`.
 
 **Create:** `POST /api/spaces/:id/categories` — permission: `MANAGE_CHANNELS`, name 1-100 chars, auto-position. Broadcasts `category_created`.
 
-**Update:** `PATCH /api/categories/:id` — permission: `MANAGE_CHANNELS`, updatable: name, position. Broadcasts `category_updated` (includes `isPrivate` flag).
+**Update:** `PATCH /api/categories/:id` — permission: `MANAGE_CHANNELS`, updatable: name (a string, stored as `normalizeCategoryName(name)`, which trims and keeps case and spacing, 1-100 chars; a non-string answers `category_name_required`), position. Broadcasts `category_updated` (includes `isPrivate` flag). The category settings Overview renames through the `updateCategory` store action with the same `InlineNameEditor` as channels.
 
 **Delete:** `DELETE /api/categories/:id` — permission: `MANAGE_CHANNELS`. Transaction nulls `categoryId` on child channels, then deletes category. Broadcasts `category_deleted` then `channel_layout_updated` (per-user filtered).
 
@@ -789,7 +791,7 @@ Used for self-leave (`leaveSpace` calls `removeMember` with the correct user ID 
 4. If not connected → NotConnectedError thrown
 5. JoinSpaceModal/JoinPage enters 'connect' phase
 6. User provides password → connectToRemote(origin, password)
-7. If password mismatch → DifferentPasswordError → 'fallback' phase
+7. If only the account's own credentials can get in → RemoteLoginRequiredError → 'fallback' phase (reasons: client-federation.md, connect flow step 7)
 8. On success: joinByCode retried, space added to store with _instanceOrigin
 ```
 

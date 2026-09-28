@@ -110,7 +110,7 @@ function MemberSidebarRow({
       <div className="flex-1 min-w-0">
         <Username
           username={displayName}
-          className={`text-[13.5px] leading-[1.2] font-medium truncate ${isOffline ? 'text-txt-tertiary' : (!colorStyle ? 'text-txt-primary' : '')}`}
+          className={`text-[13.5px] leading-[1.2] font-medium truncate ${colorStyle ? (isOffline ? 'opacity-60' : '') : (isOffline ? 'text-txt-tertiary' : 'text-txt-primary')}`}
           style={colorStyle}
         />
         {!isOffline && isFederationGlobeApplicable(canonical) && (
@@ -200,7 +200,7 @@ export function MemberSidebar() {
       openModal('memberRoles', { spaceId: space.id, userId: member.userId });
       return;
     }
-    openUserProfile(user, e.currentTarget.getBoundingClientRect(), 'left');
+    openUserProfile(user, e.currentTarget.getBoundingClientRect(), 'left', { spaceId: member.spaceId, userId: member.userId });
   };
 
   const groupHeading = (kind: MemberGroupKind, label: string | null): string => {
@@ -210,7 +210,9 @@ export function MemberSidebar() {
   };
 
   const renderMember = (member: MemberWithUser, isOffline = false) => {
-    const colorStyle = isOffline ? undefined : getMemberColor(member);
+    // Roles do not depend on presence: an offline member keeps their colour,
+    // dimmed with the rest of the row.
+    const colorStyle = getMemberColor(member);
     const activities = userActivities.get(member.userId) ?? [];
     const isRichActivity = !isOffline && hasRichActivity(activities);
     const primary = getPrimaryActivity(activities);

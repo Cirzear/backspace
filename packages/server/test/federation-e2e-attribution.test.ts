@@ -62,6 +62,8 @@ let secret: string;
 
 /** Native on B. Used as the second participant so batches are well-formed. */
 let bob: TestUser;
+/** Native on A. The second participant when the author is one of B's users. */
+let alice: TestUser;
 /** Native on B, WITH a federated account recorded on A → homeward standing. */
 let erin: TestUser;
 /** Native on B, WITHOUT any federated account on A → no homeward standing. */
@@ -119,11 +121,11 @@ function createEvent(opts: {
         homeInstance: opts.authorHomeInstance,
         profile: { username: opts.authorUsername },
       },
-      {
-        homeUserId: bob.id,
-        homeInstance: B.domain,
-        profile: { username: bob.username },
-      },
+      // A 1-on-1 is only relayed between the instances its two people live
+      // on, so a homeward author (one of B's users) talks to someone on A.
+      opts.authorHomeInstance === B.domain
+        ? { homeUserId: alice.id, homeInstance: A.domain, profile: { username: alice.username } }
+        : { homeUserId: bob.id, homeInstance: B.domain, profile: { username: bob.username } },
     ],
     message: {
       userId: opts.authorHomeUserId,
@@ -187,6 +189,7 @@ beforeAll(async () => {
   secret = peerSecretOn(B, identityOrigin(A));
 
   bob = await registerLocal(B, 'bob');
+  alice = await registerLocal(A, 'alice');
   erin = await registerLocal(B, 'erin');
   frank = await registerLocal(B, 'frank');
   await grantHomewardStanding(erin);
@@ -332,6 +335,45 @@ describe('federation e2e — relay attribution is bound to the authenticated pee
     expect(res.body?.accepted).toEqual([]);
     expect(rejectionReason(res, messageId)).toBe('attribution_mismatch');
     expect(dmMessageContents(B)).not.toContain(content);
+  });
+
+  it('tells a sender that retries it that the same homeward relay is unproven, not forged', async () => {
+    const messageId = nextId();
+    const content = `attr-homeward-unproven-${messageId}`;
+
+    // Same claim as above, from a sender that lists the capability. frank's
+    // proof could still be on its way from his client, so the receiver answers
+    // with the retryable reason. Nothing is written.
+    const res = await postSignedRelay(B, identityOrigin(A), secret, [
+      createEvent({
+        messageId,
+        content,
+        authorHomeUserId: frank.id,
+        authorHomeInstance: B.domain,
+        authorUsername: frank.username,
+      }),
+    ], { capabilities: ['attribution_unproven'] });
+
+    expect(res.status).toBe(200);
+    expect(res.body?.accepted).toEqual([]);
+    expect(rejectionReason(res, messageId)).toBe('attribution_unproven');
+    expect(dmMessageContents(B)).not.toContain(content);
+  });
+
+  it('keeps a third-instance author terminal even for a sender that retries unproven claims', async () => {
+    const messageId = nextId();
+    const res = await postSignedRelay(B, identityOrigin(A), secret, [
+      createEvent({
+        messageId,
+        content: `attr-third-cap-${messageId}`,
+        authorHomeUserId: '900000000000000107',
+        authorHomeInstance: THIRD_INSTANCE,
+        authorUsername: 'mallory2',
+      }),
+    ], { capabilities: ['attribution_unproven'] });
+
+    expect(res.status).toBe(200);
+    expect(rejectionReason(res, messageId)).toBe('attribution_mismatch');
   });
 
   it('POSITIVE CONTROL: accepts the same homeward relay once the user holds an account on the peer', async () => {

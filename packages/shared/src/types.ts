@@ -52,6 +52,30 @@ export interface FederationRegistryEntry {
 }
 
 export type UserStatus = 'online' | 'idle' | 'dnd' | 'offline';
+/** A status a user can pick. 'offline' is never chosen: it means "no connection". */
+export type ChosenUserStatus = Exclude<UserStatus, 'offline'>;
+
+export const CHOSEN_USER_STATUSES: readonly ChosenUserStatus[] = ['online', 'idle', 'dnd'];
+
+export function isChosenUserStatus(value: unknown): value is ChosenUserStatus {
+  return typeof value === 'string' && (CHOSEN_USER_STATUSES as readonly string[]).includes(value);
+}
+
+/**
+ * Whether an account owns its chosen status, so its own row is where the choice
+ * is stored and read (`users.chosen_status`). True for a native account and for
+ * a detached one (its home instance was reset, so it is sovereign here); false
+ * for a replicated account, whose choice lives on its home instance. The same
+ * authority rule the server applies to profile edits and credential issuance.
+ * Accepts the server row (integer flag) and the client `User` (boolean flag).
+ * activity-presence.md, "DB Persistence".
+ */
+export function ownsChosenStatus(account: {
+  homeInstance?: string | null;
+  federationHomeOrphaned?: number | boolean | null;
+}): boolean {
+  return !account.homeInstance || account.federationHomeOrphaned === 1 || account.federationHomeOrphaned === true;
+}
 
 export interface UserWithPassword extends User {
   passwordHash: string;
@@ -442,7 +466,7 @@ export type ClientEvent =
   | { type: 'message_edit'; messageId: string; content: string }
   | { type: 'message_delete'; messageId: string }
   | { type: 'typing_start'; channelId: string }
-  | { type: 'presence_update'; status: 'online' | 'idle' | 'dnd' }
+  | { type: 'presence_update'; status: ChosenUserStatus }
   | { type: 'voice_join'; channelId: string }
   | { type: 'voice_leave' }
   | { type: 'dm_message_create'; dmChannelId: string; content?: string; attachments?: string[]; replyToId?: string }
@@ -613,7 +637,7 @@ export interface UpdateUserRequest {
   avatarColor?: string;
   bio?: string;
   customStatus?: string;
-  status?: UserStatus;
+  status?: ChosenUserStatus;
   replicatedInstances?: ReplicatedInstance[];
   homeUserId?: string;
   profileUpdatedAt?: number;
@@ -832,6 +856,19 @@ export interface InstanceAdminSettings {
   /** Read-only on the wire; the server ignores them on PATCH. */
   directoryLastPingAt: number | null;
   directoryLastError: DirectoryPingError | null;
+  /**
+   * Spaces here that have opted in to the directory and are not private,
+   * counted whatever `directoryEnabled` says. Read-only, ignored on PATCH.
+   * The instance switch lists nothing by itself; this is how the admin sees
+   * whether any space has taken it up.
+   */
+  directoryListedSpaceCount: number;
+  /**
+   * The web client's Backspace page shows the Support card, which links to
+   * the project's Ko-fi page. Hides only that card; the server does nothing
+   * else with it. Default true. Also on `InstanceInfoResponse`.
+   */
+  supportCardEnabled: boolean;
 }
 
 export interface InstanceStreamingLimits {
@@ -895,6 +932,10 @@ export interface InstanceInfoResponse {
   directoryConfigured: boolean;
   directoryAvailable: boolean;
   directoryEnabled: boolean;
+  // The admin's switch for the Support card on the web client's Backspace
+  // page. It only hides that card in the web client and changes nothing the
+  // server does.
+  supportCardEnabled: boolean;
 }
 
 /**
@@ -1089,13 +1130,27 @@ export interface FederationRelayEvent {
     homeInstance: string;
     type?: 'user' | 'system';
     content: string | null;
+    /** The sender's local id of the replied-to message. Meaningless to a receiver, which never adopts it; see `replyTo`. */
     replyToId: string | null;
+    /**
+     * The replied-to message in coordinates every instance shares. Optional:
+     * absent from older senders and on messages that are not replies. The
+     * receiver resolves it inside the conversation the message lands in and
+     * stores no reply target when it does not resolve there.
+     */
+    replyTo?: FederationMessageRef | null;
     editedAt: number | null;
     createdAt: number;
     attachments?: FederationRelayAttachment[];
   };
   reactions?: FederationRelayReaction[];
   reaction?: FederationRelayReaction;
+  /**
+   * `update` / `delete`: the message being changed and who is changing it.
+   * Optional: older senders omit it and are matched by `messageId` alone. See
+   * `FederationMessageTarget` for how a receiver applies it.
+   */
+  target?: FederationMessageTarget;
   membership?: FederationMembershipPayload;
   ownership?: FederationOwnershipPayload;
   group?: FederationGroupPayload;
@@ -1229,6 +1284,36 @@ export interface FederationFriendshipPayload {
   createdAt: number;
 }
 
+/**
+ * A DM message named across instances. Every instance holds its own copy of a
+ * federated message under its own local id, so a reference that crosses
+ * instances uses the id the message has on the instance it was created on,
+ * together with that instance's origin (as its `getOurOrigin()` reports it).
+ */
+export interface FederationMessageRef {
+  messageId: string;
+  messageHomeInstance: string;
+}
+
+/**
+ * The message an `update` or `delete` relay changes.
+ *
+ * `messageId` on the event is the sender's local id, which only identifies the
+ * message when the sender created it. A receiver given a target instead
+ * resolves `message` inside its copy of the conversation `federatedId`, and
+ * applies the change only when `actor` is that message's author, compared as
+ * federated identities, and `actor` passes the relay attribution check. The
+ * rule is written out in docs/systems/dm-system.md, "Relayed edits and
+ * deletes".
+ */
+export interface FederationMessageTarget {
+  message: FederationMessageRef;
+  /** The conversation's `federatedId` (1-on-1 and group alike). */
+  federatedId: string;
+  /** The user editing or deleting, as a federated identity. */
+  actor: { homeUserId: string; homeInstance: string };
+}
+
 export interface FederationRelayReaction {
   messageId?: string;
   messageHomeInstance?: string;
@@ -1262,8 +1347,28 @@ export interface FederationRelayRequest {
   // with peers that predate epoch self-healing; when present, the receiver can
   // detect that the source instance has been re-provisioned.
   sourceInstanceId?: string;
+  /**
+   * Relay behaviours the sender implements beyond plain v1. Optional for wire
+   * compatibility: a receiver treats a missing or malformed list as empty and
+   * answers with v1 behaviour only. See `FederationRelayCapability`.
+   */
+  capabilities?: FederationRelayCapability[];
   events: FederationRelayEvent[];
 }
+
+/**
+ * A relay behaviour a sender opts into by listing it in
+ * `FederationRelayRequest.capabilities`. Each one gates something the receiver
+ * would otherwise not send, so an older sender is never handed an answer it was
+ * not built to handle.
+ *
+ * - `attribution_unproven`: the sender retries an event rejected with the
+ *   reason `attribution_unproven` on its normal backoff, until the outbox TTL.
+ *   A receiver may then use that reason for a homeward claim whose proof it
+ *   does not hold yet; for any other sender it answers the same case with the
+ *   terminal `attribution_mismatch`.
+ */
+export type FederationRelayCapability = 'attribution_unproven';
 
 export interface FederationEpochResponse {
   instanceId: string;
@@ -1396,8 +1501,32 @@ export interface FederationResetEventsResponse {
  * Recorded on `peer_approval_subscribers.trigger_reason` so admins can see
  * the human-readable cause and the user can recover their original action
  * after approval. Persisted as a string column with this exact set of values.
+ *
+ * `instance_connect`: the user opened a session on the remote instance
+ * (connect, explicit login, token resume, or app start), and the client asked
+ * its home instance to peer so DMs written there can be relayed home.
  */
-export type PeeringTriggerReason = 'friend_add' | 'space_join' | 'direct_message';
+export type PeeringTriggerReason = 'friend_add' | 'space_join' | 'direct_message' | 'instance_connect';
+
+/**
+ * The trigger reasons a client may state in `POST /api/federation/peer/ensure`.
+ * The server refuses any other value with `validation_failed`, and derives the
+ * target itself for each one. `friend_add` is deliberately absent: friend-add
+ * peers server-side with a target it has checked, so a client stating it
+ * could only put a friend request the admin cannot verify into the queue.
+ */
+export const PEER_ENSURE_REASONS = ['instance_connect'] as const satisfies readonly PeeringTriggerReason[];
+export type PeerEnsureReason = (typeof PEER_ENSURE_REASONS)[number];
+
+/**
+ * Body of `POST /api/federation/peer/ensure`. `reason` is optional for clients
+ * that predate it; the server reads a missing reason as `instance_connect`,
+ * the only thing those clients called the endpoint for.
+ */
+export interface PeerEnsureRequest {
+  remoteOrigin: string;
+  reason?: PeerEnsureReason;
+}
 
 /**
  * Caller intent passed into `ensurePeered()`. The gate (when
@@ -1410,7 +1539,8 @@ export type PeeringTriggerReason = 'friend_add' | 'space_join' | 'direct_message
  *
  * `target` is the human-readable target identifier the user acted on
  * (e.g. `username@instance.example` for friend_add, the space invite code
- * for space_join, the federated DM channel id for direct_message).
+ * for space_join, the federated DM channel id for direct_message, the remote
+ * origin for instance_connect).
  */
 export type EnsurePeeredCallerIntent =
   | { kind: 'user_action'; userId: string; reason: PeeringTriggerReason; target: string }

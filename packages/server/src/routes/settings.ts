@@ -6,6 +6,7 @@ import { authenticate, requireAdmin } from '../utils/auth.js';
 import { config } from '../config.js';
 import { sendError } from '../utils/httpErrors.js';
 import { markDirectoryDirty, readDirectoryState } from '../directory/state.js';
+import { countListedSpaces } from '../directory/document.js';
 import type { InstanceStreamingLimits, InstanceAdminSettings } from '@backspace/shared';
 import { STANDARD_RESOLUTIONS, STANDARD_FRAMERATES, BITRATE_MATRIX_KBPS } from '@backspace/shared/src/constants.js';
 
@@ -46,7 +47,7 @@ function rowToLimits(row: typeof schema.instanceSettings.$inferSelect): Instance
 }
 
 type SettingsRow = typeof schema.instanceSettings.$inferSelect;
-type SettingsUpdate = Record<string, number | string | null>;
+type SettingsUpdate = Record<string, number | string | boolean | null>;
 
 function rowToAdminSettings(row: SettingsRow, sqlite: Database.Database): InstanceAdminSettings {
   const gifKey = row.gifApiKey as string | null;
@@ -68,6 +69,8 @@ function rowToAdminSettings(row: SettingsRow, sqlite: Database.Database): Instan
     directoryBrowseEnabled: row.directoryBrowseEnabled === 1,
     directoryLastPingAt: directory.lastPingAt,
     directoryLastError: directory.lastError,
+    directoryListedSpaceCount: countListedSpaces(sqlite),
+    supportCardEnabled: row.supportCardEnabled,
   };
 }
 
@@ -320,6 +323,15 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
       updateData.directoryBrowseEnabled = body.directoryBrowseEnabled ? 1 : 0;
     }
 
+    // Only the web client reads it, to hide the Support card. Nowhere in the
+    // directory document, so it never owes a ping either.
+    if (body.supportCardEnabled !== undefined) {
+      if (typeof body.supportCardEnabled !== 'boolean') {
+        return sendError(reply, 400, 'field_not_boolean', { field: 'supportCardEnabled' });
+      }
+      updateData.supportCardEnabled = body.supportCardEnabled;
+    }
+
     if (body.gifApiKey !== undefined) {
       // Skip masked placeholder values — the GET endpoint returns '****xxxx' for security,
       // so if the client sends that back unchanged, don't corrupt the real key
@@ -370,7 +382,8 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
     }
 
     // directoryLastPingAt and directoryLastError are read-only on the wire:
-    // the pinger owns them, so the body's copies are never read.
+    // the pinger owns them, so the body's copies are never read. The same
+    // holds for directoryListedSpaceCount, which is counted from `spaces`.
     if (!applyDiscoveryAndDirectory(body, updateData, currentRow, reply)) {
       return reply;
     }

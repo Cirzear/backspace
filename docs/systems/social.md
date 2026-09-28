@@ -331,7 +331,7 @@ The wire format of the queued event is identical to the pre-2026-04-25 flow; onl
 2. **Self-target guard (defense-in-depth):** if `from.homeUserId === to.homeUserId` and `normalizeOriginForCompare(from.homeInstance) === normalizeOriginForCompare(to.homeInstance)`, reject with `self_target_invalid`. Runs before any side effects (no stub creation). The sender's local `cannot_friend_self` check should catch this, but the receiver must not trust upstream validation.
 3. **Resolve sender:** `resolveOrCreateReplicatedUser(from.homeUserId, from.homeInstance)` -- creates stub if needed.
 4. **Hydrate sender profile:** `hydrateReplicatedUserProfile(fromUser, event.friendship.fromProfile)` -- updates stub fields.
-5. **Resolve recipient:** `resolveLocalUser(to.homeUserId)` -- must be a native user on this instance (returns `undefined` if not found -> reject `recipient_not_found`).
+5. **Resolve recipient:** `resolveRelayActor(to)` -- the local user that IS the `to` pair (`homeUserId` + `homeInstance`); anything else, including a row that only shares the `homeUserId`, rejects `recipient_not_found`.
 6. **Idempotency checks:**
    - **Already friends (either direction):** accept as no-op.
    - **Pending request in EITHER direction:** accept as no-op. Forward (from→to) covers redelivery; reverse (to→from) covers the cross-fire race where alice@A and bob@B click "add friend" near-simultaneously and each sender's local both-direction check passes before either event reaches the wire. Mirrors the sender-side `incoming_request_exists` both-direction check (step 8 above) to keep the receiver and sender contracts symmetric.
@@ -343,7 +343,7 @@ The wire format of the queued event is identical to the pre-2026-04-25 flow; onl
 
 ### Failure Handling: Async Rollback
 
-When the outbox worker receives a relay response from the remote instance, it classifies each rejected entry. A configurable set of **terminal rejection reasons** (`TERMINAL_REJECTION_REASONS` in `federationWorker.ts`) causes an outbox entry to be deleted with no retry: `duplicate`, `recipient_not_found`, `attribution_mismatch`, `unknown_event_type`, `self_target_invalid`.
+When the outbox worker receives a relay response from the remote instance, it classifies each rejected entry. A configurable set of **terminal rejection reasons** (`TERMINAL_REJECTION_REASONS` in `federationWorker.ts`) causes an outbox entry to be deleted with no retry: `duplicate`, `recipient_not_found`, `attribution_mismatch`, `unknown_event_type`, `self_target_invalid`. Any other reason (for example `attribution_unproven`, see [federation.md §3](federation.md#3-identity-resolution)) keeps the request pending while the outbox retries it on backoff.
 
 For non-`duplicate` terminals, the worker invokes the registered permanent-failure callback via `invokePermanentFailureCallback(eventType, messageId, reason)` from `utils/federationRollback.ts`. For `friend_request_create`, this is **`rollbackFriendRequestCreate`**:
 
@@ -381,7 +381,7 @@ The client handler in `useWebSocket.ts` removes the row from `socialStore` and s
 
 **Inbound (`federation.ts:processFriendRequestCancelEvent`):**
 1. **Authority:** `from.homeInstance === sourceInstance` -- the sender cancels their own request
-2. **Resolve both users:** `resolveLocalUser()` for both -- if either doesn't exist, accept idempotently
+2. **Resolve both users:** `resolveRelayActor()` for both, by `homeUserId` + `homeInstance` -- if either doesn't exist, accept idempotently
 3. Find and **delete** the pending request row
 4. **WS broadcast:** `friend_request_cancelled` to local recipient
 
@@ -406,7 +406,7 @@ The client handler in `useWebSocket.ts` removes the row from `socialStore` and s
 
 **Inbound (`federation.ts:processFriendRemoveEvent`):**
 1. **Authority:** Either `from.homeInstance === sourceInstance` OR `to.homeInstance === sourceInstance` (either side can unfriend)
-2. **Resolve both users:** `resolveLocalUser()` for both -- if either doesn't exist, accept idempotently
+2. **Resolve both users:** `resolveRelayActor()` for both, by `homeUserId` + `homeInstance` -- if either doesn't exist, accept idempotently
 3. Delete friendship row in both directions
 4. **Determine who was removed:** The removing user is on `sourceInstance`; broadcast `friend_removed` to the **other** (local) user
 
@@ -672,7 +672,7 @@ function getFriendshipStatus(viewedUser, currentUser, friends, requests): Friend
 
 | Tab | Content |
 |-----|---------|
-| About | Bio (rendered as Markdown: p, strong, em, a, br), Member Since date |
+| About | Bio (`ui/ProfileBio.tsx`, shared with the profile card: GFM Markdown limited to p, strong, em, del, a, br, so a bare URL is a link as in chat, and `:shortcode:` emoji as described in `utils/emojiShortcodes.ts`), Member Since date |
 | Mutual Friends | Grid of mutual friends (from `loadFederatedMutuals`), clickable to navigate to their profile |
 | Mutual Spaces | List of mutual spaces with icons, clickable to navigate to space |
 

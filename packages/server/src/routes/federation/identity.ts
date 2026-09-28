@@ -49,14 +49,24 @@ export interface RelayActor {
 
 
 /**
- * Does the natively-homed local user `homeUserId` have an established federated
- * presence on `peerOrigin`?
+ * What this instance can say about a homeward claim: a peer asserting an event
+ * authored by one of OUR natively-homed users.
  *
- * This is the ONLY thing that makes a homeward relay (a peer asserting an event
- * authored by one of OUR users) legitimate: such an event can only genuinely
- * exist if the user holds an account on that peer and acted there. Both records
- * consulted here are written exclusively by the user themselves, over an
- * authenticated session on this instance:
+ *   - `proven`   — the user has an established federated presence on the peer.
+ *   - `unproven` — the user exists here, but no presence on the peer is on file
+ *                  yet. Either the peer is forging, or the user's client has
+ *                  not yet pushed the registry entry that records the
+ *                  connection (it is written after the session opens, so a
+ *                  relay the user causes can arrive first). The two cannot be
+ *                  told apart from here, so the claim is refused without being
+ *                  called a forgery.
+ *   - `no_such_user` — there is no live native user with that id. Nothing that
+ *                  arrives later can make the claim true.
+ *
+ * Presence is the ONLY thing that makes a homeward relay legitimate: such an
+ * event can only genuinely exist if the user holds an account on that peer and
+ * acted there. Both records consulted here are written exclusively by the user
+ * themselves, over an authenticated session on this instance:
  *
  *   - `user_federation_registry` — `PUT /api/users/@me/federation-registry`,
  *     scoped to `request.userId`. Every lifecycle state counts (a connection
@@ -66,14 +76,13 @@ export interface RelayActor {
  * A peer cannot forge either one, so it cannot manufacture standing to speak
  * for a user who never connected to it.
  */
-export function localUserActsOnPeer(
+export type HomewardStanding = 'proven' | 'unproven' | 'no_such_user';
+
+export function localUserStandingOnPeer(
   homeUserId: string,
   peerOrigin: string,
   db: ReturnType<typeof getDb>,
-): boolean {
-  const peerHost = normalizeOriginForCompare(peerOrigin);
-  if (!peerHost) return false;
-
+): HomewardStanding {
   // Homeward means "homed HERE", so the actor must resolve to a NATIVE row
   // (home_instance IS NULL). Matching a replicated stub that merely carries the
   // same home_user_id would reintroduce the cross-instance id collision the
@@ -87,14 +96,17 @@ export function localUserActsOnPeer(
       eq(schema.users.isDeleted, 0),
     ))
     .get();
-  if (!nativeUser) return false;
+  if (!nativeUser) return 'no_such_user';
+
+  const peerHost = normalizeOriginForCompare(peerOrigin);
+  if (!peerHost) return 'unproven';
 
   const registryRows = db
     .select({ origin: schema.userFederationRegistry.origin })
     .from(schema.userFederationRegistry)
     .where(eq(schema.userFederationRegistry.userId, nativeUser.id))
     .all();
-  if (registryRows.some(r => normalizeOriginForCompare(r.origin) === peerHost)) return true;
+  if (registryRows.some(r => normalizeOriginForCompare(r.origin) === peerHost)) return 'proven';
 
   if (nativeUser.replicatedInstances) {
     try {
@@ -103,7 +115,7 @@ export function localUserActsOnPeer(
         for (const entry of parsed) {
           if (typeof entry !== 'object' || entry === null) continue;
           const origin = (entry as { origin?: unknown }).origin;
-          if (typeof origin === 'string' && normalizeOriginForCompare(origin) === peerHost) return true;
+          if (typeof origin === 'string' && normalizeOriginForCompare(origin) === peerHost) return 'proven';
         }
       }
     } catch {
@@ -111,13 +123,31 @@ export function localUserActsOnPeer(
     }
   }
 
-  return false;
+  return 'unproven';
 }
 
 
 /**
- * Verify that an inbound relay event's acting identity is one the signing peer
- * is entitled to speak for.
+ * Why an inbound relay event's acting identity was refused, as it goes into the
+ * relay response's `rejected[].reason`.
+ *
+ *   - `attribution_mismatch` — permanent. The signing peer can never speak for
+ *     this actor: it is homed on a third instance, is malformed, or claims to
+ *     be one of our users who does not exist (or no longer does).
+ *   - `attribution_unproven` — the actor is one of our live users and the peer
+ *     may well be carrying their event home, but the proof that they hold an
+ *     account there has not reached us. A retry can succeed once it does.
+ *
+ * The HTTP relay boundary only puts `attribution_unproven` on the wire for a
+ * sender that lists it in `FederationRelayRequest.capabilities`; every other
+ * sender receives `attribution_mismatch` for both (see `handlers/relay.ts`).
+ */
+export type AttributionRefusal = 'attribution_mismatch' | 'attribution_unproven';
+
+/**
+ * Check that an inbound relay event's acting identity is one the signing peer
+ * is entitled to speak for. Returns `null` when it is, otherwise the refusal
+ * reason the handler reports.
  *
  * The only trustworthy fact about an inbound relay is the HMAC-authenticated
  * peer. `sourceInstance` is bound to that peer at the relay boundary (see
@@ -126,41 +156,165 @@ export function localUserActsOnPeer(
  *
  * Two valid cases:
  * 1. **Direct**: the actor is homed on the signing peer. A peer is the identity
- *    authority for its own users.
+ *    authority for its own users, but only for ids that are not already a
+ *    different identity here: when the `homeUserId` belongs only to local users
+ *    homed elsewhere (`resolveRelayActor` reports `mismatch`), the event could
+ *    never be applied as that actor, so it is refused before any handler acts.
+ *    The same holds when the identity is a detached account
+ *    (`federationHomeOrphaned = 1`): its home domain was reset, the account is
+ *    sovereign here, and the domain no longer speaks for it.
  * 2. **Homeward relay**: the actor is homed on THIS instance — a client-
  *    federation user (e.g. erin@nova logged into orbit) acted on the remote and
  *    the relay carries it back home. This is only accepted when the local user
  *    actually holds a federated account on the signing peer
- *    (`localUserActsOnPeer`). Without that binding, any approved peer could
+ *    (`localUserStandingOnPeer`). Without that binding, any approved peer could
  *    forge events attributed to any of our users.
  *
  * An actor homed on a third instance is never accepted: the signing peer is not
  * that instance's identity authority and has no delegation from it.
  */
-export function verifyAttribution(
+export function attributionRefusal(
   actor: RelayActor | null | undefined,
   sourceInstance: string,
   db: ReturnType<typeof getDb>,
-): boolean {
-  if (!actor) return false;
+): AttributionRefusal | null {
+  if (!actor) return 'attribution_mismatch';
   const { homeUserId, homeInstance } = actor;
-  if (typeof homeUserId !== 'string' || homeUserId.length === 0) return false;
-  if (typeof homeInstance !== 'string' || homeInstance.length === 0) return false;
+  if (typeof homeUserId !== 'string' || homeUserId.length === 0) return 'attribution_mismatch';
+  if (typeof homeInstance !== 'string' || homeInstance.length === 0) return 'attribution_mismatch';
 
   const authorDomain = extractDomain(homeInstance).toLowerCase();
   const sourceDomain = extractDomain(sourceInstance).toLowerCase();
-  if (!authorDomain || !sourceDomain) return false;
+  if (!authorDomain || !sourceDomain) return 'attribution_mismatch';
 
   // Case 1: the actor belongs to the signing peer.
-  if (authorDomain === sourceDomain) return true;
+  if (authorDomain === sourceDomain) {
+    const identity = resolveRelayActor(actor, db);
+    if (identity.kind === 'mismatch') return 'attribution_mismatch';
+    // A detached account no longer belongs to its old home domain.
+    if (identity.kind === 'found' && identity.user.federationHomeOrphaned === 1) return 'attribution_mismatch';
+    return null;
+  }
 
   // Case 2: homeward relay — the actor belongs to THIS instance.
   const ourDomain = extractDomain(getOurOrigin()).toLowerCase();
   if (ourDomain && authorDomain === ourDomain) {
-    return localUserActsOnPeer(homeUserId, sourceInstance, db);
+    switch (localUserStandingOnPeer(homeUserId, sourceInstance, db)) {
+      case 'proven': return null;
+      case 'unproven': return 'attribution_unproven';
+      case 'no_such_user': return 'attribution_mismatch';
+    }
   }
 
-  return false;
+  return 'attribution_mismatch';
+}
+
+
+/**
+ * The federated identity a local user row stands for, or null when the row
+ * does not carry one. A native row is homed here: its identity is its own id
+ * on this instance. A federated account or replicated stub carries its home
+ * pair; one without a `homeUserId` has no identity that can be compared.
+ */
+export function relayActorOfUser(user: {
+  id: string;
+  homeUserId: string | null;
+  homeInstance: string | null;
+}): RelayActor | null {
+  if (!user.homeInstance) return { homeUserId: user.id, homeInstance: getOurOrigin() };
+  if (!user.homeUserId) return null;
+  return { homeUserId: user.homeUserId, homeInstance: user.homeInstance };
+}
+
+/**
+ * Whether two federated identities are the same person: the same home user id
+ * on the same home instance. Instances are compared by domain, the way
+ * `attributionRefusal` compares them, because stored `homeInstance` values are
+ * bare domains while origins on the wire are full URLs.
+ */
+export function sameRelayActor(a: RelayActor, b: RelayActor): boolean {
+  if (a.homeUserId !== b.homeUserId) return false;
+  const domainA = extractDomain(a.homeInstance).toLowerCase();
+  const domainB = extractDomain(b.homeInstance).toLowerCase();
+  return domainA.length > 0 && domainA === domainB;
+}
+
+
+/**
+ * What resolving an inbound relay event's acting identity found.
+ *
+ *   - `found`: the live local user that IS this identity.
+ *   - `unknown`: no live local user carries this `homeUserId` at all. The
+ *     identity may simply not be known here yet; each handler keeps its own
+ *     answer for that case.
+ *   - `mismatch`: the `homeUserId` belongs to one or more local users, but none
+ *     of them is homed where the event says. The event names an identity that
+ *     is not the one those rows stand for, so it can never apply to them;
+ *     handlers refuse it as `attribution_mismatch`.
+ */
+export type RelayActorResolution =
+  | { kind: 'found'; user: typeof schema.users.$inferSelect }
+  | { kind: 'unknown' }
+  | { kind: 'mismatch' };
+
+/**
+ * Whether a bare domain is one of this instance's own names: the host of its
+ * origin (`getOurOrigin`, what it puts on the wire for its users) or its
+ * identity domain (`DOMAIN`). They differ only when `PUBLIC_ORIGIN` overrides
+ * the transport, and a reference to a native user may carry either.
+ */
+function isOwnDomain(domain: string): boolean {
+  if (!domain) return false;
+  return domain === extractDomain(getOurOrigin()).toLowerCase() || domain === getOurIdentityDomain();
+}
+
+/**
+ * Resolve a federated identity, a `homeUserId` + `homeInstance` pair, to the
+ * local user that IS that identity. Never by `homeUserId` alone: that value is
+ * only unique on its home instance, so a bare-id lookup can land on a
+ * different person, such as a native user whose own id happens to equal it.
+ *
+ * A native row matches when its own id is the `homeUserId` and the
+ * `homeInstance` is one of this instance's own names (`isOwnDomain`); any other
+ * row matches when it carries the same home user id on the same home domain,
+ * compared the way `sameRelayActor` compares identities.
+ *
+ * Inbound relay handlers use it for the acting identity, after
+ * `attributionRefusal` accepted the pair (which already refuses a `mismatch`
+ * and a detached account). Together they give the invariant every handler
+ * relies on: the user an event is applied as is a live, attached user homed on
+ * the signing peer, or is one of our own users who holds an account there (the
+ * homeward case). `resolveRelayActor` itself still returns a detached row as
+ * `found`, since a lookup that is not an actor (a participant, a historical
+ * reference) may name one. `findFederatedUser` uses it as its
+ * first step, so every `resolveOrCreateReplicatedUser` caller gets the same
+ * rule. `resolveLocalUser` keeps its bare-id semantics for its other callers.
+ */
+export function resolveRelayActor(
+  actor: RelayActor,
+  db: ReturnType<typeof getDb>,
+): RelayActorResolution {
+  const candidates = db
+    .select()
+    .from(schema.users)
+    .where(
+      and(
+        or(
+          eq(schema.users.homeUserId, actor.homeUserId),
+          and(eq(schema.users.id, actor.homeUserId), isNull(schema.users.homeInstance)),
+        ),
+        eq(schema.users.isDeleted, 0),
+      ),
+    )
+    .all();
+  if (candidates.length === 0) return { kind: 'unknown' };
+  const actorDomain = extractDomain(actor.homeInstance).toLowerCase();
+  const user = candidates.find((candidate) => {
+    if (!candidate.homeInstance) return candidate.id === actor.homeUserId && isOwnDomain(actorDomain);
+    const identity = relayActorOfUser(candidate);
+    return identity !== null && sameRelayActor(identity, actor);
+  });
+  return user ? { kind: 'found', user } : { kind: 'mismatch' };
 }
 
 
@@ -168,6 +322,9 @@ export function verifyAttribution(
  * Resolve a home user ID to a local user.
  * Matches users where home_user_id = homeUserId, or where
  * the user's own id equals homeUserId and they have no home_instance set (local user).
+ *
+ * Ignores `homeInstance`, so it must not be used to resolve the acting identity
+ * of an inbound relay event; use `resolveRelayActor` for that.
  */
 export function resolveLocalUser(
   homeUserId: string,
@@ -200,9 +357,13 @@ export function resolveLocalUser(
  * created them (auth registration vs S2S relay stub).
  *
  * Three-tier matching:
- * 1. Fast path: homeUserId column match (existing resolveLocalUser logic)
+ * 1. Identity: the row that IS `homeUserId` + `homeInstance` (`resolveRelayActor`)
  * 2. Domain + username hint: normalized homeInstance domain + username base match
  * 3. Not found: returns undefined
+ *
+ * When tier 1 reports `mismatch` (the `homeUserId` belongs only to local users
+ * of another identity) the lookup ends there: no row is returned and tier 2 is
+ * not tried, so the id can neither reach those users nor bind a stub by name.
  *
  * Does NOT perform side effects (backfill). See `backfillHomeUserId` for that.
  */
@@ -212,12 +373,22 @@ export function findFederatedUser(
   db: ReturnType<typeof getDb>,
   hints?: { username?: string | null },
 ): typeof schema.users.$inferSelect | undefined {
-  // Tier 1: fast path — existing resolveLocalUser logic
-  const fastMatch = resolveLocalUser(homeUserId, db);
-  if (fastMatch) return fastMatch;
+  const lookup = lookupFederatedUser(homeUserId, homeInstance, db, hints);
+  return lookup.kind === 'found' ? lookup.user : undefined;
+}
+
+function lookupFederatedUser(
+  homeUserId: string,
+  homeInstance: string,
+  db: ReturnType<typeof getDb>,
+  hints?: { username?: string | null },
+): RelayActorResolution {
+  // Tier 1: the identity itself. A mismatch is final.
+  const identity = resolveRelayActor({ homeUserId, homeInstance }, db);
+  if (identity.kind !== 'unknown') return identity;
 
   // Tier 2: domain + username hint match
-  if (!hints?.username) return undefined;
+  if (!hints?.username) return { kind: 'unknown' };
 
   const domain = extractDomain(homeInstance);
   const hintLower = hints.username.toLowerCase();
@@ -247,12 +418,12 @@ export function findFederatedUser(
     )
     .all();
 
-  if (candidates.length === 0) return undefined;
+  if (candidates.length === 0) return { kind: 'unknown' };
 
   // Pick best candidate: prefer real accounts over stubs, then most profile data
-  if (candidates.length === 1) return candidates[0]!;
+  if (candidates.length === 1) return { kind: 'found', user: candidates[0]! };
 
-  return candidates.sort((a, b) => {
+  const best = candidates.sort((a, b) => {
     // Real account (not federation-replicated) wins
     const aReal = a.passwordHash !== '!federation-replicated' ? 1 : 0;
     const bReal = b.passwordHash !== '!federation-replicated' ? 1 : 0;
@@ -262,6 +433,7 @@ export function findFederatedUser(
       [u.displayName, u.avatar, u.banner, u.bio].filter(Boolean).length;
     return profileCount(b) - profileCount(a);
   })[0]!;
+  return { kind: 'found', user: best };
 }
 
 
@@ -300,6 +472,10 @@ export function backfillHomeUserId(
  * Instance A or B, those users won't have been pre-replicated via the
  * friend-connect flow.  We create a bare-bones row so the local DB
  * can reference them in dm_members / dm_messages.
+ *
+ * Returns null, and creates nothing, for a deleted identity, a dead incarnation
+ * of this instance, or a `homeUserId` that belongs only to local users of
+ * another identity (see `findFederatedUser`).
  */
 export function resolveOrCreateReplicatedUser(
   homeUserId: string,
@@ -307,8 +483,14 @@ export function resolveOrCreateReplicatedUser(
   db: ReturnType<typeof getDb>,
   hints?: { username?: string | null; status?: 'online' | 'idle' | 'dnd' | 'offline' | null; deleted?: boolean | null },
 ): typeof schema.users.$inferSelect | null {
-  const existing = findFederatedUser(homeUserId, homeInstance, db, hints);
-  if (existing) return backfillHomeUserId(existing, homeUserId, db);
+  const existing = lookupFederatedUser(homeUserId, homeInstance, db, hints);
+  if (existing.kind === 'found') return backfillHomeUserId(existing.user, homeUserId, db);
+  // The id belongs only to local users of another identity. It names no one
+  // here, and a stub for it would give one id two identities on this instance.
+  if (existing.kind === 'mismatch') {
+    console.warn(`[federation] Not resolving homeUserId=${homeUserId} (${extractDomain(homeInstance)}): the id belongs to a local user of another identity`);
+    return null;
+  }
 
   // A participant the sender marks as deleted must not materialize as a new
   // stub — mirror of the local-tombstone skip below. An existing row still

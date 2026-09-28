@@ -6,7 +6,7 @@ import { getDmMessageWithUser } from '../../dm.js';
 import { and, eq, isNull } from 'drizzle-orm';
 import type { FederationRelayEvent } from '@backspace/shared';
 import { buildDmChannelPayload } from '../dmChannels.js';
-import { extractDomain, resolveLocalUser, verifyAttribution } from '../identity.js';
+import { extractDomain, resolveRelayActor, attributionRefusal } from '../identity.js';
 
 export function processFileRejectedEvent(
   event: FederationRelayEvent,
@@ -173,24 +173,15 @@ export function processPresenceUpdateEvent(
     return;
   }
 
-  const localUser = db
-    .select()
-    .from(schema.users)
-    .where(and(
-      eq(schema.users.homeUserId, payload.homeUserId),
-      eq(schema.users.isDeleted, 0),
-    ))
-    .get();
-
-  if (!localUser) {
+  // The row updated is the one that IS the payload's identity, homed on the
+  // sending peer (`resolveRelayActor`). A native user of this instance is never
+  // one, so its presence is only ever set here. No such row: accept as a no-op.
+  const identity = resolveRelayActor(payload, db);
+  if (identity.kind !== 'found' || !identity.user.homeInstance) {
     accepted.push(event.messageId);
     return;
   }
-
-  if (localUser.homeInstance && extractDomain(localUser.homeInstance) !== payloadDomain) {
-    accepted.push(event.messageId);
-    return;
-  }
+  const localUser = identity.user;
 
   // Detached accounts are sovereign: the domain now belongs to a different
   // incarnation, which must never flip the established account's presence by
@@ -238,9 +229,10 @@ export function processReadStateUpdateEvent(
   }
 
   // Attribution: the peer must be entitled to speak for the acking identity.
-  if (!verifyAttribution(event.readState.user, sourceInstance, db)) {
-    console.warn(`[federation] Attribution mismatch in read_state_update: user homeInstance=${extractDomain(event.readState.user.homeInstance)} source=${extractDomain(sourceInstance)}`);
-    rejected.push({ messageId: event.messageId, reason: 'attribution_mismatch' });
+  const refusal = attributionRefusal(event.readState.user, sourceInstance, db);
+  if (refusal) {
+    console.warn(`[federation] Attribution refused (${refusal}) in read_state_update: user homeInstance=${extractDomain(event.readState.user.homeInstance)} source=${extractDomain(sourceInstance)}`);
+    rejected.push({ messageId: event.messageId, reason: refusal });
     return;
   }
 
@@ -258,12 +250,18 @@ export function processReadStateUpdateEvent(
     return;
   }
 
-  // Resolve the user locally
-  const localUser = resolveLocalUser(event.readState.user.homeUserId, db);
-  if (!localUser) {
+  // Resolve the user locally, matched on homeUserId + homeInstance
+  const reader = resolveRelayActor(event.readState.user, db);
+  if (reader.kind === 'mismatch') {
+    console.warn('[federation] Refused read_state_update: the user homeUserId names a local user of another identity');
+    rejected.push({ messageId: event.messageId, reason: 'attribution_mismatch' });
+    return;
+  }
+  if (reader.kind === 'unknown') {
     rejected.push({ messageId: event.messageId, reason: 'user_not_found' });
     return;
   }
+  const localUser = reader.user;
 
   // Translate messageRef to a local message ID
   const { sourceInstance: refSource, sourceMessageId: refId } = event.readState.messageRef;
@@ -343,9 +341,10 @@ export function processDmCloseEvent(
   }
 
   // Attribution: the peer must be entitled to speak for the closing identity.
-  if (!verifyAttribution(event.dmCloseReopen, sourceInstance, db)) {
-    console.warn(`[federation] Attribution mismatch in dm_close: user homeInstance=${extractDomain(event.dmCloseReopen.homeInstance)} source=${extractDomain(sourceInstance)}`);
-    rejected.push({ messageId: event.messageId, reason: 'attribution_mismatch' });
+  const refusal = attributionRefusal(event.dmCloseReopen, sourceInstance, db);
+  if (refusal) {
+    console.warn(`[federation] Attribution refused (${refusal}) in dm_close: user homeInstance=${extractDomain(event.dmCloseReopen.homeInstance)} source=${extractDomain(sourceInstance)}`);
+    rejected.push({ messageId: event.messageId, reason: refusal });
     return;
   }
 
@@ -364,13 +363,19 @@ export function processDmCloseEvent(
     return;
   }
 
-  // Resolve the user locally
-  const localUser = resolveLocalUser(event.dmCloseReopen.homeUserId, db);
-  if (!localUser) {
+  // Resolve the user locally, matched on homeUserId + homeInstance
+  const actor = resolveRelayActor(event.dmCloseReopen, db);
+  if (actor.kind === 'mismatch') {
+    console.warn('[federation] Refused dm_close: the user homeUserId names a local user of another identity');
+    rejected.push({ messageId: event.messageId, reason: 'attribution_mismatch' });
+    return;
+  }
+  if (actor.kind === 'unknown') {
     // User not found locally — silently accept
     accepted.push(event.messageId);
     return;
   }
+  const localUser = actor.user;
 
   // Verify user is a DM member
   const membership = db.select()
@@ -419,9 +424,10 @@ export function processDmReopenEvent(
   }
 
   // Attribution: the peer must be entitled to speak for the reopening identity.
-  if (!verifyAttribution(event.dmCloseReopen, sourceInstance, db)) {
-    console.warn(`[federation] Attribution mismatch in dm_reopen: user homeInstance=${extractDomain(event.dmCloseReopen.homeInstance)} source=${extractDomain(sourceInstance)}`);
-    rejected.push({ messageId: event.messageId, reason: 'attribution_mismatch' });
+  const refusal = attributionRefusal(event.dmCloseReopen, sourceInstance, db);
+  if (refusal) {
+    console.warn(`[federation] Attribution refused (${refusal}) in dm_reopen: user homeInstance=${extractDomain(event.dmCloseReopen.homeInstance)} source=${extractDomain(sourceInstance)}`);
+    rejected.push({ messageId: event.messageId, reason: refusal });
     return;
   }
 
@@ -440,13 +446,19 @@ export function processDmReopenEvent(
     return;
   }
 
-  // Resolve the user locally
-  const localUser = resolveLocalUser(event.dmCloseReopen.homeUserId, db);
-  if (!localUser) {
+  // Resolve the user locally, matched on homeUserId + homeInstance
+  const actor = resolveRelayActor(event.dmCloseReopen, db);
+  if (actor.kind === 'mismatch') {
+    console.warn('[federation] Refused dm_reopen: the user homeUserId names a local user of another identity');
+    rejected.push({ messageId: event.messageId, reason: 'attribution_mismatch' });
+    return;
+  }
+  if (actor.kind === 'unknown') {
     // User not found locally — silently accept
     accepted.push(event.messageId);
     return;
   }
+  const localUser = actor.user;
 
   // Verify user is a DM member
   const membership = db.select()

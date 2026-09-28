@@ -523,23 +523,80 @@ an ignored manifest that swaps both the pinned application source for `type:
 dir` and the committed offline source list for that generated one, so both
 x86_64 and aarch64 jobs compile the actual checkout against its own
 dependencies. The committed `flatpak/node-sources.json` stays paired with the
-pinned release commit and is regenerated only by `release.yml`, so ordinary
-pull requests must not regenerate it from their working-tree lockfile, and a
-contributor changing dependencies needs no Flatpak installation on any
-platform. On each `v*` tag, `release.yml` updates the source pin, AppStream
-release and screenshot tag, regenerates `node-sources.json`, validates the
-metadata, uploads those exact generated files, and builds their published
-manifest natively on x86_64 and aarch64. Only after both builds pass does it
-open or update the dedicated Flatpak metadata pull request. This validation is
-part of the release workflow because pushes and pull requests created with its
-`GITHUB_TOKEN` do not trigger the normal `pull_request` workflow.
+pinned release commit and is regenerated only by
+`flatpak-release-metadata.yml`, so ordinary pull requests must not regenerate
+it from their working-tree lockfile, and a contributor changing dependencies
+needs no Flatpak installation on any platform.
+
+**Flatpak release metadata.** Publishing a GitHub release starts
+`.github/workflows/flatpak-release-metadata.yml` (`release: released`, which
+fires for a full release and for a prerelease promoted to one, never for a
+prerelease). A tag outside `vX.Y.Z`, a prerelease, or a release that has
+already landed makes the run a successful no-op that logs why. A release has
+landed when main's manifest pins the Backspace source to the tag's commit
+(read with `flatpak/manifest-pin.mjs`), which only its merged metadata pull
+request does. An AppStream entry for the version on main does not count as
+landed: see step 2. Otherwise, checked out at the tag, it:
+
+1. Reads the release notes and takes the paragraph under the
+   `# Backspace X.Y.Z` title as the AppStream release description, which is
+   the "What's New" text in GNOME Software, KDE Discover and Flathub
+   (`flatpak/release-summary.mjs`: wrapped lines are joined, links and images
+   become their text, emphasis and code markers are dropped, backslash escapes
+   become the literal character). Notes that do not open with that title
+   followed by a prose paragraph (a heading, table, list, quote, code block or
+   HTML in its place, or nothing) fail the job with the reason, so a
+   placeholder never ships. Fix the notes on the release page and dispatch a
+   new run.
+2. Runs `flatpak/update-release.mjs`, which updates the source pin, the
+   screenshot tag and the AppStream entry. The script reads the metainfo as it
+   is at the tag. To write the entry by hand instead of taking the notes'
+   paragraph, commit it to main before cutting the tag: the script then keeps
+   it and never replaces it, while the pin, the screenshot tag and
+   `node-sources.json` still move and the pull request still opens. The notes
+   still need their summary paragraph, because step 1 runs either way. An entry
+   written by hand on the metadata pull request's branch is not kept: a re-run
+   while that pull request is open force-pushes a fresh branch from the tag
+   over it.
+3. Regenerates `node-sources.json`, lints the manifest and AppStream file,
+   uploads those exact files, and builds their published manifest natively on
+   x86_64 and aarch64. The metadata pull request also runs `flatpak.yml`, but
+   that builds the working tree; this is the only build of the manifest as it
+   will be published.
+4. Only after both builds pass, pushes `automation/flatpak-<tag>` and opens (or
+   reuses) the metadata pull request as the release bot GitHub App. The app's
+   token, unlike `GITHUB_TOKEN`, starts CI on the pull request. The job updates
+   the branch when main has moved past the tag, because the ruleset requires
+   it to be up to date, and turns on squash auto-merge, so the pull request
+   merges itself once `Build & test` passes.
+
+To re-run a release, dispatch the workflow with its tag (`workflow_dispatch`,
+input `tag`); a malformed tag fails the dispatch. A re-run replaces the open
+pull request's branch, as described in step 2. A tag cut before this workflow
+existed cannot be re-run, and a release that has already landed opens nothing.
+Use a fresh dispatch rather than "Re-run failed jobs" on
+the pull request job after the first day: the builds hand their files to that
+job as an artifact kept for one day, so a re-run after that fails to find it.
+
+When the pull request job goes red at the update-branch step, click "Update
+branch" on the pull request. Auto-merge is already on and finishes once CI
+passes on the updated branch.
+
+The app and its two secrets are described in
+[security-scanning.md](security-scanning.md#done).
+
+`create-release` writes the `# Backspace X.Y.Z` heading at the top of the
+draft, above the Downloads table. The one human step for Flatpak is to write
+the summary paragraph directly under that heading before publishing. Flathub
+shows that paragraph, so write it as the store-facing summary of the release.
 
 CI publishes via `.github/workflows/release.yml` (tag `v*` on the public repo).
 A `create-release` job runs first and creates the draft for the tag, then four
 native build jobs fan out (mac arm64+x64, win x64+arm64, linux x64, linux
 arm64), each uploading its installers, `.blockmap`s, and platform `latest*.yml`
-manifest into that one draft. The draft must be published manually — drafts are
-invisible to electron-updater.
+manifest into that one draft. The draft must be published manually, because
+drafts are invisible to electron-updater. Publishing it also starts the Flatpak
+metadata workflow above.
 
 A release carries 16 assets, named
 `Backspace-<version>-<os>-<arch>.<ext>` (`artifactName` in
@@ -714,6 +771,8 @@ channel-origin routing selects the API instance. Browser notifications use the
 same navigation handler and close on click. Mobile navigation also brings the
 chat screen to the top when the URL already points at that chat.
 
+Do Not Disturb and the badge: see sounds.md ("Do Not Disturb").
+
 Badge count: `set-badge-count` IPC calls `app.setBadgeCount()` (macOS dock badge, Windows taskbar overlay).
 
 **Win32 attribution:** `app.setAppUserModelId('com.backspace.desktop')` set early in startup so notifications attribute to "Backspace" in Windows Action Center.
@@ -745,6 +804,7 @@ The main process intercepts `getDisplayMedia()` via `session.defaultSession.setD
 2. User clicks a tile → renderer sends `screen-share-preselect` with `sourceId` + `shareAudio` → main stores `pendingScreenSelection` (30 s TTL)
 3. Renderer calls `getDisplayMedia()` → handler takes the pending selection (one-shot), resolves the id against the cache (re-enumerating if missing) and calls `callback({ video: source, audio: 'loopback' })` (audio only when `shareAudio`). No prompt round-trip.
 4. The stream is previewed in the setup screen and published on "Start stream".
+5. Turning System Audio on during a share that has no audio runs steps 2 and 3 again for the same `sourceId` with `shareAudio = true`; the renderer keeps only the new capture's loopback audio track and stops its video (`syncScreenShareAudio`, voice.md "Changing the toggle mid-stream"). The handler re-enumerates to resolve the id, since the caches were dropped after the first request. No main-process or preload change was needed for this.
 
 ### Who may enumerate
 

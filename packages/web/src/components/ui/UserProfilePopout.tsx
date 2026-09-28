@@ -2,18 +2,22 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useFormatters } from '../../i18n/formatters';
 import { useNavigate } from 'react-router-dom';
-import ReactMarkdown from 'react-markdown';
 import type { User } from '@backspace/shared';
 import { Avatar } from '../ui/Avatar';
 import { Username } from '../ui/Username';
+import { ProfileBio } from './ProfileBio';
 import { useSpaceStore, getApiForOrigin, resolveUserOrigin } from '../../stores/spaceStore';
 import { api } from '../../api/client';
-import { useUIStore } from '../../stores/uiStore';
+import { useUIStore, type ProfileMemberContext } from '../../stores/uiStore';
 import { getAvatarGradient, adjustColor, mutedGradient } from '../../utils/gradients';
 import { parseFederatedUsername } from '../../utils/identity';
 import { useCanonicalUserView } from '../../utils/userViewLookup';
 import { loadFederatedMutuals } from '../../utils/mutuals';
+import { replaceEmojiShortcodes } from '../../utils/emojiShortcodes';
 import { computeFloatingPosition, type AnchorRect, type Placement } from '../../hooks/useFloatingPosition';
+import { useProfileMemberRoles } from '../../hooks/useProfileMember';
+import { useShownStatus } from '../../hooks/useShownStatus';
+import { ProfileRoles } from './ProfileRoles';
 
 /** Gap between the card and the element it was opened from. */
 const ANCHOR_OFFSET = 8;
@@ -24,9 +28,11 @@ interface UserProfilePopoutProps {
   /** Rect of the element the card was opened from. */
   anchor: AnchorRect;
   placement?: Placement;
+  /** The space member the card was opened for; shows their roles in that space. */
+  member?: ProfileMemberContext | null;
 }
 
-export function UserProfilePopout({ user: propUser, onClose, anchor, placement = 'right' }: UserProfilePopoutProps) {
+export function UserProfilePopout({ user: propUser, onClose, anchor, placement = 'right', member = null }: UserProfilePopoutProps) {
   const { t } = useTranslation(['social', 'common']);
   const navigate = useNavigate();
   const f = useFormatters();
@@ -41,9 +47,11 @@ export function UserProfilePopout({ user: propUser, onClose, anchor, placement =
   const user = useCanonicalUserView(propUser);
   const { baseName, domain } = parseFederatedUsername(user.username);
   const displayName = user.displayName ?? baseName;
+  const shownStatus = useShownStatus(user, user.status);
 
   const origin = resolveUserOrigin(user);
   const userApi = getApiForOrigin(origin);
+  const roles = useProfileMemberRoles(member);
 
   const [mutualCounts, setMutualCounts] = useState<{ friends: number; spaces: number } | null>(null);
 
@@ -111,7 +119,7 @@ export function UserProfilePopout({ user: propUser, onClose, anchor, placement =
 
   const handleViewFullProfile = () => {
     onClose();
-    openModal('userProfile', { userId: user.id, user, origin });
+    openModal('userProfile', { userId: user.id, user, origin, member });
   };
 
   const handleAvatarClick = (event: React.MouseEvent) => {
@@ -161,7 +169,7 @@ export function UserProfilePopout({ user: propUser, onClose, anchor, placement =
           src={user.avatar}
           name={displayName}
           size={80}
-          status={user.status as 'online' | 'idle' | 'dnd' | 'offline' | null}
+          status={shownStatus}
           userId={user.homeUserId ?? user.id}
           user={user}
           onClick={handleAvatarClick}
@@ -180,7 +188,7 @@ export function UserProfilePopout({ user: propUser, onClose, anchor, placement =
           </div>
           {user.customStatus && (
             <div className="text-[13px] text-txt-secondary italic mt-1">
-              {user.customStatus}
+              {replaceEmojiShortcodes(user.customStatus)}
             </div>
           )}
         </div>
@@ -193,20 +201,15 @@ export function UserProfilePopout({ user: propUser, onClose, anchor, placement =
               <span className="text-[11px] uppercase tracking-wide font-semibold text-txt-tertiary">
                 {t('social:profile.aboutMe')}
               </span>
-              <div className="text-[13px] text-txt-secondary mt-1 whitespace-pre-wrap break-words leading-relaxed [&_strong]:font-semibold [&_strong]:text-txt-primary [&_em]:italic [&_a]:text-accent-primary [&_a]:underline">
-                <ReactMarkdown
-                  allowedElements={['p', 'strong', 'em', 'a', 'br']}
-                  unwrapDisallowed
-                  components={{
-                    a: ({ href, children }) => (
-                      <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>
-                    ),
-                  }}
-                >
-                  {user.bio}
-                </ReactMarkdown>
-              </div>
+              <ProfileBio bio={user.bio} />
             </div>
+          </>
+        )}
+
+        {roles.length > 0 && (
+          <>
+            <div className="border-t border-white/[0.06] my-3" />
+            <ProfileRoles roles={roles} />
           </>
         )}
 

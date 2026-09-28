@@ -1,9 +1,11 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { useVoiceStore } from '../../stores/voiceStore';
-import type { ScreenShareConfig } from '../../stores/voiceStore';
-import { useSettingsStore } from '../../stores/settingsStore';
-import { buildScreenShareOptions } from '../../utils/screenShare';
+import type { ScreenShareConfig, ScreenShareAudioState } from '../../stores/voiceStore';
+import { buildScreenShareOptions, effectiveScreenShareConfig } from '../../utils/screenShare';
+import { DEFAULT_STREAMING_LIMITS } from '../../stores/settingsStore';
+import { useStreamHostLimits } from '../../utils/streamHostLimits';
+import { hostOf } from '../../utils/identity';
 import { Toggle } from '../ui/Toggle';
 import { isElectron } from '../../platform/platform';
 import { RESOLUTION_LABELS } from '@backspace/shared/src/constants';
@@ -15,9 +17,11 @@ import { formatters } from '../../i18n/formatters';
  * bitrate, system audio) bound to voiceStore.screenShareConfig.
  *
  * Shared by the two places a user tunes a stream: ScreenShareSetup before it
- * starts, and ScreenShareSettingsPopover while it is live. Presentation-only
- * apart from the clamp effect, which keeps a persisted config inside the
- * instance's admin limits.
+ * starts, and ScreenShareSettingsPopover while it is live. Presentation-only:
+ * the pills show the effective config (`effectiveScreenShareConfig`, the saved
+ * choice fitted to the limits of the instance hosting the call, see
+ * `utils/streamHostLimits.ts`), and only a click saves. The limits never write
+ * into the saved config, so a strict host does not lower it for later streams.
  */
 
 const MODES: { value: ScreenShareConfig['mode']; labelKey: 'voice:streamSettings.mode.gaming' | 'voice:streamSettings.mode.text' }[] = [
@@ -53,6 +57,22 @@ export function formatKbps(kbps: number): string {
   return i18n.t('common:units.kbps', { value: formatters.formatNumber(kbps) });
 }
 
+/**
+ * "Limits set by <host>" under the Stream Settings title, when the call is
+ * hosted by an instance other than home. Nothing at home, and nothing when
+ * the host is unknown (a relayed DM token), where the defaults apply.
+ */
+export function StreamHostSubtitle({ className = '' }: { className?: string }) {
+  const { t } = useTranslation(['voice']);
+  const { origin } = useStreamHostLimits();
+  if (!origin) return null;
+  return (
+    <div className={`text-[11px] text-txt-tertiary break-all ${className}`}>
+      {t('voice:streamSettings.hostLimits', { host: hostOf(origin) })}
+    </div>
+  );
+}
+
 /** "4 Mbps · balanced" — the computed outcome of the current config. */
 export function StreamSummary({ className = '' }: { className?: string }) {
   const { t } = useTranslation(['voice', 'common']);
@@ -68,6 +88,32 @@ export function StreamSummary({ className = '' }: { className?: string }) {
   );
 }
 
+/**
+ * What the System Audio switch shows and allows.
+ *
+ * Before a share it is the preference, read when the capture is taken. While
+ * a share is live it is what the share sends (`screenShareAudio`): the
+ * preference can be on while nothing goes out (a browser capture without
+ * audio), and a switch reading "on" there would be claiming audio viewers do
+ * not get. Turning it off always works; turning it on is offered only where
+ * `syncScreenShareAudio` can act on it.
+ */
+export function systemAudioSwitch(
+  isScreenSharing: boolean,
+  liveAudio: ScreenShareAudioState | null,
+  preference: boolean,
+): { checked: boolean; disabled: boolean; cannotAddLive: boolean; adding: boolean } {
+  const idle = { cannotAddLive: false, adding: false };
+  if (!isScreenSharing || liveAudio === null) return { checked: preference, disabled: false, ...idle };
+  switch (liveAudio) {
+    case 'published': return { checked: true, disabled: false, ...idle };
+    case 'acquiring': return { checked: true, disabled: true, cannotAddLive: false, adding: true };
+    case 'held':
+    case 'acquirable': return { checked: false, disabled: false, ...idle };
+    case 'unavailable': return { checked: false, disabled: true, cannotAddLive: true, adding: false };
+  }
+}
+
 const pillBase = 'px-2.5 py-1.5 rounded-full text-[13px] font-medium transition-colors cursor-pointer select-none text-center';
 const pillSelected = 'bg-accent-primary text-white';
 const pillUnselected = 'bg-surface-elevated text-txt-secondary hover:bg-interactive-hover';
@@ -76,53 +122,25 @@ export function StreamQualityControls() {
   const { t } = useTranslation(['voice', 'common']);
   const config = useVoiceStore((s) => s.screenShareConfig);
   const setConfig = useVoiceStore((s) => s.setScreenShareConfig);
-  const limits = useSettingsStore((s) => s.streamingLimits);
+  const { origin: hostOrigin, limits } = useStreamHostLimits();
   const electronPlatform = isElectron() ? window.backspace?.platform : null;
+  const isScreenSharing = useVoiceStore((s) => s.isScreenSharing);
+  const liveAudio = useVoiceStore((s) => s.screenShareAudio);
+  const audioSwitch = systemAudioSwitch(isScreenSharing, liveAudio, config.shareAudio);
 
-  const BITRATE_MIN = limits?.minBitrateKbps ?? 500;
-  const BITRATE_MAX = limits?.maxBitrateKbps ?? 20000;
-  const BITRATE_STEP = limits?.bitrateStepKbps ?? 500;
+  // Unknown limits (not yet fetched, or a host that cannot be asked) show the
+  // same defaults the stream itself falls back to.
+  const hostLimits = limits ?? DEFAULT_STREAMING_LIMITS;
+  const effective = effectiveScreenShareConfig(config, hostLimits);
 
-  const RESOLUTIONS = (limits?.allowedResolutions ?? [540, 720, 1080]).map((r) => ({
+  const RESOLUTIONS = hostLimits.allowedResolutions.map((r) => ({
     value: r as ScreenShareConfig['height'],
     label: RESOLUTION_LABELS[r as keyof typeof RESOLUTION_LABELS] ?? `${r}p`,
   }));
-  const FRAME_RATES = (limits?.allowedFramerates ?? [30, 45, 60]).map((f) => ({
+  const FRAME_RATES = hostLimits.allowedFramerates.map((f) => ({
     value: f as ScreenShareConfig['fps'],
     label: `${f}`,
   }));
-
-  // Auto-clamp persisted config if outside allowed bounds
-  useEffect(() => {
-    if (!limits) return;
-    const patch: Partial<ScreenShareConfig> = {};
-    if (!limits.allowedResolutions.includes(config.height)) {
-      const numericRes = limits.allowedResolutions.filter((r): r is number => r !== 'native');
-      if (typeof config.height === 'number' && numericRes.length > 0) {
-        const h = config.height;
-        patch.height = numericRes.reduce((a, b) =>
-          Math.abs(b - h) < Math.abs(a - h) ? b : a
-        );
-      } else {
-        // 'native' was disabled or no numeric options — fall back to highest numeric
-        patch.height = numericRes.length > 0 ? Math.max(...numericRes) : 1080;
-      }
-    }
-    // reduce() without a seed throws on an empty allowlist, which an instance
-    // can configure; leave fps untouched rather than crashing the panel.
-    if (!limits.allowedFramerates.includes(config.fps) && limits.allowedFramerates.length > 0) {
-      const f = config.fps;
-      const closest = limits.allowedFramerates.reduce((a, b) =>
-        Math.abs(b - f) < Math.abs(a - f) ? b : a
-      );
-      patch.fps = closest;
-    }
-    if (config.customBitrateKbps != null) {
-      const clamped = Math.min(Math.max(config.customBitrateKbps, limits.minBitrateKbps), limits.maxBitrateKbps);
-      if (clamped !== config.customBitrateKbps) patch.customBitrateKbps = clamped;
-    }
-    if (Object.keys(patch).length > 0) setConfig(patch);
-  }, [limits, config, setConfig]);
 
   const result = buildScreenShareOptions(config);
   // What Auto resolves to right now, in kbps; also the slider's starting point when switching to Custom
@@ -140,7 +158,8 @@ export function StreamQualityControls() {
             <button
               key={String(r.value)}
               onClick={() => setConfig({ height: r.value })}
-              className={`${pillBase} ${config.height === r.value ? pillSelected : pillUnselected}`}
+              aria-pressed={effective.height === r.value}
+              className={`${pillBase} ${effective.height === r.value ? pillSelected : pillUnselected}`}
             >
               {r.label}
             </button>
@@ -158,7 +177,8 @@ export function StreamQualityControls() {
             <button
               key={f.value}
               onClick={() => setConfig({ fps: f.value })}
-              className={`${pillBase} ${config.fps === f.value ? pillSelected : pillUnselected}`}
+              aria-pressed={effective.fps === f.value}
+              className={`${pillBase} ${effective.fps === f.value ? pillSelected : pillUnselected}`}
             >
               {f.label}
             </button>
@@ -176,6 +196,7 @@ export function StreamQualityControls() {
             <button
               key={m.value}
               onClick={() => setConfig({ mode: m.value })}
+              aria-pressed={config.mode === m.value}
               className={`${pillBase} ${config.mode === m.value ? pillSelected : pillUnselected}`}
             >
               {t(m.labelKey)}
@@ -196,6 +217,7 @@ export function StreamQualityControls() {
               <button
                 key={c.value}
                 onClick={() => setConfig({ codec: c.value })}
+                aria-pressed={isSelected}
                 className={`${pillBase} ${isSelected ? pillSelected : pillUnselected}`}
               >
                 {t(c.labelKey)}
@@ -210,33 +232,35 @@ export function StreamQualityControls() {
         <div className="text-[11px] text-txt-tertiary font-semibold uppercase tracking-wider mb-1.5">
           {t('voice:streamSettings.bitrate')}
         </div>
-        {limits?.allowCustomBitrate !== false ? (
+        {hostLimits.allowCustomBitrate ? (
           <>
             <div className="flex gap-1.5">
               <button
                 onClick={() => setConfig({ customBitrateKbps: null })}
-                className={`${pillBase} ${config.customBitrateKbps == null ? pillSelected : pillUnselected}`}
+                aria-pressed={effective.customBitrateKbps == null}
+                className={`${pillBase} ${effective.customBitrateKbps == null ? pillSelected : pillUnselected}`}
               >
                 {t('voice:streamSettings.auto')}
               </button>
               <button
                 onClick={() => {
                   // Start the slider where Auto currently sits so switching changes nothing yet
-                  if (config.customBitrateKbps == null) setConfig({ customBitrateKbps: autoKbps });
+                  if (effective.customBitrateKbps == null) setConfig({ customBitrateKbps: autoKbps });
                 }}
-                className={`${pillBase} ${config.customBitrateKbps != null ? pillSelected : pillUnselected}`}
+                aria-pressed={effective.customBitrateKbps != null}
+                className={`${pillBase} ${effective.customBitrateKbps != null ? pillSelected : pillUnselected}`}
               >
                 {t('voice:streamSettings.custom')}
               </button>
             </div>
-            {config.customBitrateKbps != null && (
+            {effective.customBitrateKbps != null && (
               <div className="flex items-center gap-2 mt-2">
                 <input
                   type="range"
-                  min={BITRATE_MIN}
-                  max={BITRATE_MAX}
-                  step={BITRATE_STEP}
-                  value={config.customBitrateKbps}
+                  min={hostLimits.minBitrateKbps}
+                  max={hostLimits.maxBitrateKbps}
+                  step={hostLimits.bitrateStepKbps}
+                  value={effective.customBitrateKbps}
                   onChange={(e) => setConfig({ customBitrateKbps: Number(e.target.value) })}
                   className="flex-1 min-w-0 h-1.5 accent-accent-primary cursor-pointer appearance-none bg-interactive-muted rounded-full
                     [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5
@@ -246,7 +270,7 @@ export function StreamQualityControls() {
                     [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:cursor-pointer"
                 />
                 <span className="text-[12px] font-medium text-txt-primary min-w-[64px] flex-shrink-0 text-right">
-                  {formatKbps(config.customBitrateKbps)}
+                  {formatKbps(effective.customBitrateKbps)}
                 </span>
               </div>
             )}
@@ -257,7 +281,9 @@ export function StreamQualityControls() {
               {formatKbps(autoKbps)}
             </div>
             <div className="text-[10px] text-txt-tertiary mt-0.5">
-              {t('voice:streamSettings.customBitrateDisabled')}
+              {hostOrigin
+                ? t('voice:streamSettings.customBitrateDisabledByHost', { host: hostOf(hostOrigin) })
+                : t('voice:streamSettings.customBitrateDisabled')}
             </div>
           </div>
         )}
@@ -265,12 +291,22 @@ export function StreamQualityControls() {
 
       {/* System Audio */}
       <div>
-        <div className="flex items-center justify-between">
-          <div>
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0 flex-1 pt-1">
             <div className="text-[11px] text-txt-tertiary font-semibold uppercase tracking-wider">
               {t('voice:streamSettings.systemAudio')}
             </div>
-            {config.shareAudio && (
+            {audioSwitch.cannotAddLive && (
+              <div className="text-[10px] text-txt-tertiary mt-0.5">
+                {t('voice:streamSettings.systemAudioLiveUnavailable')}
+              </div>
+            )}
+            {audioSwitch.adding && (
+              <div className="text-[10px] text-txt-tertiary mt-0.5" role="status">
+                {t('voice:streamSettings.systemAudioAdding')}
+              </div>
+            )}
+            {audioSwitch.checked && !audioSwitch.adding && (
               <div className="text-[10px] text-accent-amber/80 mt-0.5">
                 {electronPlatform === 'win32'
                   ? t('voice:streamSettings.electronWindowsAudioNote')
@@ -283,7 +319,8 @@ export function StreamQualityControls() {
             )}
           </div>
           <Toggle
-            enabled={config.shareAudio}
+            enabled={audioSwitch.checked}
+            disabled={audioSwitch.disabled}
             onChange={(enabled) => setConfig({ shareAudio: enabled })}
             ariaLabel={t('voice:streamSettings.systemAudio')}
           />

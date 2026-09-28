@@ -99,6 +99,14 @@ The server is run through `tsx` (no separate transpile step); TypeScript is exec
 
 Empty/unset → `config.commit` is `null` (local dev, tarball install, or git unavailable). The source URL itself is `config.sourceCodeUrl` (env `BACKSPACE_SOURCE_URL`, default upstream) — operators running a modified build MUST set it to their fork.
 
+### Web bundle and the precache limit
+
+The frontend's service worker (vite-plugin-pwa, `generateSW`) precaches the whole build so the app starts offline. Workbox leaves any file larger than `maximumFileSizeToCacheInBytes` out of the precache manifest with only a build warning, so a main chunk that outgrows the limit silently stops being cached. The limit is defined once, as `PRECACHE_MAX_FILE_BYTES` in `packages/web/src/build/precache.ts`, and `vite.config.ts` builds the worker with it.
+
+`scripts/check-precache-size.mjs` runs in CI's build job right after `pnpm build`. It reads the limit from that module (through Vite's `runnerImport`), lists the precached files from `packages/web/dist/sw.js`, adds any file under `dist/assets/` the manifest is missing (which is where a file over the limit ends up), and fails when any of them is larger than 90% of the limit. Run it locally the same way after a web build.
+
+The settings panels (user settings, instance administration, space settings, and their mobile screens) are loaded on demand from `components/modals/lazySettingsPanels.tsx` and render inside its `SettingsPanelSuspense`. Their chunks are ordinary `.js` build assets, so the default precache patterns cover them and they open offline. Voice stays in the startup bundle on purpose: joining a call or accepting one must not wait on a chunk fetch. When the check fails, split another surface that the first screen does not need the same way.
+
 ### Container hardening (non-root)
 
 The runtime image runs as the unprivileged `node` user (uid 1000), not root. On
@@ -433,6 +441,7 @@ These are accepted constraints of the current deploy model, documented so operat
 
 - **`deploy.sh` still builds on each target host.** The public `install.sh` path now defaults to the prebuilt GHCR image (multi-arch, so a Pi pulls a native image), but `deploy.sh` — Heidi's rsync-then-`up -d --build` helper for `nova`/`orbit` — deliberately builds from the rsynced working tree on the box (it caps the build cache and prunes old images to compensate). A native-module or toolchain regression can still surface on ARM but not x86, or vice-versa, on that path; the CI multi-arch build catches most such regressions before release.
 - **A deploy causes brief downtime + WebSocket reconnect.** `docker compose up -d --build` rebuilds and recreates the `backspace` container; while it restarts, the server is briefly unavailable and every connected client's WebSocket drops and must reconnect. There is no rolling/zero-downtime deploy. Clients reconnect automatically, but in-flight requests during the swap can fail.
+- **Open clients switch to a new web build within about a minute of the deploy, by reloading.** A client in a voice channel or DM call (including one still ringing) keeps running the old build until the call ends, then reloads onto the new one. While any tab in a browser has a call, the other tabs of that browser wait with it. The web and desktop clients behave the same way.
 - **Federation does not carry a port in `DOMAIN`.** The identity helpers (`extractDomain`, the `homeInstance` validation on registration, the hostname comparisons in the federation routes) work on the bare hostname, so two instances that differ only by port would collide and a ported instance cannot register replicated users on a peer. Single-instance use on a custom port is supported; federating such an instance needs the identity audit that `normalizeOriginForCompare` already notes as tracked.
 - **`deploy.sh all` can mask one host failing.** The `all` target runs both deploys in parallel (`deploy … & deploy … & wait`). The visible "Deployment complete." is printed regardless of whether one host's build failed mid-stream; the failure scrolls by in the interleaved output. After an `all` deploy, **confirm `/api/health` on both boxes** rather than trusting the final line. For a high-stakes change, deploy to one box at a time.
 

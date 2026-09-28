@@ -10,6 +10,10 @@ Source files:
 - Viewer-action cues: `packages/web/src/components/voice/StreamTile.tsx`
   (`handleViewerWatchToggle`)
 - Audio engine: `packages/web/src/audio/AudioManager.ts`
+- Alert gate (Do Not Disturb): `packages/web/src/utils/alerts.ts`
+  (`playAlertSound`, `showAlertNotification`), pure rule `isAlertAllowed` in
+  `utils/notificationFilters.ts`; OS notifications raised by
+  `packages/web/src/components/NotificationController.tsx`
 - Pure helpers: `packages/web/src/utils/notificationFilters.ts`,
   `packages/web/src/utils/streamWatchProtocol.ts`,
   `packages/web/src/utils/voiceSoundTransitions.ts` (mute/deafen cue selection)
@@ -33,13 +37,110 @@ Source files:
 | `user_join.ogg` | someone (incl. self) joined the voice channel | everyone in call | self `isLiveKitConnected` flips true OR a remote participant appears in `participants[]`. |
 | `user_leave.ogg` | a remote participant left voice | everyone in call (excl. the leaver) | a userId disappears from `participants[]`. Suppressed for self (uses `disconnect.ogg`) and during teardown (`justDisconnected` guard). |
 | `disconnect.ogg` | self left voice | self | `isLiveKitConnected` flips false. |
-| `call_ringing.ogg` | incoming DM call (loop) | callee | `voiceStore.incomingCall !== null`. Loops while ringing; cleaned up on accept/reject/timeout. |
+| `call_ringing.ogg` | incoming DM call (loop) | callee | `voiceStore.incomingCall !== null`. Loops while ringing; cleaned up on accept/reject/timeout. Alert: withheld on Do Not Disturb (see below). |
 | `call_calling.ogg` | outgoing DM call (loop) | caller | `voiceStore.outgoingCall !== null`. |
 | `stream_started.ogg` | any participant started a screen share | everyone in call (incl. the streamer) | a userId appears in the `participants[].isScreenSharing` set. |
 | `stream_ended.ogg` | any participant stopped a screen share | everyone in call | a userId leaves the `participants[].isScreenSharing` set. |
 | `stream_user_joined.ogg` | (a) a viewer started watching **my** stream; (b) **I** started watching someone's stream | streamer **and** the acting viewer | (a) streamer-side: `streamWatchers[selfUserId]` gains a watcher identity. (b) viewer-side: local feedback played by `handleViewerWatchToggle(_, true)` on the explicit "Watch Stream" action. |
 | `stream_user_left.ogg` | (a) a viewer stopped watching **my** stream; (b) **I** stopped watching someone's stream | streamer **and** the acting viewer | (a) streamer-side: `streamWatchers[selfUserId]` loses a watcher identity (suppressed for the whole set when self-stream-end fires — see Mechanism Notes). (b) viewer-side: local feedback played by `handleViewerWatchToggle(_, false)` on the explicit "Stop Watching" action. |
-| `message.ogg` | new chat message arrived | self | `shouldPlayMessageSound` returns true (DM channel OR content mentions any of the user's self-ids). User can flip `messageSoundAllChannels` to fire on every channel. |
+| `message.ogg` | new chat message arrived | self | The message is a `message` alert (see "Which messages alert" below). User can flip `messageSoundAllChannels` to fire on every channel. Alert: withheld on Do Not Disturb (see below). |
+
+---
+
+## Which messages alert
+
+One predicate decides whether a newly arrived message alerts the user:
+`messageAlertsUser(event, { everyMessage })` in `utils/alerts.ts`, over the pure
+rule `isMessageAlert` in `utils/notificationFilters.ts`. `SoundController`
+calls it before `message.ogg` and `NotificationController` calls it before the
+new-message OS notification, so the two outputs cannot drift apart.
+
+**Rule.** Never for the user's own message. Otherwise yes for a DM, and yes for
+a message whose content mentions the user (`<@id>`). Every other message does
+not alert.
+
+**The user's ids.** The home account's `id`, its `homeUserId`, and the id the
+user holds on the channel's instance (`getMyUserIdForOrigin` of the channel's
+origin). On a remote instance's channel, the user's own messages carry that
+instance's id and mentions of the user are written with it, so without it the
+user's own messages there would alert and mentions there would not.
+
+**The every-message preference.** `messageSoundAllChannels` ("Play sound for
+every message") widens the sound only. `SoundController` passes it as
+`everyMessage`; `NotificationController` does not, so OS notifications stay on
+DMs and mentions whatever the preference says.
+
+**Per-channel and per-space settings.** There are none today: no channel or
+space mute and no notification level. When one is added it belongs in
+`messageAlertsUser`, so both outputs follow it.
+
+**Order.** The predicate decides first, then Do Not Disturb (below) withholds
+what it allowed. A batch of events raises at most one sound and at most one
+notification, for the first message that alerts.
+
+---
+
+## Do Not Disturb
+
+Two cues are **alerts**: they draw attention to something another person did.
+Every other cue is feedback on the user's own action or on the call they are
+in. Only alerts are subject to the user's status.
+
+| Alert kind (`AlertKind`) | Cue | OS notification |
+|---|---|---|
+| `message` | `message.ogg` | new-message notification (window unfocused) |
+| `incoming_call` | `call_ringing.ogg` loop | "is calling you" notification (window unfocused) |
+
+**Rule.** While the user's status is `dnd`, both outputs of every alert kind
+are withheld. `online` and `idle` do not suppress anything, and neither does an
+unknown status (no user loaded yet).
+
+**What still happens on `dnd`:**
+- Unread state, unread counts and the desktop badge (`set-badge-count`) keep
+  updating. They are silent and are not routed through the gate.
+- The in-app incoming-call card still appears, so the call can be answered;
+  only the ringing loop and the OS notification are withheld.
+- Own-action and in-call cues are untouched: mute/unmute, deafen/undeafen,
+  camera, join/leave/disconnect, stream started/ended, watcher cues, and the
+  outgoing `call_calling` loop.
+
+Messages follow Discord, where Do Not Disturb silences notifications and their
+sounds while badges keep counting. Calls are withheld too because the ringing
+loop is the most intrusive cue the app has, and the call is not lost: the card
+stays visible and the caller keeps hearing `call_calling` until it is answered
+or times out. Letting calls through Do Not Disturb would be a change to the
+`incoming_call` case of `isAlertAllowed`, not to any call site.
+
+**Ringing is a state, not an event.** The `call_ringing` loop plays exactly
+while a call is waiting and `incoming_call` alerts are allowed. `SoundController`
+re-evaluates that on every voice-store tick and on every change of the user's
+own status, so switching to `dnd` mid-ring stops the loop at once, and leaving
+`dnd` while the call is still ringing starts it. The loop stands for "a call is
+waiting for you right now"; a user who just left Do Not Disturb has asked to be
+reachable, and the call they would otherwise miss is still there. The OS
+notification is different: it is one-shot at the start of the call and is not
+raised again when the user leaves `dnd`, because the in-app card already shows
+the waiting call.
+
+**One decision point.** The rule lives in `isAlertAllowed(kind, selfStatus)`
+(`utils/notificationFilters.ts`, pure). Callers never test the status
+themselves: they raise an alert through `playAlertSound(kind)` or
+`showAlertNotification(kind, ...)` (`utils/alerts.ts`), which read the status
+at the moment of the alert, so a status change applies to the next alert
+without re-subscribing. A new alert source gets a new `AlertKind`, and the
+compiler then requires `isAlertAllowed` and the kind-to-cue table to cover it.
+
+**Whose status.** The gate reads the user's chosen status through
+`selectMyChosenStatus`, from the account that owns it. Which account that is,
+and why no other instance's view of the user counts, is stated once in
+activity-presence.md ("The client's copy of the user's own status"). One status
+covers every connected instance, as it does in Discord.
+
+**Desktop.** The gate runs in the renderer, before `window.backspace.showNotification`
+is called; the preload and main process are unchanged. Any desktop build works
+with it, and the rule reaches desktop users when their instance serves the new
+renderer, not when the app updates. The main process's own update-available
+notifications are not chat alerts and do not consult the status.
 
 ---
 
@@ -109,14 +210,28 @@ unsubscribe twin; there is no public `numSubscribers` API. Backspace uses a
 small data-channel ping instead, mirroring the existing `deafen` pattern in
 `useLiveKit.ts`.
 
-**Wire format** (`streamWatchProtocol.ts`):
+**Wire format** (`streamWatchProtocol.ts`), two message types:
 ```ts
 interface StreamWatchPayload {
   type: 'stream_watch';
   target: string;   // streamer userId
   watching: boolean;
 }
+
+interface StreamRepublishPayload {
+  type: 'stream_republish';   // sender is the sharer; no other fields
+}
 ```
+
+`stream_republish` is sent by a sharer right before a codec change unpublishes
+its screen share to publish the same capture again (`republishScreenShare`).
+It does not touch the watcher sets. It tells viewers that the removal that
+follows is not the share ending. They keep watching, the sharer stays in the
+`participants[].isScreenSharing` set across the gap, and so **neither
+`stream_ended` nor `stream_started` plays for anyone but the sharer**. If no
+new publication arrives within 15 s, the share ends and `stream_ended` plays
+then. The receiving state machine and the mixed-version rules are in
+`docs/systems/voice.md` (Screen Sharing → "Viewers across a republish").
 
 **Senders.** `StreamTile.tsx` is the **only** broadcast site, and only on
 explicit user actions:

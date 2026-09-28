@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { useAuthStore } from '../stores/authStore';
-import { useSpaceStore, getChannelOrigin, getMyUserIdForOrigin, setMyUserIdForOrigin, resolveDmChannelId } from '../stores/spaceStore';
+import { useSpaceStore, getChannelOrigin, getMyUserIdForOrigin, setMyUserIdForOrigin } from '../stores/spaceStore';
 import { useChatStore } from '../stores/chatStore';
 import { useVoiceStore } from '../stores/voiceStore';
 import { useSocialStore } from '../stores/socialStore';
@@ -9,8 +9,10 @@ import type { ServerEvent, ClientEvent, ActiveCallInfo, Activity, User } from '@
 import { resolveAssetUrl, normalizeUserAssets, normalizeMessageAssets } from '../utils/assetUrls';
 import { broadcastVoiceStatus, broadcastDeafenViaLiveKit } from '../utils/voice';
 import { applySpaceVoiceState } from '../utils/voiceStateSync';
-import { sortDmChannels } from '../utils/dmSorting';
+import { applyIncomingDmMessage, applyIncomingDmChannel } from '../utils/dmMessageRouting';
+import { repinDmsToHomeCopies } from '../utils/dmOriginFailover';
 import { registerSelfId } from '../utils/identity';
+import { ownStatusReport, statusToAssertOnRemote } from '../utils/selfStatus';
 import { getActiveRoom } from './useLiveKit';
 import { useUIStore } from '../stores/uiStore';
 import { useActivityStore } from '../stores/activityStore';
@@ -167,7 +169,7 @@ export function teardownDmCall(): void {
 function handleEvent(origin: string, event: ServerEvent): void {
   const isHome = origin === HOME_ORIGIN;
   const { setUser } = useAuthStore.getState();
-  const { populateFromReady, loadSpaceDetail, currentSpaceId, updateMemberPresence, addMember, removeMember, addDmChannel, removeDmChannel, upsertUserView } = useSpaceStore.getState();
+  const { populateFromReady, loadSpaceDetail, currentSpaceId, updateMemberPresence, addMember, removeMember, removeDmChannel, upsertUserView } = useSpaceStore.getState();
   const { addMessage, addRealtimeMessage, updateMessage, removeMessage, setTyping, clearTyping, onReactionAdded, onReactionRemoved } = useChatStore.getState();
   const { addVoiceUser, removeVoiceUser, clearVoiceUsersForOrigin, setVoiceUsers, setVoiceChannelElapsedSeconds, setVoiceUserStatus, clearVoiceUserStatus } = useVoiceStore.getState();
 
@@ -206,10 +208,26 @@ function handleEvent(origin: string, event: ServerEvent): void {
       }
 
       populateFromReady(origin, event.spaces, event.folders, event.dmChannels, event.spaceLayout, event.layoutUpdatedAt);
+      // A conversation first listed from a sibling moves to its home copy.
+      repinDmsToHomeCopies();
 
       // Cache authoritative identity for this origin (federation-safe)
       if (!isHome) {
         setMyUserIdForOrigin(origin, event.user.id);
+      }
+
+      // The user's own chosen status (utils/selfStatus.ts): take it from this
+      // socket when it is the owner's report (the true home, for a session on
+      // a replicated row), and re-send it to this remote when this session owns
+      // the choice and the remote account is the same federated identity.
+      {
+        const authUser = useAuthStore.getState().user;
+        const report = ownStatusReport(authUser, { origin, isHome }, { userId: event.user.id, status: event.user.status });
+        if (report) useAuthStore.getState().applyOwnStatus(report);
+        if (!isHome) {
+          const status = statusToAssertOnRemote(authUser, event.user, window.location.host);
+          if (status) wsSend({ type: 'presence_update', status }, origin);
+        }
       }
 
       // Mark remote instance as connected in instanceStore
@@ -575,13 +593,18 @@ function handleEvent(origin: string, event: ServerEvent): void {
       break;
     }
 
-    case 'presence_update':
+    case 'presence_update': {
+      // The owner's report of the user's own status, e.g. a change made on
+      // another device (utils/selfStatus.ts); feeds the alert gate.
+      const report = ownStatusReport(useAuthStore.getState().user, { origin, isHome }, event);
+      if (report) useAuthStore.getState().applyOwnStatus(report);
       updateMemberPresence(event.userId, event.status);
       useSocialStore.getState().updateFriendPresence(event.userId, event.status);
       if (event.activities) {
         useActivityStore.getState().setUserActivities(event.userId, event.activities);
       }
       break;
+    }
 
     case 'user_updated': {
       if (!isHome) normalizeUserAssets(event.user, origin);
@@ -600,6 +623,11 @@ function handleEvent(origin: string, event: ServerEvent): void {
           break;
         }
         setUser(event.user);
+      }
+      {
+        // The true home's row of a replicated session carries the choice too.
+        const report = ownStatusReport(useAuthStore.getState().user, { origin, isHome }, { userId: event.user.id, status: event.user.status });
+        if (report) useAuthStore.getState().applyOwnStatus(report);
       }
 
       // Deleted user cleanup: remove from caches the existing pipeline doesn't cover
@@ -738,81 +766,7 @@ function handleEvent(origin: string, event: ServerEvent): void {
       }
       if ((event.message as any).user) upsertUserView((event.message as any).user, origin);
       if ((event.message as any).replyTo?.user) upsertUserView((event.message as any).replyTo.user, origin);
-      const { dmChannels: currentDmChannels, setDmChannels: setDms, addDmChannel: addDmCh } = useSpaceStore.getState();
-      const knownDm = currentDmChannels.find(dm => dm.id === event.message.dmChannelId);
-
-      // Check if this is a relay-created channel that duplicates an existing DM
-      // (same conversation, different channel ID). If so, skip adding a new sidebar entry
-      // and route the message to the existing channel instead.
-      if (!knownDm) {
-        // dmAlternatives-based resolution: if this channelId is an alternate-origin
-        // local id for a DM whose primary is in dmChannels, reroute to the primary.
-        // Covers 1-on-1 AND group DMs uniformly; also the post-failover path where
-        // the reconnected original origin's WS still uses its old local id.
-        const primaryId = resolveDmChannelId(event.message.dmChannelId);
-        if (primaryId && primaryId !== event.message.dmChannelId) {
-          addRealtimeMessage(primaryId, { ...event.message, dmChannelId: primaryId } as any);
-          const updatedDms = currentDmChannels.map(dm =>
-            dm.id === primaryId ? { ...dm, lastMessage: event.message } : dm,
-          );
-          const { unreadChannels: u1, currentChannelId: c1 } = useChatStore.getState();
-          setDms(sortDmChannels(updatedDms, u1, c1));
-          {
-            const { currentChannelId: u1cc, markChannelUnread: u1mu } = useChatStore.getState();
-            const myId = isHome ? useAuthStore.getState().user?.id : getMyUserIdForOrigin(origin);
-            if (primaryId !== u1cc && event.message.userId !== myId) {
-              u1mu(primaryId);
-            }
-          }
-          break;
-        }
-
-        // Legacy 2-member-identity fallback: covers DMs without a federatedId
-        // (pre-federation or never-federated 1-on-1 DMs).
-        const msgUser = event.message.user;
-        const msgHomeUserId = msgUser?.homeUserId || msgUser?.id;
-        if (msgHomeUserId) {
-          const existingDm = currentDmChannels.find(dm =>
-            dm.members.length === 2 &&
-            dm.members.some(m => (m.homeUserId || m.id) === msgHomeUserId),
-          );
-          if (existingDm) {
-            // Route message to the existing channel instead of creating a duplicate
-            addRealtimeMessage(existingDm.id, { ...event.message, dmChannelId: existingDm.id } as any);
-            const updatedDms = currentDmChannels.map(dm =>
-              dm.id === existingDm.id ? { ...dm, lastMessage: event.message } : dm,
-            );
-            const { unreadChannels, currentChannelId } = useChatStore.getState();
-            setDms(sortDmChannels(updatedDms, unreadChannels, currentChannelId));
-            break;
-          }
-        }
-      }
-
-      addRealtimeMessage(event.message.dmChannelId, event.message as any);
-      if (!knownDm) {
-        addDmCh({
-          id: event.message.dmChannelId,
-          createdAt: event.message.createdAt,
-          members: event.message.user ? [event.message.user] : [],
-          lastMessage: event.message,
-        }, origin);
-      } else {
-        const updatedDms = currentDmChannels.map(dm =>
-          dm.id === event.message.dmChannelId
-            ? { ...dm, lastMessage: event.message }
-            : dm
-        );
-        const { unreadChannels: unread, currentChannelId: curCh } = useChatStore.getState();
-        setDms(sortDmChannels(updatedDms, unread, curCh));
-      }
-      {
-        const { currentChannelId, markChannelUnread } = useChatStore.getState();
-        const myId = isHome ? useAuthStore.getState().user?.id : getMyUserIdForOrigin(origin);
-        if (event.message.dmChannelId !== currentChannelId && event.message.userId !== myId) {
-          markChannelUnread(event.message.dmChannelId);
-        }
-      }
+      void applyIncomingDmMessage(origin, event.message);
       break;
     }
 
@@ -1163,13 +1117,7 @@ function handleEvent(origin: string, event: ServerEvent): void {
       for (const m of event.dmChannel.members) {
         upsertUserView(m, origin);
       }
-      // Dedup: skip if a channel with the same federatedId already exists
-      const fid = event.dmChannel.federatedId;
-      if (fid) {
-        const existing = useSpaceStore.getState().dmChannels.find(dm => dm.federatedId === fid);
-        if (existing) break;
-      }
-      addDmChannel(event.dmChannel, origin);
+      applyIncomingDmChannel(origin, event.dmChannel);
       break;
     }
 

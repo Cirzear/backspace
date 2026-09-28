@@ -12,6 +12,7 @@ import { VoiceControlBar } from '../voice/VoiceControlBar';
 import { VoiceChatPanel } from '../voice/VoiceChatPanel';
 import { FriendsPage } from '../chat/FriendsPage';
 import { ExplorePage } from '../chat/ExplorePage';
+import { ProjectHubPage } from '../projectHub/ProjectHubPage';
 import { Avatar } from '../ui/Avatar';
 import { AvatarStack } from '../ui/AvatarStack';
 import { useVoiceStore } from '../../stores/voiceStore';
@@ -69,6 +70,7 @@ export function MainContent() {
   const showDms = useUIStore((s) => s.showDms);
   const location = useLocation();
   const isExplorePage = location.pathname === '/explore';
+  const isProjectHubPage = location.pathname === '/backspace';
   const activeDmCall = useVoiceStore((s) => s.activeDmCall);
   const outgoingCall = useVoiceStore((s) => s.outgoingCall);
   const dmChannels = useSpaceStore((s) => s.dmChannels);
@@ -84,6 +86,7 @@ export function MainContent() {
   const searchButtonRef = useRef<HTMLButtonElement>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [jumpToMessageId, setJumpToMessageId] = useState<string | null>(null);
+  const clearJumpRequest = useCallback(() => setJumpToMessageId(null), []);
 
   // Resolve the DM header's "first other" member through the canonical view
   // cache. The hook must be called unconditionally at the component top, so we
@@ -182,11 +185,15 @@ export function MainContent() {
   const channel = channels.find(c => c.id === currentChannelId);
   const isVoiceChannel = channel?.type === 'voice';
 
-  if (showDms || isExplorePage || !currentSpaceId) {
+  if (showDms || isExplorePage || isProjectHubPage || !currentSpaceId) {
     if (!currentChannelId) {
-      // i18n-check: allow-literal (the "; return" between two JSX returns is code, not text)
-      if (isExplorePage) return <ExplorePage />;
-      return <FriendsPage />;
+      return isExplorePage ? (
+        <ExplorePage />
+      ) : isProjectHubPage ? (
+        <ProjectHubPage />
+      ) : (
+        <FriendsPage />
+      );
     }
 
     const dmChannel = dmChannels.find(dm => dm.id === currentChannelId);
@@ -404,7 +411,7 @@ export function MainContent() {
             <MemberListToggleButton />
           </div>
         </div>
-        <MessageList channelId={currentChannelId} jumpToMessageId={jumpToMessageId} onJumpComplete={() => setJumpToMessageId(null)} />
+        <MessageList channelId={currentChannelId} jumpToMessageId={jumpToMessageId} onJumpHandled={clearJumpRequest} />
         {dmPartnerDeleted
           ? <DmDeletedNotice />
           : <MessageInput channelId={currentChannelId} channelName={`@${dmName}`} placeholder={dmInputPlaceholder} />}
@@ -551,7 +558,7 @@ export function MainContent() {
           <MemberListToggleButton />
         </div>
       </div>
-      <MessageList channelId={currentChannelId} jumpToMessageId={jumpToMessageId} onJumpComplete={() => setJumpToMessageId(null)} />
+      <MessageList channelId={currentChannelId} jumpToMessageId={jumpToMessageId} onJumpHandled={clearJumpRequest} />
       <MessageInput channelId={currentChannelId} channelName={channel.name} />
       <SearchPopover
         open={searchOpen}

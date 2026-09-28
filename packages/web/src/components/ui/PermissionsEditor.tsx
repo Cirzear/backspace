@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSpaceStore } from '../../stores/spaceStore';
-import { permissionsToString, stringToPermissions } from '../../utils/permissions';
+import { PermissionBits, permissionsToString, stringToPermissions } from '../../utils/permissions';
 import { OverrideEntry, type PermissionDef } from './OverrideEntry';
 import { describeError } from '../../i18n/errors';
 import type { Role, MemberWithUser } from '@backspace/shared';
+
+// The padlock the Overview privacy note uses; this note sits beside the same subject.
+const LOCK_ICON = 'M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z';
 
 export interface Override {
   targetType: string;
@@ -21,6 +24,8 @@ export interface PermissionsEditorProps {
   getOverrides: () => Promise<Override[]>;
   putOverride: (data: { targetType: string; targetId: string; allow: string; deny: string }) => Promise<unknown>;
   deleteOverride: (targetType: string, targetId: string) => Promise<unknown>;
+  /** Shown above Save while the staged edit would stop hiding this channel or category from @everyone. */
+  unhideNote: string;
 }
 
 export function PermissionsEditor({
@@ -31,6 +36,7 @@ export function PermissionsEditor({
   getOverrides,
   putOverride,
   deleteOverride,
+  unhideNote,
 }: PermissionsEditorProps) {
   const { t } = useTranslation(['spaces', 'common']);
   const roles = useSpaceStore((s) => s.roles);
@@ -133,49 +139,6 @@ export function PermissionsEditor({
     return map;
   }, [overrides]);
 
-  // Roles that already have overrides
-  const existingRoleIds = useMemo(() => {
-    const set = new Set<string>();
-    for (const o of overrides) {
-      if (o.targetType === 'role') set.add(o.targetId);
-    }
-    for (const [key] of newOverrides) {
-      if (key.startsWith('role:')) set.add(key.slice(5));
-    }
-    return set;
-  }, [overrides, newOverrides]);
-
-  // Members that already have overrides
-  const existingMemberIds = useMemo(() => {
-    const set = new Set<string>();
-    for (const o of overrides) {
-      if (o.targetType === 'member') set.add(o.targetId);
-    }
-    for (const [key] of newOverrides) {
-      if (key.startsWith('member:')) set.add(key.slice(7));
-    }
-    return set;
-  }, [overrides, newOverrides]);
-
-  // Available roles to add (not already in overrides)
-  const availableRoles = useMemo(() =>
-    roles.filter(r => !existingRoleIds.has(r.id) && !pendingRemovals.has(`role:${r.id}`)),
-    [roles, existingRoleIds, pendingRemovals]);
-
-  // Available members to add (not already in overrides), filtered by search
-  const availableMembers = useMemo(() => {
-    const filtered = members.filter(m =>
-      !existingMemberIds.has(m.userId) &&
-      !pendingRemovals.has(`member:${m.userId}`)
-    );
-    if (!memberSearch.trim()) return filtered.slice(0, 20);
-    const q = memberSearch.toLowerCase();
-    return filtered.filter(m =>
-      m.user.username.toLowerCase().includes(q) ||
-      (m.user.displayName?.toLowerCase().includes(q))
-    ).slice(0, 20);
-  }, [members, existingMemberIds, pendingRemovals, memberSearch]);
-
   // Get effective allow/deny for a key — considers drafts, new overrides, and originals
   const getEffective = useCallback((key: string): { allow: bigint; deny: bigint } => {
     if (newOverrides.has(key)) {
@@ -206,28 +169,30 @@ export function PermissionsEditor({
     }
   }, [newOverrides]);
 
-  // Remove handler
+  // Remove handler. Whatever the row held in this edit (a staged addition or
+  // edited bits) is dropped, and a row the server already stores is marked for
+  // deletion, so removing works the same after a remove-and-re-add.
   const handleRemove = useCallback((key: string) => {
-    if (newOverrides.has(key)) {
-      setNewOverrides(prev => {
-        const next = new Map(prev);
-        next.delete(key);
-        return next;
-      });
-    } else {
+    setNewOverrides(prev => {
+      if (!prev.has(key)) return prev;
+      const next = new Map(prev);
+      next.delete(key);
+      return next;
+    });
+    setDraftOverrides(prev => {
+      if (!prev.has(key)) return prev;
+      const next = new Map(prev);
+      next.delete(key);
+      return next;
+    });
+    if (existingOverrideMap.has(key)) {
       setPendingRemovals(prev => {
         const next = new Set(prev);
         next.add(key);
         return next;
       });
-      // Remove from drafts too
-      setDraftOverrides(prev => {
-        const next = new Map(prev);
-        next.delete(key);
-        return next;
-      });
     }
-  }, [newOverrides]);
+  }, [existingOverrideMap]);
 
   // Add role override
   const handleAddRole = useCallback((roleId: string) => {
@@ -386,6 +351,59 @@ export function PermissionsEditor({
     return items;
   }, [overrides, newOverrides, pendingRemovals, members]);
 
+  // The add pickers offer exactly what has no row right now. They read the
+  // same staged rows the lists above render, so a staged removal puts its
+  // target back in the picker at once and a staged addition takes it out.
+  const stagedKeys = useMemo(() => new Set([
+    ...roleOverrides.map((item) => item.key),
+    ...memberOverrides.map((item) => item.key),
+  ]), [roleOverrides, memberOverrides]);
+
+  // Privacy is @everyone's VIEW_CHANNEL deny. Saving unhides the entity when
+  // the saved @everyone row denies it and the staged rows, read the way they
+  // render, no longer do: the row is staged for removal, or the bit cleared.
+  const everyoneKey = `role:${spaceId}`;
+  const unhides = useMemo(() => {
+    const saved = existingOverrideMap.get(everyoneKey);
+    if (!saved || (stringToPermissions(saved.deny) & PermissionBits.VIEW_CHANNEL) === 0n) return false;
+    const stagedHides = stagedKeys.has(everyoneKey)
+      && (getEffective(everyoneKey).deny & PermissionBits.VIEW_CHANNEL) !== 0n;
+    return !stagedHides;
+  }, [existingOverrideMap, everyoneKey, stagedKeys, getEffective]);
+
+  const availableRoles = useMemo(() =>
+    roles.filter(r => !stagedKeys.has(`role:${r.id}`)),
+    [roles, stagedKeys]);
+
+  // Filtered by the search box, capped at 20 rows.
+  const availableMembers = useMemo(() => {
+    const filtered = members.filter(m => !stagedKeys.has(`member:${m.userId}`));
+    if (!memberSearch.trim()) return filtered.slice(0, 20);
+    const q = memberSearch.toLowerCase();
+    return filtered.filter(m =>
+      m.user.username.toLowerCase().includes(q) ||
+      (m.user.displayName?.toLowerCase().includes(q))
+    ).slice(0, 20);
+  }, [members, stagedKeys, memberSearch]);
+
+  const savePill = (
+    <div className="glass-bubble rounded-full px-4 py-2 flex items-center gap-2 pointer-events-auto animate-slide-up">
+      <button
+        onClick={handleDiscard}
+        className="px-3 py-1 text-sm text-txt-tertiary hover:text-txt-secondary transition-colors"
+      >
+        {t('spaces:settings.discardChanges')}
+      </button>
+      <button
+        onClick={handleSave}
+        disabled={saving}
+        className="px-3 py-1.5 bg-accent-primary hover:bg-accent-primary/80 text-white text-sm font-medium rounded-full transition-colors disabled:opacity-50"
+      >
+        {saving ? t('common:states.saving') : t('common:actions.save')}
+      </button>
+    </div>
+  );
+
   return (
     <div className="space-y-4 relative pb-14">
       {/* Fetch error */}
@@ -400,6 +418,9 @@ export function PermissionsEditor({
         <div className="text-[11px] font-semibold text-txt-tertiary uppercase tracking-wider mb-2">
           {t('spaces:permissions.roleOverrides')}
         </div>
+        {roleOverrides.length === 0 && (
+          <p className="text-[12.5px] text-txt-tertiary">{t('spaces:permissions.noRoleOverrides')}</p>
+        )}
         <div className="space-y-1.5">
           {roleOverrides.map(({ key, role }) => {
             const eff = getEffective(key);
@@ -413,7 +434,6 @@ export function PermissionsEditor({
                 deny={eff.deny}
                 onChange={(a, d) => handleChange(key, a, d)}
                 onRemove={() => handleRemove(key)}
-                isEveryone={role.id === spaceId}
               />
             );
           })}
@@ -435,7 +455,7 @@ export function PermissionsEditor({
             <div ref={roleDropdownRef} className="glass rounded-lg overflow-hidden">
               <div className="p-1.5 max-h-48 overflow-y-auto scrollbar-thin">
                 {availableRoles.length === 0 ? (
-                  <div className="px-2.5 py-1.5 text-xs text-txt-muted">{t('spaces:permissions.noMoreRoles')}</div>
+                  <div className="px-2.5 py-1.5 text-xs text-txt-tertiary">{t('spaces:permissions.noMoreRoles')}</div>
                 ) : (
                   availableRoles.map(role => (
                     <button
@@ -455,7 +475,7 @@ export function PermissionsEditor({
               <div className="border-t border-white/[0.04] p-1.5">
                 <button
                   onClick={() => setShowAddRole(false)}
-                  className="w-full text-xs text-txt-muted hover:text-txt-tertiary px-2.5 py-1 transition-colors"
+                  className="w-full text-xs text-txt-tertiary hover:text-txt-secondary px-2.5 py-1 transition-colors"
                 >
                   {t('common:actions.cancel')}
                 </button>
@@ -470,6 +490,9 @@ export function PermissionsEditor({
         <div className="text-[11px] font-semibold text-txt-tertiary uppercase tracking-wider mb-2">
           {t('spaces:permissions.memberOverrides')}
         </div>
+        {memberOverrides.length === 0 && (
+          <p className="text-[12.5px] text-txt-tertiary">{t('spaces:permissions.noMemberOverrides')}</p>
+        )}
         <div className="space-y-1.5">
           {memberOverrides.map(({ key, member }) => {
             const eff = getEffective(key);
@@ -513,7 +536,7 @@ export function PermissionsEditor({
               </div>
               <div className="px-1.5 max-h-48 overflow-y-auto scrollbar-thin">
                 {availableMembers.length === 0 ? (
-                  <div className="px-2.5 py-1.5 text-xs text-txt-muted">{t('common:labels.noMembersFound')}</div>
+                  <div className="px-2.5 py-1.5 text-xs text-txt-tertiary">{t('common:labels.noMembersFound')}</div>
                 ) : (
                   availableMembers.map(member => (
                     <button
@@ -523,7 +546,7 @@ export function PermissionsEditor({
                     >
                       <span className="truncate">{member.user.displayName ?? member.user.username}</span>
                       {member.user.displayName && (
-                        <span className="text-txt-muted text-xs truncate">@{member.user.username}</span>
+                        <span className="text-txt-tertiary text-xs truncate">@{member.user.username}</span>
                       )}
                     </button>
                   ))
@@ -532,7 +555,7 @@ export function PermissionsEditor({
               <div className="border-t border-white/[0.04] p-1.5">
                 <button
                   onClick={() => { setShowAddMember(false); setMemberSearch(''); }}
-                  className="w-full text-xs text-txt-muted hover:text-txt-tertiary px-2.5 py-1 transition-colors"
+                  className="w-full text-xs text-txt-tertiary hover:text-txt-secondary px-2.5 py-1 transition-colors"
                 >
                   {t('common:actions.cancel')}
                 </button>
@@ -549,26 +572,27 @@ export function PermissionsEditor({
         </div>
       )}
 
-      {/* Save/Discard pill */}
+      {/* Save/Discard pill, with the unhide note above it when a save would
+          make this channel or category visible to everyone. */}
       {hasChanges && (
         <div className="sticky bottom-0 z-10 pointer-events-none">
-          <div className="flex justify-center pt-3 pb-1">
-            <div className="glass-bubble rounded-full px-4 py-2 flex items-center gap-2 pointer-events-auto animate-slide-up">
-              <button
-                onClick={handleDiscard}
-                className="px-3 py-1 text-sm text-txt-tertiary hover:text-txt-secondary transition-colors"
-              >
-                {t('spaces:settings.discardChanges')}
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="px-3 py-1.5 bg-accent-primary hover:bg-accent-primary/80 text-white text-sm font-medium rounded-full transition-colors disabled:opacity-50"
-              >
-                {saving ? t('common:states.saving') : t('common:actions.save')}
-              </button>
+          {unhides ? (
+            // Note and pill float over the scrolling rows as one group on one
+            // solid ground. Inside the modal's glass a nested backdrop-filter
+            // does not blur, so a see-through fill would let rows show through.
+            <div className="glass-bubble bg-surface-chat rounded-lg mt-3 mb-1 p-2 space-y-2 pointer-events-auto">
+              {/* Laid out like the Overview privacy note. */}
+              <div className="flex items-start gap-2 text-xs text-txt-tertiary">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="flex-shrink-0 mt-0.5 text-txt-secondary">
+                  <path d={LOCK_ICON} />
+                </svg>
+                <span>{unhideNote}</span>
+              </div>
+              <div className="flex justify-center">{savePill}</div>
             </div>
-          </div>
+          ) : (
+            <div className="flex justify-center pt-3 pb-1">{savePill}</div>
+          )}
         </div>
       )}
     </div>

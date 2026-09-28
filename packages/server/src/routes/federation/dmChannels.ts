@@ -1,12 +1,14 @@
 import { getDb, schema } from '../../db/index.js';
 import { getOurOrigin } from '../../utils/federationAuth.js';
+import { relayTargetOrigins } from '../../utils/federationOutbox.js';
 import { sanitizeUser } from '../../utils/sanitize.js';
 import { generateSnowflake } from '../../utils/snowflake.js';
 import { connectionManager } from '../../ws/handler.js';
 import { getDmMessageWithUser } from '../dm.js';
+import { extractDomain, relayActorOfUser, sameRelayActor, type RelayActor } from './identity.js';
 import { and, desc, eq, inArray, isNull, or } from 'drizzle-orm';
 import type { FederatedCallEntry } from '../../ws/handler.js';
-import type { DmChannel, DmMessageWithUser } from '@backspace/shared';
+import type { DmChannel, DmMessageWithUser, FederationMessageRef } from '@backspace/shared';
 
 /**
  * Build the full DM channel payload used by `dm_channel_created` events.
@@ -220,4 +222,108 @@ export function resolveLocalDmMessage(
       ),
     )
     .get();
+}
+
+
+/**
+ * The local reply target for a relayed message's `replyTo` reference, or null.
+ *
+ * The reference names the replied-to message in federation coordinates and is
+ * resolved like a reaction target. It is only adopted when it resolves to a
+ * message in `dmChannelId`, the conversation the reply is being stored in, so
+ * a relay can never point a local reply at another conversation. A target not
+ * held here (yet) leaves the reply without a quote rather than rejecting it.
+ */
+export function resolveRelayedReplyTarget(
+  ref: FederationMessageRef | null | undefined,
+  sourceInstance: string,
+  dmChannelId: string,
+  db: ReturnType<typeof getDb>,
+): string | null {
+  if (!ref || typeof ref.messageId !== 'string' || typeof ref.messageHomeInstance !== 'string') {
+    return null;
+  }
+  const target = resolveLocalDmMessage(ref.messageId, ref.messageHomeInstance, sourceInstance, db);
+  return target && target.dmChannelId === dmChannelId ? target.id : null;
+}
+
+
+/** A DM channel member as the local user row it is: id and home identity. */
+export interface DmChannelMember {
+  id: string;
+  homeUserId: string | null;
+  homeInstance: string | null;
+}
+
+/** The members of a DM channel as local user rows. */
+export function dmChannelMembers(
+  dmChannelId: string,
+  db: ReturnType<typeof getDb>,
+): DmChannelMember[] {
+  return db
+    .select({ id: schema.users.id, homeUserId: schema.users.homeUserId, homeInstance: schema.users.homeInstance })
+    .from(schema.dmMembers)
+    .innerJoin(schema.users, eq(schema.dmMembers.userId, schema.users.id))
+    .where(eq(schema.dmMembers.dmChannelId, dmChannelId))
+    .all();
+}
+
+
+/**
+ * The member of `members` who is the federated identity `actor` (same home
+ * user id on the same home domain, `sameRelayActor`), or undefined.
+ */
+export function memberWithIdentity(
+  members: readonly DmChannelMember[],
+  actor: RelayActor,
+): DmChannelMember | undefined {
+  return members.find(m => {
+    const identity = relayActorOfUser(m);
+    return identity !== null && sameRelayActor(identity, actor);
+  });
+}
+
+
+/**
+ * Whether `sourceInstance` is one of `origins`. Compared by domain, the way
+ * `attributionRefusal` compares instances: the origins are built from stored
+ * `homeInstance` values, which are bare domains, while the signed source is a
+ * full URL.
+ */
+export function isRelayTarget(origins: readonly string[], sourceInstance: string): boolean {
+  const source = extractDomain(sourceInstance).toLowerCase();
+  if (!source) return false;
+  return origins.some(origin => extractDomain(origin).toLowerCase() === source);
+}
+
+
+/**
+ * Whether `sourceInstance` may act as `actorId` in the conversation among
+ * `members` (local user rows): the actor must be one of the members, and the
+ * signing peer one of the origins this instance relays the conversation to
+ * (`relayTargetOrigins`). Only those instances hold a copy of the conversation
+ * that the action could have been taken in. Used for relayed message creates
+ * and member adds; the rules are documented in docs/systems/dm-system.md,
+ * "Relayed message creates" and "Relayed member adds".
+ */
+export function mayRelayInto(
+  members: ReadonlyArray<{ id: string; homeInstance: string | null }>,
+  actorId: string,
+  sourceInstance: string,
+): boolean {
+  if (!members.some(m => m.id === actorId)) return false;
+  return isRelayTarget(relayTargetOrigins(members), sourceInstance);
+}
+
+
+/**
+ * The refusal for a relayed action by someone who is not a member of this
+ * instance's copy of a conversation (or from a sender that copy is not
+ * relayed to). A group's roster here changes through relayed member adds, and
+ * an add made through a third instance can land after the new member's first
+ * action, so a group refusal is `unauthorized_source`, which senders retry. A
+ * 1-on-1 (no owner) is its fixed pair: `invalid_target`, terminal.
+ */
+export function nonMemberRefusal(channel: { ownerId: string | null }): 'unauthorized_source' | 'invalid_target' {
+  return channel.ownerId ? 'unauthorized_source' : 'invalid_target';
 }

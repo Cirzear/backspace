@@ -26,6 +26,15 @@ export function clearSelfIds(): void {
 }
 
 /**
+ * Whether `id` is one of the signed-in user's own rows, as a connected
+ * instance's `ready` reported it (`registerSelfId`). Proof by id only, with no
+ * username heuristic.
+ */
+export function isRegisteredSelfId(id: string): boolean {
+  return _knownSelfIds.has(id);
+}
+
+/**
  * Stateless check: is `user` a replicated alias of `homeUser`?
  * Uses the immutable (username, homeInstance) composite key —
  * no store lookups, no snowflake ID mapping.
@@ -85,6 +94,16 @@ export function resolveDisplayIdentity(user: User, homeUser: User | null): User 
  */
 export function hostOf(origin: string): string {
   try { return new URL(origin).host; } catch { return origin; }
+}
+
+/**
+ * Bare, lowercased hostname of an origin or `homeInstance` value (no scheme, no
+ * port). The comparison used to decide whether two values name the same home
+ * instance.
+ */
+export function homeHostOf(value: string): string {
+  const stripped = value.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+  return (stripped.split('/')[0] ?? '').split(':')[0]!.toLowerCase();
 }
 
 export function normalizeOriginToHost(input: string | null | undefined): string {

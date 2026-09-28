@@ -113,4 +113,56 @@ describe('MarkdownRenderer', () => {
     expect(code).not.toBeNull();
     expect(code!.textContent).toBe('<@U1>');
   });
+
+  it('renders emoji shortcodes in message text as emoji (issue #252)', () => {
+    const { container } = render(
+      <MarkdownRenderer content={'on fire :heart_on_fire: and **bold :sparkles:**'} />,
+    );
+
+    expect(container.textContent).toBe('on fire ❤️‍🔥 and bold ✨');
+    expect(container.querySelector('strong')!.textContent).toBe('bold ✨');
+  });
+
+  it('leaves shortcodes inside code spans and fenced blocks as typed', () => {
+    const { container } = render(
+      <MarkdownRenderer content={'`:smile:`\n\n```\n:smile:\n```'} />,
+    );
+
+    expect(Array.from(container.querySelectorAll('code')).map((el) => el.textContent))
+      .toEqual([':smile:', ':smile:']);
+  });
+
+  it('leaves shortcodes in link text and URLs alone', () => {
+    const { container } = render(
+      <MarkdownRenderer content={'see https://example.com/:smile:/x'} />,
+    );
+
+    const link = container.querySelector('a')!;
+    expect(link.getAttribute('href')).toBe('https://example.com/:smile:/x');
+    expect(link.textContent).toBe('https://example.com/:smile:/x');
+  });
+
+  it('keeps backslash-escaped colons literal', () => {
+    const { container } = render(<MarkdownRenderer content={'\\:smile\\: but :smile:'} />);
+    expect(container.textContent).toBe(':smile: but 😄');
+  });
+
+  it('keeps a colon written as an entity literal', () => {
+    const { container } = render(<MarkdownRenderer content={'&#58;smile: but :smile:'} />);
+    expect(container.textContent).toBe(':smile: but 😄');
+  });
+
+  it('converts shortcodes in a labelled link but not in an angle-bracket autolink', () => {
+    const { container } = render(
+      <MarkdownRenderer content={'[:tada: party](https://example.com) <https://example.com/:smile:>'} />,
+    );
+    const [labelled, autolink] = Array.from(container.querySelectorAll('a'));
+    expect(labelled!.textContent).toBe('🎉 party');
+    expect(autolink!.textContent).toBe('https://example.com/:smile:');
+  });
+
+  it('does not treat clock times or addresses as shortcodes', () => {
+    const { container } = render(<MarkdownRenderer content={'at 10:30:00 on fe80::a:b:c:d'} />);
+    expect(container.textContent).toBe('at 10:30:00 on fe80::a:b:c:d');
+  });
 });

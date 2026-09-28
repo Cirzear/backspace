@@ -49,11 +49,14 @@
     },
     "settings": {
       "title": "Kanaleinstellungen",
+      "rename": "Kanal umbenennen",
+      "nameLabel": "Kanalname",
       "channelLabel": "Kanal",
       "private": {
         "label": "Privater Kanal",
         "description": "Nur ausgewählte Mitglieder und Rollen können diesen Kanal sehen.",
-        "note": "Dieser Kanal ist für Mitglieder ohne ausdrücklichen Zugriff verborgen. Wer die Administrator-Berechtigung hat oder den Space besitzt, sieht immer alle Kanäle."
+        "note": "Dieser Kanal ist für Mitglieder ohne ausdrücklichen Zugriff verborgen. Wer die Administrator-Berechtigung hat oder den Space besitzt, sieht immer alle Kanäle.",
+        "unhideOnSave": "Beim Speichern wird dieser Kanal für alle Mitglieder sichtbar."
       },
       "deleteButton": "Kanal löschen"
     },
@@ -76,11 +79,14 @@
     },
     "settings": {
       "title": "Kategorieeinstellungen",
+      "rename": "Kategorie umbenennen",
+      "nameLabel": "Kategoriename",
       "categoryLabel": "Kategorie",
       "private": {
         "label": "Private Kategorie",
         "description": "Nur ausgewählte Mitglieder und Rollen können die Kanäle in dieser Kategorie sehen.",
-        "note": "Diese Kategorie ist für Mitglieder ohne ausdrücklichen Zugriff verborgen. Die Kanäle darin erben diese Einschränkung, sofern sie sie nicht ausdrücklich überschreiben."
+        "note": "Diese Kategorie ist für Mitglieder ohne ausdrücklichen Zugriff verborgen. Die Kanäle darin erben diese Einschränkung, sofern sie sie nicht ausdrücklich überschreiben.",
+        "unhideOnSave": "Beim Speichern werden diese Kategorie und die Kanäle darin, die sich nicht selbst verbergen, für alle Mitglieder sichtbar."
       },
       "deleteButton": "Kategorie löschen"
     },
@@ -147,7 +153,6 @@
       "submitting": "Verbindung wird hergestellt…"
     },
     "fallback": {
-      "notice": "Auf {{host}} gibt es bereits ein Konto, das die von deiner Heimatinstanz ausgestellten Zugangsdaten nicht akzeptiert. Melde dich mit dem Passwort an, das du auf dieser Instanz gesetzt hast. Danach wird es auf die ausgestellten Zugangsdaten umgestellt.",
       "usernamePlaceholder": "Dein Benutzername auf dieser Instanz",
       "passwordLabel": "Passwort für diese Instanz",
       "passwordPlaceholder": "Passwort auf der anderen Instanz",
@@ -310,13 +315,13 @@
         }
       },
       "directory": {
-        "label": "Ins Backspace-Verzeichnis eintragen",
+        "label": "Ins globale Backspace-Verzeichnis eintragen",
         "hint": "Zeigt diesen Space auf jeder Backspace-Instanz im Äußeren Space.",
         "notConfigured": "Diese Instanz ist nicht so eingerichtet, dass sie ein Verzeichnis erreicht; dieser Space kann also nirgends eingetragen werden.",
-        "adminOff": "Die Instanzverwaltung muss erst das globale Entdecken von Spaces einschalten.",
-        "adminOffSelf": "Das globale Entdecken von Spaces ist auf dieser Instanz ausgeschaltet.",
+        "adminOff": "Die Instanzverwaltung muss erst das globale Eintragen erlauben.",
+        "adminOffSelf": "Globales Eintragen ist auf dieser Instanz nicht erlaubt.",
         "adminOffSelfAction": "Einschalten",
-        "adminOffSelfIntro": "Damit wird das globale Entdecken von Spaces für die ganze Instanz eingeschaltet: Spaces hier lassen sich in „Entdecken“ finden, und die Instanz meldet sich beim öffentlichen Verzeichnis an.",
+        "adminOffSelfIntro": "Damit wird globales Eintragen für die ganze Instanz erlaubt: Spaces hier lassen sich in „Entdecken“ finden, und die Instanz meldet sich beim öffentlichen Verzeichnis an.",
         "privateSpace": "Stell die Sichtbarkeit zuerst auf „Öffentlich“ oder „Beitritt auf Anfrage“.",
         "disclosure": "Der Eintrag macht öffentlich: Name, Beschreibung, Icon, Banner und Mitgliederzahl des Spaces sowie die Adresse dieser Instanz. Wer das Verzeichnis durchstöbert, lädt Icon und Banner von dieser Instanz."
       },
@@ -432,6 +437,10 @@
     "overrideCount_one": "{{count}} Überschreibung",
     "overrideCount_other": "{{count}} Überschreibungen",
     "removeOverride": "Überschreibung entfernen",
+    "removeOverrideFor": "Überschreibung für {{name}} entfernen",
+    "removeOverrideHint": "Ohne sie gelten hier die Berechtigungen des gesamten Space.",
+    "noRoleOverrides": "Keine Überschreibungen für Rollen. Hier gelten für jede Rolle die Berechtigungen des gesamten Space.",
+    "noMemberOverrides": "Keine Überschreibungen für Mitglieder.",
     "roleOverrides": "Überschreibungen für Rollen",
     "memberOverrides": "Überschreibungen für Mitglieder",
     "addRole": "Rolle hinzufügen",
@@ -482,7 +491,6 @@
     },
     "dmList": {
       "explore": "Entdecken",
-      "comingSoon": "Demnächst",
       "newDm": "Neue Direktnachricht",
       "empty": "Noch keine Unterhaltungen.",
       "leaveGroup": "Gruppe verlassen",

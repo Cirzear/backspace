@@ -1,15 +1,16 @@
 import path from 'node:path';
 import { getDb, schema } from '../../../db/index.js';
-import { computeFederatedId } from '../../../utils/federationOutbox.js';
+import { normalizeOriginForCompare } from '../../../utils/federationAuth.js';
+import { computeFederatedId, getGroupDmTargetOrigins } from '../../../utils/federationOutbox.js';
 import { deleteAttachmentFiles } from '../../../utils/fileCleanup.js';
 import { sanitizeUser } from '../../../utils/sanitize.js';
 import { generateSnowflake } from '../../../utils/snowflake.js';
 import { connectionManager } from '../../../ws/handler.js';
 import { getDmMessageWithUser } from '../../dm.js';
 import { and, eq, isNull, or } from 'drizzle-orm';
-import type { FederationRelayEvent } from '@backspace/shared';
-import { buildDmChannelPayload, buildDmMessagePayload, findOrCreateDmChannel, isUrlFromPeer, resolveLocalDmMessage } from '../dmChannels.js';
-import { extractDomain, resolveLocalUser, resolveOrCreateReplicatedUser, verifyAttribution } from '../identity.js';
+import type { FederationMessageTarget, FederationRelayEvent } from '@backspace/shared';
+import { buildDmChannelPayload, buildDmMessagePayload, dmChannelMembers, findOrCreateDmChannel, isRelayTarget, isUrlFromPeer, mayRelayInto, memberWithIdentity, nonMemberRefusal, resolveLocalDmMessage, resolveRelayedReplyTarget } from '../dmChannels.js';
+import { attributionRefusal, extractDomain, relayActorOfUser, resolveOrCreateReplicatedUser, resolveRelayActor, sameRelayActor } from '../identity.js';
 import { hydrateReplicatedUserProfile } from '../profile.js';
 
 export async function processCreateEvent(
@@ -31,9 +32,10 @@ export async function processCreateEvent(
   }
 
   // Attribution: message author must belong to source instance (FED-010)
-  if (!verifyAttribution(event.message, sourceInstance, db)) {
-    console.warn(`[federation] Attribution mismatch in create: message homeInstance=${extractDomain(event.message.homeInstance)} source=${extractDomain(sourceInstance)}`);
-    rejected.push({ messageId: event.messageId, reason: 'attribution_mismatch' });
+  const refusal = attributionRefusal(event.message, sourceInstance, db);
+  if (refusal) {
+    console.warn(`[federation] Attribution refused (${refusal}) in create: message homeInstance=${extractDomain(event.message.homeInstance)} source=${extractDomain(sourceInstance)}`);
+    rejected.push({ messageId: event.messageId, reason: refusal });
     return;
   }
 
@@ -78,10 +80,13 @@ export async function processCreateEvent(
     return;
   }
 
-  // Find the author among the resolved participants
-  const authorEntry = resolvedParticipants.find(
-    p => p.homeUserId === event.message!.homeUserId,
-  );
+  // The author is the resolved participant that IS the message's identity
+  // (`resolveRelayActor`), not the first whose homeUserId matches: a
+  // participant bound by username can resolve to a row of another identity.
+  const author = resolveRelayActor(event.message, db);
+  const authorEntry = author.kind === 'found'
+    ? resolvedParticipants.find(p => p.localUser.id === author.user.id)
+    : undefined;
   if (!authorEntry) {
     rejected.push({ messageId: event.messageId, reason: 'author_not_found' });
     return;
@@ -108,9 +113,23 @@ export async function processCreateEvent(
       rejected.push({ messageId: event.messageId, reason: 'channel_not_found' });
       return;
     }
+    if (!mayRelayInto(dmChannelMembers(channel.id, db), authorUser.id, sourceInstance)) {
+      const reason = nonMemberRefusal(channel);
+      console.warn(`[federation] Refused create in DM ${channel.id} (${reason}): the author is not a member, or ${extractDomain(sourceInstance)} is not a peer of the conversation`);
+      rejected.push({ messageId: event.messageId, reason });
+      return;
+    }
     localDmChannelId = channel.id;
   } else {
-    // 1-on-1 DM: compute federated_id from pair and find/create channel
+    // 1-on-1 DM: the conversation is the pair its federated_id is computed
+    // from, so the pair is its membership, and is checked before any local
+    // copy of the conversation is created.
+    const pair = [resolvedParticipants[0]!.localUser, resolvedParticipants[1]!.localUser];
+    if (!mayRelayInto(pair, authorUser.id, sourceInstance)) {
+      console.warn(`[federation] Refused 1-on-1 create: the author is not one of the pair, or ${extractDomain(sourceInstance)} is not a peer of the conversation`);
+      rejected.push({ messageId: event.messageId, reason: 'invalid_target' });
+      return;
+    }
     const federatedId = computeFederatedId(
       resolvedParticipants[0]!.homeUserId,
       resolvedParticipants[1]!.homeUserId,
@@ -122,6 +141,10 @@ export async function processCreateEvent(
     );
   }
 
+  // The wire's `replyToId` is the sender's local id and is never adopted; the
+  // shared-coordinate `replyTo` is resolved inside this conversation instead.
+  const replyToId = resolveRelayedReplyTarget(event.message.replyTo, sourceInstance, localDmChannelId, db);
+
   // Insert the message
   const localMessageId = generateSnowflake();
   db.insert(schema.dmMessages)
@@ -131,7 +154,7 @@ export async function processCreateEvent(
       userId: authorUser.id,
       content: event.message.content,
       type: event.message.type === 'system' ? 'system' : 'user',
-      replyToId: null,
+      replyToId,
       createdAt: event.message.createdAt,
       editedAt: null,
       sourceInstance,
@@ -256,6 +279,146 @@ export async function processCreateEvent(
 }
 
 
+type RelayedMutationResolution =
+  | { ok: true; localMsg: typeof schema.dmMessages.$inferSelect }
+  | {
+    ok: false;
+    reason: 'unknown_message' | 'invalid_target' | 'attribution_mismatch' | 'attribution_unproven' | 'not_message_author';
+  };
+
+function isMessageTarget(value: unknown): value is FederationMessageTarget {
+  if (!value || typeof value !== 'object') return false;
+  const t = value as Partial<FederationMessageTarget>;
+  return typeof t.federatedId === 'string' && t.federatedId.length > 0
+    && typeof t.message?.messageId === 'string' && t.message.messageId.length > 0
+    && typeof t.message.messageHomeInstance === 'string' && t.message.messageHomeInstance.length > 0
+    && typeof t.actor?.homeUserId === 'string' && typeof t.actor.homeInstance === 'string';
+}
+
+/**
+ * Whether `sourceInstance` may address `localMsg` by a relayed `target`: it is
+ * one of the origins this instance relays the message's conversation to, or it
+ * is the instance the message itself arrived from. Any other peer never
+ * received the conversation, so a target from it is refused whatever actor it
+ * names. The message's own source is compared host to host, since it and the
+ * signed source can differ in scheme; the relay targets as `isRelayTarget`
+ * compares them.
+ */
+function isPeerOfMessage(
+  localMsg: typeof schema.dmMessages.$inferSelect,
+  sourceInstance: string,
+): boolean {
+  const source = normalizeOriginForCompare(sourceInstance);
+  if (!source) return false;
+  if (normalizeOriginForCompare(localMsg.sourceInstance) === source) return true;
+  return isRelayTarget(getGroupDmTargetOrigins(localMsg.dmChannelId), sourceInstance);
+}
+
+/**
+ * Why a relayed reaction on `localMsg` is refused, or null. The sender must be
+ * a peer of the message's conversation (`isPeerOfMessage`, else
+ * `invalid_target`), and the reactor a member of it, matched by federated
+ * identity, as the local reaction handlers require of a reacting user (else
+ * `nonMemberRefusal`).
+ */
+function reactionScopeRefusal(
+  localMsg: typeof schema.dmMessages.$inferSelect,
+  reactor: { homeUserId: string; homeInstance: string },
+  sourceInstance: string,
+  db: ReturnType<typeof getDb>,
+): 'invalid_target' | 'unauthorized_source' | null {
+  if (!isPeerOfMessage(localMsg, sourceInstance)) return 'invalid_target';
+  if (memberWithIdentity(dmChannelMembers(localMsg.dmChannelId, db), reactor)) return null;
+  const channel = db
+    .select({ ownerId: schema.dmChannels.ownerId })
+    .from(schema.dmChannels)
+    .where(eq(schema.dmChannels.id, localMsg.dmChannelId))
+    .get();
+  return channel ? nonMemberRefusal(channel) : 'invalid_target';
+}
+
+/**
+ * Find the local message a relayed `update` or `delete` changes, and decide
+ * whether the actor may change it. The rule is documented in
+ * docs/systems/dm-system.md, "Relayed edits and deletes":
+ *
+ * - With a `target`, `attributionRefusal` must find nothing to refuse for the
+ *   actor against the signing peer (`attribution_unproven` is retried, as for
+ *   every relay event), the message is resolved in shared coordinates inside this
+ *   instance's copy of the conversation `target.federatedId`, and the actor
+ *   must be the message's author, compared as federated identities. The
+ *   signing peer must be one the conversation is relayed to, or the instance
+ *   the message came from (`isPeerOfMessage`); else `invalid_target`,
+ *   terminal. A target that does not resolve (yet) is `unknown_message`, which
+ *   the sender retries with backoff. A message by someone else is
+ *   `not_message_author`, terminal, and nothing is changed.
+ * - Without one (an older sender), the event's `messageId` is the sender's
+ *   local id and only matches a message the sender itself created and relayed
+ *   here, so the lookup `(sourceInstance, messageId)` is its own authorization.
+ */
+function resolveRelayedMutationTarget(
+  event: FederationRelayEvent,
+  sourceInstance: string,
+  db: ReturnType<typeof getDb>,
+): RelayedMutationResolution {
+  if (event.target === undefined) {
+    const legacy = db
+      .select()
+      .from(schema.dmMessages)
+      .where(
+        and(
+          eq(schema.dmMessages.sourceInstance, sourceInstance),
+          eq(schema.dmMessages.sourceMessageId, event.messageId),
+        ),
+      )
+      .get();
+    return legacy ? { ok: true, localMsg: legacy } : { ok: false, reason: 'unknown_message' };
+  }
+
+  const target: unknown = event.target;
+  if (!isMessageTarget(target)) return { ok: false, reason: 'invalid_target' };
+
+  const refusal = attributionRefusal(target.actor, sourceInstance, db);
+  if (refusal) {
+    console.warn(`[federation] Attribution refused (${refusal}) in ${event.eventType}: actor homeInstance=${extractDomain(target.actor.homeInstance)} source=${extractDomain(sourceInstance)}`);
+    return { ok: false, reason: refusal };
+  }
+
+  const channel = db
+    .select({ id: schema.dmChannels.id })
+    .from(schema.dmChannels)
+    .where(and(eq(schema.dmChannels.federatedId, target.federatedId), isNull(schema.dmChannels.deletedAt)))
+    .get();
+  if (!channel) return { ok: false, reason: 'unknown_message' };
+
+  const localMsg = resolveLocalDmMessage(
+    target.message.messageId,
+    target.message.messageHomeInstance,
+    sourceInstance,
+    db,
+  );
+  if (!localMsg || localMsg.dmChannelId !== channel.id) return { ok: false, reason: 'unknown_message' };
+
+  if (!isPeerOfMessage(localMsg, sourceInstance)) {
+    console.warn(`[federation] Refused ${event.eventType} of message ${localMsg.id}: ${extractDomain(sourceInstance)} is not a peer of its conversation`);
+    return { ok: false, reason: 'invalid_target' };
+  }
+
+  const author = db
+    .select({ id: schema.users.id, homeUserId: schema.users.homeUserId, homeInstance: schema.users.homeInstance })
+    .from(schema.users)
+    .where(eq(schema.users.id, localMsg.userId))
+    .get();
+  const authorIdentity = author ? relayActorOfUser(author) : null;
+  if (!authorIdentity || !sameRelayActor(authorIdentity, target.actor)) {
+    console.warn(`[federation] Refused ${event.eventType} of message ${localMsg.id}: the relayed actor is not its author`);
+    return { ok: false, reason: 'not_message_author' };
+  }
+
+  return { ok: true, localMsg };
+}
+
+
 export function processUpdateEvent(
   event: FederationRelayEvent,
   sourceInstance: string,
@@ -264,27 +427,21 @@ export function processUpdateEvent(
   rejected: Array<{ messageId: string; reason: string }>,
 ): void {
   // Attribution: if homeInstance present, verify it matches source (FED-010)
-  if (event.message?.homeInstance && !verifyAttribution(event.message, sourceInstance, db)) {
-    console.warn(`[federation] Attribution mismatch in update: message homeInstance=${extractDomain(event.message.homeInstance)} source=${extractDomain(sourceInstance)}`);
-    rejected.push({ messageId: event.messageId, reason: 'attribution_mismatch' });
-    return;
+  if (event.message?.homeInstance) {
+    const refusal = attributionRefusal(event.message, sourceInstance, db);
+    if (refusal) {
+      console.warn(`[federation] Attribution refused (${refusal}) in update: message homeInstance=${extractDomain(event.message.homeInstance)} source=${extractDomain(sourceInstance)}`);
+      rejected.push({ messageId: event.messageId, reason: refusal });
+      return;
+    }
   }
 
-  const localMsg = db
-    .select()
-    .from(schema.dmMessages)
-    .where(
-      and(
-        eq(schema.dmMessages.sourceInstance, sourceInstance),
-        eq(schema.dmMessages.sourceMessageId, event.messageId),
-      ),
-    )
-    .get();
-
-  if (!localMsg) {
-    rejected.push({ messageId: event.messageId, reason: 'unknown_message' });
+  const resolved = resolveRelayedMutationTarget(event, sourceInstance, db);
+  if (!resolved.ok) {
+    rejected.push({ messageId: event.messageId, reason: resolved.reason });
     return;
   }
+  const localMsg = resolved.localMsg;
 
   const content = event.message?.content ?? null;
   const editedAt = event.message?.editedAt ?? Date.now();
@@ -368,22 +525,12 @@ export function processDeleteEvent(
   accepted: string[],
   rejected: Array<{ messageId: string; reason: string }>,
 ): void {
-  // FED-010: delete is safe by design — lookup scoped to sourceInstance+sourceMessageId
-  const localMsg = db
-    .select()
-    .from(schema.dmMessages)
-    .where(
-      and(
-        eq(schema.dmMessages.sourceInstance, sourceInstance),
-        eq(schema.dmMessages.sourceMessageId, event.messageId),
-      ),
-    )
-    .get();
-
-  if (!localMsg) {
-    rejected.push({ messageId: event.messageId, reason: 'unknown_message' });
+  const resolved = resolveRelayedMutationTarget(event, sourceInstance, db);
+  if (!resolved.ok) {
+    rejected.push({ messageId: event.messageId, reason: resolved.reason });
     return;
   }
+  const localMsg = resolved.localMsg;
 
   // Collect attachment filenames before deletion for disk cleanup
   const attachmentRows = db
@@ -432,9 +579,10 @@ export function processReactionAddEvent(
   }
 
   // Attribution: reacting user must belong to source instance (FED-010)
-  if (!event.reaction.homeInstance || !verifyAttribution(event.reaction, sourceInstance, db)) {
-    console.warn(`[federation] Attribution mismatch in reaction_add: reaction homeInstance=${event.reaction.homeInstance ? extractDomain(event.reaction.homeInstance) : 'missing'} source=${extractDomain(sourceInstance)}`);
-    rejected.push({ messageId: event.messageId, reason: 'attribution_mismatch' });
+  const refusal = attributionRefusal(event.reaction, sourceInstance, db);
+  if (refusal) {
+    console.warn(`[federation] Attribution refused (${refusal}) in reaction_add: reaction homeInstance=${event.reaction.homeInstance ? extractDomain(event.reaction.homeInstance) : 'missing'} source=${extractDomain(sourceInstance)}`);
+    rejected.push({ messageId: event.messageId, reason: refusal });
     return;
   }
 
@@ -446,17 +594,33 @@ export function processReactionAddEvent(
     db,
   );
 
+  // The sender must be a peer of the message's conversation and the reactor
+  // a member of it ("Inbound: Reaction Add/Remove" in dm-system.md).
+  const scopeRefusal = localMsg ? reactionScopeRefusal(localMsg, event.reaction, sourceInstance, db) : null;
+  if (localMsg && scopeRefusal) {
+    console.warn(`[federation] Refused reaction_add on message ${localMsg.id} (${scopeRefusal}): ${extractDomain(sourceInstance)} is not a peer of its conversation, or the reactor is not a member`);
+    rejected.push({ messageId: event.messageId, reason: scopeRefusal });
+    return;
+  }
+
   if (!localMsg) {
     rejected.push({ messageId: event.messageId, reason: 'unknown_message' });
     return;
   }
 
-  // Resolve the reacting user
-  const reactingUser = resolveLocalUser(event.reaction.homeUserId, db);
-  if (!reactingUser) {
+  // The reactor is the local user that IS the attributed identity, matched on
+  // homeUserId + homeInstance; see `resolveRelayActor`.
+  const reactor = resolveRelayActor(event.reaction, db);
+  if (reactor.kind === 'mismatch') {
+    console.warn('[federation] Refused reaction_add: the reactor homeUserId names a local user of another identity');
+    rejected.push({ messageId: event.messageId, reason: 'attribution_mismatch' });
+    return;
+  }
+  if (reactor.kind === 'unknown') {
     rejected.push({ messageId: event.messageId, reason: 'user_not_found' });
     return;
   }
+  const reactingUser = reactor.user;
 
   // Dedup: check if this user already reacted with this emoji
   const existingReaction = db
@@ -521,9 +685,10 @@ export function processReactionRemoveEvent(
   }
 
   // Attribution: reacting user must belong to source instance (FED-010)
-  if (!event.reaction.homeInstance || !verifyAttribution(event.reaction, sourceInstance, db)) {
-    console.warn(`[federation] Attribution mismatch in reaction_remove: reaction homeInstance=${event.reaction.homeInstance ? extractDomain(event.reaction.homeInstance) : 'missing'} source=${extractDomain(sourceInstance)}`);
-    rejected.push({ messageId: event.messageId, reason: 'attribution_mismatch' });
+  const refusal = attributionRefusal(event.reaction, sourceInstance, db);
+  if (refusal) {
+    console.warn(`[federation] Attribution refused (${refusal}) in reaction_remove: reaction homeInstance=${event.reaction.homeInstance ? extractDomain(event.reaction.homeInstance) : 'missing'} source=${extractDomain(sourceInstance)}`);
+    rejected.push({ messageId: event.messageId, reason: refusal });
     return;
   }
 
@@ -535,17 +700,33 @@ export function processReactionRemoveEvent(
     db,
   );
 
+  // The sender must be a peer of the message's conversation and the reactor
+  // a member of it ("Inbound: Reaction Add/Remove" in dm-system.md).
+  const scopeRefusal = localMsg ? reactionScopeRefusal(localMsg, event.reaction, sourceInstance, db) : null;
+  if (localMsg && scopeRefusal) {
+    console.warn(`[federation] Refused reaction_remove on message ${localMsg.id} (${scopeRefusal}): ${extractDomain(sourceInstance)} is not a peer of its conversation, or the reactor is not a member`);
+    rejected.push({ messageId: event.messageId, reason: scopeRefusal });
+    return;
+  }
+
   if (!localMsg) {
     rejected.push({ messageId: event.messageId, reason: 'unknown_message' });
     return;
   }
 
-  // Resolve the reacting user
-  const reactingUser = resolveLocalUser(event.reaction.homeUserId, db);
-  if (!reactingUser) {
+  // The reactor is the local user that IS the attributed identity, matched on
+  // homeUserId + homeInstance; see `resolveRelayActor`.
+  const reactor = resolveRelayActor(event.reaction, db);
+  if (reactor.kind === 'mismatch') {
+    console.warn('[federation] Refused reaction_remove: the reactor homeUserId names a local user of another identity');
+    rejected.push({ messageId: event.messageId, reason: 'attribution_mismatch' });
+    return;
+  }
+  if (reactor.kind === 'unknown') {
     rejected.push({ messageId: event.messageId, reason: 'user_not_found' });
     return;
   }
+  const reactingUser = reactor.user;
 
   const result = db
     .delete(schema.dmReactions)

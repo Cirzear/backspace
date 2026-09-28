@@ -767,11 +767,6 @@ rename.
 
 - [x] Repository is **public** (required for the Scorecard badge/publish and the
       CodeQL free tier).
-- [x] Fine-grained PAT scoped to this repository only, with **Administration:
-      read** and **Contents: read**, stored as the `METRICS_TOKEN` repository
-      secret. Traffic endpoints are unreachable without it — there is no
-      `administration` key in the Actions `permissions:` vocabulary, so
-      `GITHUB_TOKEN` cannot substitute. See `docs/systems/metrics.md` §7.
 - [x] **Dependabot alerts** enabled (`PUT /repos/{owner}/{repo}/vulnerability-alerts`,
       confirmed by `GET` returning 204 where it previously returned 404). The
       repository had been running OSV-Scanner while GitHub's own advisory feed was
@@ -792,15 +787,70 @@ rename.
 - [x] Settings → Actions → General: **Allow GitHub Actions to create and approve
       pull requests** enabled (`can_approve_pull_request_reviews: true` on
       `GET /repos/{owner}/{repo}/actions/permissions/workflow`; the default
-      workflow token permission stays **read**). The `update-flatpak-metadata`
-      job in `release.yml` opens the `automation/flatpak-<tag>` pull request
-      with `GITHUB_TOKEN`, which GitHub rejects while this is off. It was off
-      when the v1.0.6 chain first ran (2026-09-04) and was turned on before the
-      re-run. Every job still declares its own `permissions:` block, so this
-      widens nothing for jobs that do not ask for `pull-requests: write`.
+      workflow token permission stays **read**). It was turned on because the
+      `update-flatpak-metadata` job opened the `automation/flatpak-<tag>` pull
+      request with `GITHUB_TOKEN`, which GitHub rejects while this is off (it
+      was off when the v1.0.6 chain first ran on 2026-09-04 and was turned on
+      before the re-run). That job now lives in `flatpak-release-metadata.yml`
+      and opens the pull request with the release bot's token (next item), so
+      no workflow in the repository creates a pull request with `GITHUB_TOKEN`
+      any more. Whether to turn the setting off again is a separate decision;
+      make it only after a release has gone through the new workflow. Every
+      job still declares its own `permissions:` block, so the setting widens
+      nothing for jobs that do not ask for `pull-requests: write`.
+- [x] **Release bot GitHub App** (`backspace-release-bot`), installed on
+      this repository only. Its installation holds **Administration: read**,
+      **Contents: read/write** and **Pull requests: read/write**, plus the
+      **Metadata: read** every app holds. Two repository secrets:
+      `RELEASE_BOT_APP_ID` (the numeric App ID) and `RELEASE_BOT_PRIVATE_KEY`
+      (its PEM private key). The private key only ever goes to
+      `actions/create-github-app-token`, pinned by SHA
+      (`bcd2ba49218906704ab6c1aa796996da409d3eb1`, v3.2.0), which mints an
+      installation token narrowed to this repository and to the scopes the job
+      uses, and revokes it when the job ends. Two jobs do that, and no other
+      workflow reads the secrets.
+      **`update-flatpak-metadata` in `flatpak-release-metadata.yml`** mints
+      `permission-contents: write` and `permission-pull-requests: write`; the
+      job's own `GITHUB_TOKEN` is `contents: read`. The app exists for this job
+      because pushes and pull requests made with `GITHUB_TOKEN` start no
+      workflows: the required `Build & test` check never ran on the metadata
+      pull request (measured on #278, where the bot commit `8cc48c38` had 0
+      check runs and the human commit after it had 18), so a human had to push
+      to every one. The app's token starts CI, the job updates the branch when
+      main has moved past the tag (the ruleset's up-to-date rule), and it turns
+      on squash auto-merge (`allow_auto_merge` is on for the repository). The
+      workflow runs on `release: released`, or on `workflow_dispatch` with a
+      `tag` input to re-run a release. The `Require CI on main` ruleset carries
+      `require_extra_approval_for_unattributed_changes: true`, which does not
+      hold these pull requests: GitHub documents it as one extra approval for
+      Copilot pull requests not attributed to a person, with no effect when the
+      ruleset requires zero approvals, as this one does, and #278 and #283
+      (opened by the github-actions app) merged with 0 reviews under it. The
+      app's commits are attributed to `backspace-release-bot[bot]` in any case,
+      which is on the CLA allowlist in `cla.yml`. See
+      [desktop.md](desktop.md#release-publishing) for the release flow itself.
+      **`collect` in `metrics.yml`** mints `permission-administration: read`,
+      `permission-contents: read` and `permission-metadata: read` on every
+      run, to read repository traffic. The traffic endpoints need
+      Administration: read, and there is no `administration` key in the
+      Actions `permissions:` vocabulary, so `GITHUB_TOKEN` cannot substitute.
+      This replaced a fine-grained PAT stored as `METRICS_TOKEN`, which had an
+      expiry date and had to be renewed by hand. The endpoint-by-permission
+      list is in [metrics.md](metrics.md) §7.
+      **Rotating the key:** generate a new private key in the app's settings,
+      replace `RELEASE_BOT_PRIVATE_KEY`, then delete the old key there. Both
+      jobs pick up the new key on their next run. A permission withdrawn from
+      the installation makes minting fail in whichever job requests it: the
+      metrics collector then records a failure in `meta.json` before
+      collecting, and the Flatpak job stops before pushing.
 
 ### Outstanding
 
+- [ ] Delete the **`METRICS_TOKEN` repository secret** and revoke the PAT
+      behind it. No workflow reads it since `metrics.yml` moved to the release
+      bot's app token. Do it after the first `metrics.yml` run on the app
+      token has written traffic data; `docs/systems/metrics.md` §7 says what
+      to check in that run.
 - [ ] Settings → Code security: enable **Secret scanning** + **Push protection**.
       Both currently disabled — note that `security.yml`'s gitleaks job scans full
       history on PR and push, but it is not push protection and cannot stop a

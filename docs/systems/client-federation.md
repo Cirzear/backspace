@@ -94,8 +94,28 @@ When a user adds a remote instance via the Connections settings:
    - Password: **the issued secret**
    - `homeInstance`: `nova.ddns.net` (bare domain)
    - `homeUserId`: user's Snowflake ID on home instance
-7. **If registration fails** (account already exists) — log in with the issued secret. There is deliberately **no** retry with the entered password; an account that rejects the issued secret surfaces `DifferentPasswordError` and the explicit per-instance login form, where the user chooses what to send.
-8. **On success** — mark the credential provisioned, store JWT token, create API client, open WebSocket, sync profile
+7. **If registration is refused** because the username is taken or because the instance is closed to new accounts, log in with the issued secret. A migrated account on a closed instance still gets in this way. There is deliberately **no** retry with the entered password. If that login fails, `connectToRemote` throws `RemoteLoginRequiredError` and the caller offers the explicit per-instance login form, where the user chooses what to send. The error's `reason` records which refusal came first, and it is the only thing that decides what the form's notice may claim:
+
+   | Registration answered | `reason` | Code (`describeError`) | What the notice says |
+   |---|---|---|---|
+   | 409 (`username_taken`, or no code from an older remote) | `credential-refused` | `federation_different_password` | An account exists there and refused the issued credential; sign in with the password set on that instance |
+   | 403 (`federated_registration_closed`; `registration_closed`, `invite_required` or no code from an older remote) | `registration-closed` | `federated_registration_closed` | The instance takes no new accounts from other instances; *if* the user has an account there, sign in with it |
+
+   Only the first may say an account exists. On a closed instance the client cannot know: the server's closed gate answers before any username check (`routes/auth.ts`), and a refused login says `invalid_credentials` whether the account is missing or has another password. Any other registration failure is rethrown. `FallbackNotice` in `RemotePasswordStep.tsx` is the one place the notice is worded; all five surfaces that offer the login render it.
+8. **On success** — mark the credential provisioned, store JWT token, create API client, open WebSocket, ask the home instance to peer (below), sync profile
+
+### Home-instance peering on every session (`peerHomeWithRemote`)
+
+DMs a user writes on a remote reach their home instance over the S2S peering between the two, and the home instance only starts one when asked (`POST /api/federation/peer/ensure`). `peerHomeWithRemote(origin, announceAs)` in `instanceStore.ts` is the one place that asks, and every path that opens a session on a remote calls it once the session is live:
+
+| Path | `announceAs` |
+|---|---|
+| `connectToRemote` (and `reauthenticateInstance`, which runs it) | instance label |
+| `loginToRemote`, the explicit per-instance login; `directoryStore.loginAndJoin` reaches it through this | instance label |
+| `reconnectInstance`, a token resume | `null` |
+| `autoConnectAll`, each cached session that verifies | `null` |
+
+Every call states `reason: 'instance_connect'`, which is what the home admin's approval queue (Instance settings, Federation: "connected an account on {host}") and the user's pending list ("Connect to {host}") show when the home instance has auto-accept off. The admin who sees it is the home instance's own, since the outbound gate runs there; the remote learns no reason. With a label, a `rejected` answer shows a warning toast (`federation:connections.peering.unavailable`) and a transient `pending` an info toast (`…peering.inProgress`); with `null` the call is silent. It never throws: a session is usable without peering. The server answers an already-settled peering from its peer row without charging the per-user limit on that endpoint (see [federation.md](federation.md#admin-endpoints)), which is what makes asking on every session affordable. Before this, `loginToRemote` and `reconnectInstance` did not ask, so a session reached through the different-password fallback (including the directory's join) had no peering until the next app start, and the rate limit meant a user with more than three connections was not peered for all of them even then.
 
 Password changes on the home instance are **not** propagated to remote instances — there is nothing to propagate, since no remote holds the home password.
 
@@ -153,7 +173,7 @@ Called once per session after login:
 
 1. Read `currentUser.replicatedInstances` from the home server (list of known remote origins)
 2. Load cached tokens from `localStorage`
-3. For instances **with cached tokens**: attempt reconnection in parallel — verify token, open WebSocket, sync profile
+3. For instances **with cached tokens**: attempt reconnection in parallel — verify token, open WebSocket, ask the home instance to peer (`peerHomeWithRemote`, silent), sync profile
 4. For instances **without cached tokens**: create error placeholders (visible in Connections UI with "re-authenticate" prompt)
 5. Set `_autoConnectDone = true` to unblock topology sync
 
@@ -209,9 +229,15 @@ When a remote instance's WebSocket drops mid-session, every DM pinned to that or
 
 **Voice is out of scope.** LiveKit rooms are bound to the hosting origin and cannot migrate. `voiceStore.activeDmCall` / `outgoingCall` / `incomingCall` are not rewritten by failover; voice state clears through existing LiveKit disconnect paths.
 
-**No re-home on reconnect:** when the originally pinned origin comes back, its `ready` re-adds its local id to `dmAlternatives` but leaves the new primary in place. Avoids flapping.
+**Re-home on reconnect, to home only:** when the originally pinned origin comes back, its `ready` re-adds its local id to `dmAlternatives`. If that origin is the user's home, `repinDmsToHomeCopies()` moves the DM back to it (see "WS event routing contract" below: the home copy is the one every relay reaches). A returning sibling does not take the DM back from whatever it failed over to.
 
-**WS event routing contract:** every DM WS event handler either routes via the primary `dmChannels` id (using `resolveDmChannelId(rawId)`) or silently no-ops on unknown ids. Only `dm_channel_created` creates new `dmChannels` entries — and it dedups by `federatedId` first.
+**WS event routing contract:** every DM WS event handler either routes via the primary `dmChannels` id (using `resolveDmChannelId(rawId)`) or silently no-ops on unknown ids. `dm_channel_created` and `dm_message_created` are the two events that can add a `dmChannels` entry; both go through `utils/dmMessageRouting.ts`:
+
+- `applyIncomingDmChannel` dedups by `federatedId`, and records the delivering origin's id in `dmAlternatives` (`recordDmAlternative`) whether or not the copy was added, so the origin's later events for that conversation resolve.
+- `applyIncomingDmMessage` places a message by channel id only. An id `resolveDmChannelId` does not know is looked up by re-reading that origin's DM list (`reloadDmsForOrigin`, one in-flight load per origin), which records its `federatedId`. If the list still does not place it, the message gets its own entry under that origin.
+- **A conversation's message list holds only its pinned origin's copies.** A `dm_message_created` for an alternate id (a mirrored copy pushed by another connected instance) is not added to the list, the preview or the unread state. Message ids are local to the instance that issued them, and every action on a message (reply, reaction, edit, delete) goes to `getChannelOrigin(channelId)`, which knows only its own ids. Before #295 the mirrored copy was rerouted into the pinned entry and, when it arrived first, it won the `sourceMessageId` dedup against the pinned copy, so a reply to it was refused as `reply_target_invalid` (the optimistic message vanished, the sidebar kept its preview) and a reaction to it was silently dropped. The pinned origin receives the message over the S2S relay and delivers its own copy. The cost is one relay hop of latency for messages first seen by another instance.
+- **The pinned copy is the home instance's whenever the client has seen it.** Relays only reach instances that host a participant; the user's home (`getLayoutHomeOrigin()`) always hosts one, a sibling the user merely has an account on may host nobody. First-wins pinning left a DM created through such a sibling (the sibling's `dm_channel_created` arrives first) pinned there, and with the rule above the other person's replies, relayed only to home, never appeared. `repinDmsToHomeCopies()` (`utils/dmOriginFailover.ts`) re-keys any DM pinned elsewhere onto the home copy recorded in `dmAlternatives`, through the same `rekeyDmChannel` failover uses. It runs after each `ready` payload, after `dm_channel_created`, and after the DM-list reloads in `dmMessageRouting` and `maybeAutoReattach`. The manual re-attach in `AccountPanel` reloads without it; the `dm_channel_created` events the server sends for that re-attach, or the next `ready`, re-pin.
+- **A message is never assigned to a conversation by its author.** The signed-in user is a member of all of their DMs, so an author match put a message the user sent to one person into whichever of their other DMs sorted first (unread DMs sort first). That was issue #296; it was a display fault in the sender's own client, and the server never stored or sent the message to the other conversation's members.
 
 Source: `utils/dmOriginFailover.ts` + extensions in `stores/spaceStore.ts`, `stores/chatStore.ts`, `stores/instanceStore.ts`, `hooks/useWebSocket.ts`. Design spec: `docs/superpowers/specs/2026-04-23-dm-origin-failover-design.md`.
 
@@ -373,7 +399,7 @@ The **Connections** panel (in user settings) allows managing remote instance con
 | `error` or `disconnected` | `reauthenticateInstance(origin, password)` in place | `{ kind: 'connected', how: 'reconnect' }` |
 | unknown | `connectToRemote(origin, password, displayName)`, the flow above | `{ kind: 'connected', how: 'new' }` |
 | any, called with an empty password | a resumable origin (a live instance in `error`/`disconnected` that kept its token, or a registry entry in `disconnected`) is resumed with `reconnectInstance` | `{ kind: 'connected', how: 'resumed' }`, or `{ kind: 'needs-password' }` when there was nothing to resume or the token was refused, or a thrown `peer_unreachable` |
-| any, and the remote refused the home-issued credential | `DifferentPasswordError` is caught | `{ kind: 'needs-remote-password', remoteUsername }`, so the caller can offer the explicit per-instance login form |
+| any, and only the account's own credentials can get in (step 7 of the flow above) | `RemoteLoginRequiredError` is caught | `{ kind: 'needs-remote-password', remoteUsername, reason }`, so the caller can offer the explicit per-instance login form under the notice `reason` selects |
 
 Every other failure is thrown as is. It does not validate a typed URL: a caller that wants the self and duplicate checks for user input still runs `probeInstance` first, as the Connections flow does.
 
@@ -475,20 +501,20 @@ each host places it on the panel or row it already has:
    under the field it is about. Submitting calls `reauthenticateInstance`,
    which drops the stale session and re-runs the standard connect flow.
 2. **The account's own password on that instance.** Reached only when phase 1
-   throws `DifferentPasswordError`, which means the instance has an account
-   for this user that does not accept the credential the home issued, and no
-   home password can fix it. The phase renders `FallbackForm`, exported from
-   `RemotePasswordStep.tsx` and shared with the Connections add flow and the
-   connect-and-join dialog, prefilled with the username the error carries;
-   its submit calls `loginToRemote`, which restores the connection exactly as
-   the add flow restores it. There is no Back: the password phase 1 asks for
-   is not what the instance refused.
+   throws `RemoteLoginRequiredError` (step 7 of the connect flow gives the two
+   reasons), and no home password can fix that. The phase renders
+   `FallbackForm`, exported from `RemotePasswordStep.tsx` and shared with the
+   Connections add flow and the connect-and-join dialog, prefilled with the
+   username the error carries and worded by its `reason`; its submit calls
+   `loginToRemote`, which restores the connection exactly as the add flow
+   restores it. There is no Back: the password phase 1 asks for is not what
+   the instance refused.
 
-`DifferentPasswordError` is an `HttpError` (409) carrying the registered code
-`federation_different_password`, minted by the client rather than by a route,
-so `describeError` says it in the user's language anywhere it does surface as
-a message. Its English text is the log line and the last-resort fallback
-only.
+`RemoteLoginRequiredError` is an `HttpError` carrying a registered code
+(`federation_different_password`, 409, or `federated_registration_closed`,
+403, by reason), minted by the client rather than by a route, so
+`describeError` says it in the user's language anywhere it does surface as a
+message. Its English text is the log line and the last-resort fallback only.
 
 The chips host keeps an open chip mounted. `ConnectionChips` hides a chip
 whose live instance is `connecting` on its own, but it holds the set of
@@ -505,7 +531,7 @@ Escape cancels the surface in either phase, and never travels past it in any
 state. That containment is load-bearing: `Modal.tsx` closes the settings
 modal from a document-level Escape listener, so an Escape let through during
 a submit would close the modal around a running reconnect and leave a
-`DifferentPasswordError` with no surface to arrive in. The handler therefore
+`RemoteLoginRequiredError` with no surface to arrive in. The handler therefore
 stops the event first and judges it after; while a submit is in flight the
 key is swallowed and does nothing, as Cancel does. In the chips host the collapsed pill
 becomes a small matte panel on a line of its own, bounded by the form rather
@@ -582,7 +608,7 @@ Client-driven LWW whole-registry push (same pattern as `profileSync.ts`):
 
 ### Load-bearing for inbound attribution
 
-Both records are now read by the **home** instance's S2S attribution check (`localUserActsOnPeer`, see [federation.md §3](federation.md#3-identity-resolution)). A homeward relay — a peer asserting an event authored by one of *our* users — is only accepted when that user has a registry row or a `replicatedInstances` entry for the signing peer. Either record satisfies the check, so a failed `PUT` on one path does not lock the user out.
+Both records are now read by the **home** instance's S2S attribution check (`localUserStandingOnPeer`, see [federation.md §3](federation.md#3-identity-resolution)). A homeward relay — a peer asserting an event authored by one of *our* users — is only accepted when that user has a registry row or a `replicatedInstances` entry for the signing peer. Either record satisfies the check, so a failed `PUT` on one path does not lock the user out. A relay that arrives before either record is refused as `attribution_unproven`, which the sending instance retries on backoff, so a DM written in the moments before `syncRegistry` lands is delivered once it does.
 
 Consequences to keep in mind when touching this code:
 
@@ -623,7 +649,7 @@ Live updates: a `peering_subscription_changed` WebSocket event refetches the lis
 
 A second new section above the pending list shows unread `peer_approval_notifications` rows ordered by `createdAt DESC`. Each row's copy branches on `kind`:
 
-- **`approved`** — "Your peering request to `{peerOrigin}` was approved — retry your friend-add to `{triggerTarget}`?" `[Retry]` `[Dismiss]`. Retry deep-links to the friend-add UI prefilled with the original target. Today only the `friend_add` reason produces a retry deep-link; future trigger reasons add their own deep-link flows. Dismiss POSTs to `/peering-notifications/:id/read`.
+- **`approved`** — "Your peering request to `{peerOrigin}` was approved — retry your friend-add to `{triggerTarget}`?" `[Retry]` `[Dismiss]`. Retry deep-links to the friend-add UI prefilled with the original target. Today only the `friend_add` reason produces a retry deep-link; future trigger reasons add their own deep-link flows. An approved `instance_connect` needs no retry: once the peering is active, relay starts on its own. Dismiss POSTs to `/peering-notifications/:id/read`.
 - **`denied`** — "Your peering request to `{peerOrigin}` was denied by your admin." `[Dismiss]`.
 - **`expired`** — "Your peering request to `{peerOrigin}` expired without admin action." `[Dismiss]`.
 

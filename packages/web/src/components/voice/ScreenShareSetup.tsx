@@ -14,8 +14,9 @@ import {
   publishScreenShare,
   isScreenCaptureSupported,
   isCaptureCancellation,
+  canAddScreenShareAudioLater,
 } from '../../utils/screenShare';
-import { StreamQualityControls, StreamSummary } from './StreamQualityControls';
+import { StreamQualityControls, StreamSummary, StreamHostSubtitle } from './StreamQualityControls';
 import { pickAutoStageSource, type ScreenSourceTab } from '../../utils/screenShareSources';
 
 /**
@@ -387,7 +388,7 @@ export function ScreenShareSetup() {
     if (!stream || !room) { setError('startFailed'); return; }
     setStarting(true);
     setError(null);
-    const ok = await publishScreenShare(room, stream);
+    const ok = await publishScreenShare(room, stream, { sourceId: selectedId, pickerMode });
     if (!ok) {
       // publishScreenShare stopped the tracks on failure
       stagedRef.current = null;
@@ -408,7 +409,7 @@ export function ScreenShareSetup() {
     setStaged(null);
     setStarting(false);
     close();
-  }, [close, selectedId]);
+  }, [close, selectedId, pickerMode]);
 
   const screens = useMemo(() => sources.filter((s) => s.isScreen), [sources]);
   const windows = useMemo(() => {
@@ -423,7 +424,11 @@ export function ScreenShareSetup() {
   const showGrid = electron && (canListSources || promptInFlight || sources.length > 0);
   const activeSources = activeTab === 'windows' ? windows : screens;
   const supported = isScreenCaptureSupported();
-  const audioNeedsRepick = !!staged && stagedShareAudio !== config.shareAudio;
+  // Turning System Audio off after picking is honoured at Start (the audio is
+  // held back). Turning it on is too where the desktop app can add loopback
+  // audio to the running share; elsewhere audio comes only with a new pick.
+  const audioNeedsRepick = !!staged && config.shareAudio && !stagedShareAudio
+    && !canAddScreenShareAudioLater(selectedId, pickerMode);
   const canStart = !!staged && !staging && !starting;
   const chooseHint = !electron
     ? t('voice:screenPicker.chooseHint')
@@ -664,8 +669,11 @@ export function ScreenShareSetup() {
               settingsOpen ? 'translate-x-0' : 'translate-x-full'
             }`}
           >
-            <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-border-hard flex-shrink-0">
-              <span className="text-[15px] font-bold text-txt-primary">{t('voice:streamSettings.title')}</span>
+            <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3 border-b border-border-hard flex-shrink-0">
+              <div className="min-w-0">
+                <div className="text-[15px] font-bold text-txt-primary">{t('voice:streamSettings.title')}</div>
+                <StreamHostSubtitle className="mt-0.5" />
+              </div>
               <button
                 onClick={() => setSettingsOpen(false)}
                 className="text-txt-tertiary hover:text-txt-primary transition-colors p-1 -mr-1"

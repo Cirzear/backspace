@@ -27,7 +27,9 @@
     "userVolume": "Nutzerlautstärke"
   },
   "incomingCall": {
-    "status": "Eingehender Sprachanruf…"
+    "status": "Eingehender Sprachanruf…",
+    "notificationTitle": "Eingehender Anruf",
+    "notificationBody": "{{name}} ruft dich an"
   },
   "grid": {
     "waitingForOthers": "Warten auf weitere Teilnehmer…",
@@ -106,6 +108,7 @@
   },
   "streamSettings": {
     "title": "Stream-Einstellungen",
+    "hostLimits": "Vorgaben von {{host}}",
     "resolution": "Auflösung",
     "frameRate": "Framerate",
     "contentMode": "Inhaltsmodus",
@@ -122,12 +125,16 @@
     "custom": "Manuell",
     "auto": "Auto",
     "customBitrateDisabled": "Eigene Bitrate vom Administrator deaktiviert",
+    "customBitrateDisabledByHost": "Eigene Bitrate von {{host}} deaktiviert",
     "systemAudio": "Systemaudio",
     "chromeEchoNote": "Chrome kann Backspace-Audio ausschließen, wenn die Aufnahmeart dies unterstützt",
     "electronWindowsAudioNote": "Windows-Loopback kann Anrufaudio erfassen, wenn restrictOwnAudio nicht unterstützt wird",
     "electronMacAudioNote": "macOS 13+ benötigt die Berechtigung für Bildschirm- und Systemaudioaufnahmen",
     "electronLinuxAudioNote": "Linux benötigt PulseAudio-Kompatibilität; Backspace-Audio kann ebenfalls aufgenommen werden",
     "systemAudioStartFailed": "Der Stream konnte nicht mit Systemaudio gestartet werden. Deaktiviere Systemaudio, wenn die Plattform es nicht unterstützt.",
+    "systemAudioAddFailed": "Systemaudio konnte dem Stream nicht hinzugefügt werden.",
+    "systemAudioAdding": "Systemaudio wird hinzugefügt…",
+    "systemAudioLiveUnavailable": "Systemaudio lässt sich nur beim Start eines Streams hinzufügen. Starte den Stream neu, um es einzuschließen.",
     "softwareH264Fallback": "Hardware-H264-Kodierung ist nicht verfügbar. OpenH264 wird als Software-Encoder verwendet; VP9 kann schneller sein.",
     "degradation": {
       "maintainResolution": "Auflösung halten",

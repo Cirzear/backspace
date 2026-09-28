@@ -25,7 +25,10 @@
       "passwordLabel": "输入您的密码以连接到 {{host}}",
       "passwordPlaceholder": "与登录时相同",
       "passwordHint": "您的密码由主实例校验，绝不会发送给 {{host}}。该实例将获得为其专有的凭据。",
-      "fallbackNotice": "此实例上已存在一个同名账号，且无法识别主实例颁发的凭据。请使用您在该实例上设置的密码登录，之后将切换为该凭据。",
+      "fallbackNotice": {
+        "credentialRefused": "{{host}} 上已存在一个同名账号，且无法识别主实例颁发的凭据。请使用您在该实例上设置的密码登录，之后将切换为该凭据。",
+        "registrationClosed": "{{host}} 不接受来自其他实例的新账号，因此无法在该实例上为您创建账号。如果您在 {{host}} 上已有账号，请在下方登录。"
+      },
       "usernamePlaceholder": "您在此实例上的用户名",
       "remotePasswordLabel": "此实例的密码",
       "remotePasswordPlaceholder": "远端实例上的密码",
@@ -110,7 +113,9 @@
       "directMessage": "私信",
       "friendRequestTo": "向 {{target}} 发送好友申请",
       "joinSpace": "加入 {{target}}",
-      "directMessageTo": "向 {{target}} 发送私信"
+      "directMessageTo": "向 {{target}} 发送私信",
+      "instanceConnect": "连接",
+      "connectTo": "连接到 {{target}}"
     },
     "pending": {
       "title": "待处理的对等审批",
@@ -130,6 +135,10 @@
       "dismissing": "正在忽略…",
       "dismissFailed": "忽略失败：{{error}}",
       "dismissAllFailed": "全部忽略失败：{{error}}"
+    },
+    "peering": {
+      "unavailable": "在管理员批准与 {{name}} 的对等连接之前，无法与该实例上的用户互通消息。",
+      "inProgress": "正在与 {{name}} 建立对等连接，稍后即可与该实例上的用户互通消息。"
     }
   },
   "admin": {
@@ -168,6 +177,7 @@
     "filter": {
       "statusHeading": "状态",
       "sort": {
+        "domain": "按域名 (A-Z)",
         "lastSeen": "最后在线",
         "dateAdded": "添加日期",
         "failures": "失败次数",
@@ -179,6 +189,7 @@
       "revoked": "已撤销"
     },
     "peer": {
+      "instanceName": "实例名称",
       "revokedMeta": "撤销于：{{revoked}} · 建立对等于：{{peered}}",
       "unreachableMeta": "最后在线：{{lastSeen}} · {{failures}}",
       "activeMeta": "最后在线：{{lastSeen}} · 同步于：{{synced}}",
@@ -213,7 +224,8 @@
       "subscriber": {
         "friendAdd": "添加 {{target}} 为好友",
         "spaceJoin": "希望加入 {{target}}",
-        "directMessage": "希望私信 {{target}}"
+        "directMessage": "希望私信 {{target}}",
+        "instanceConnect": "已连接 {{target}} 上的账户"
       },
       "approve": "批准",
       "deny": "拒绝",
@@ -224,7 +236,7 @@
         "denyTitle": "拒绝对等请求",
         "approveOutbound_other": "将代表发起请求的 {{count}} 位用户与 {{name}} 建立对等握手。远端实例必须可访问。",
         "approveInbound": "将与 {{name}} 建立对等握手。远端实例必须可访问。",
-        "denyOutbound_other": "将拒绝向外对等请求并通知发起请求的用户。他们可在好友列表中重新触发请求。",
+        "denyOutbound_other": "将拒绝向外对等请求并通知发起请求的用户。他们可以重复原来的操作再次发起请求。",
         "denyInbound": "将拒绝该请求并屏蔽未来来自 {{name}} 的自动对等请求。您日后可在被拒对等列表中解除屏蔽。",
         "approveAndPeer": "批准并建立对等",
         "approve": "批准",

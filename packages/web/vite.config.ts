@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import path from 'path';
 import { devCspPreamble } from './src/build/devCsp';
+import { PRECACHE_MAX_FILE_BYTES } from './src/build/precache';
 
 export default defineConfig({
   plugins: [
@@ -32,11 +33,15 @@ export default defineConfig({
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api/, /^\/ws/, /^\/uploads/],
         // No skipWaiting: a new worker activates only on SwAutoUpdate's
-        // SKIP_WAITING message. clientsClaim only matters on the first install,
-        // where there is no older worker to replace.
+        // SKIP_WAITING message. The one exception is replacing a worker from
+        // before that flow, which public/sw-rollover.js handles.
+        // clientsClaim only matters on the first install, where there is no
+        // older worker to replace.
+        importScripts: ['sw-rollover.js'],
         clientsClaim: true,
         cleanupOutdatedCaches: true,
-        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
+        // CI fails when a precached file nears this limit; see src/build/precache.ts.
+        maximumFileSizeToCacheInBytes: PRECACHE_MAX_FILE_BYTES,
       },
     }),
   ],

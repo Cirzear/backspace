@@ -21,6 +21,8 @@ vi.mock('../../utils/mutuals', () => ({
   loadFederatedMutuals: vi.fn().mockResolvedValue({ mutualFriends: [], mutualSpaces: [] }),
 }));
 vi.mock('../../utils/userViewLookup', () => ({ useCanonicalUserView: (u: User) => u }));
+// Which status the dot shows for the signed-in user has its own tests (useShownStatus).
+vi.mock('../../hooks/useShownStatus', () => ({ useShownStatus: (_u: User, status: User['status']) => status }));
 
 import { UserProfilePopout } from './UserProfilePopout';
 import { useUIStore } from '../../stores/uiStore';
@@ -61,7 +63,7 @@ describe('UserProfilePopout', () => {
       isMobile: false,
       activeModal: null,
       modalData: {},
-      userProfilePopout: { user: null, anchor: null, placement: 'right' },
+      userProfilePopout: { user: null, anchor: null, placement: 'right', member: null },
     });
     // jsdom has no layout: give every element the card's real measured size so
     // the popout can place itself off its own dimensions.
@@ -125,5 +127,22 @@ describe('UserProfilePopout', () => {
     const top = parseFloat(card.style.top);
     expect(top).toBeGreaterThanOrEqual(8);
     expect(top + CARD_H).toBeLessThanOrEqual(700 - 8);
+  });
+
+  it('renders emoji shortcodes in the bio and custom status as emoji (issue #252)', () => {
+    const user: User = {
+      ...makeUser(),
+      customStatus: 'praying :pray:',
+      bio: '-Catholic :flag_va: :orthodox_cross: and `:smile:`',
+    };
+    const { getByText } = render(
+      <MemoryRouter>
+        <UserProfilePopout user={user} onClose={() => {}} anchor={anchorAt(300, 200)} />
+      </MemoryRouter>,
+    );
+
+    expect(getByText('praying 🙏')).toBeInTheDocument();
+    // Inline code stays literal: the bio shows what was typed between the backticks.
+    expect(getByText('-Catholic 🇻🇦 ☦️ and :smile:')).toBeInTheDocument();
   });
 });

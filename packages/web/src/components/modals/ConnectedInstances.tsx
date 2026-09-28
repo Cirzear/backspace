@@ -10,7 +10,7 @@ import type {
   PeeringNotification,
   PeeringTriggerReason,
 } from '@backspace/shared';
-import { useInstanceStore, connectToInstance, isSelfOrigin } from '../../stores/instanceStore';
+import { useInstanceStore, connectToInstance, isSelfOrigin, type RemoteLoginReason } from '../../stores/instanceStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useFederationStore } from '../../stores/federationStore';
@@ -84,6 +84,7 @@ function AddInstanceFlow({ onDone }: { onDone: () => void }) {
   const [probeResult, setProbeResult] = useState<(InstanceInfoResponse & { origin: string }) | null>(null);
   const [authPhase, setAuthPhase] = useState<RemotePasswordPhase>('password');
   const [remoteUsername, setRemoteUsername] = useState('');
+  const [fallbackReason, setFallbackReason] = useState<RemoteLoginReason>('credential-refused');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -115,6 +116,7 @@ function AddInstanceFlow({ onDone }: { onDone: () => void }) {
       if (outcome.kind === 'needs-remote-password') {
         setAuthPhase('fallback');
         setRemoteUsername(outcome.remoteUsername);
+        setFallbackReason(outcome.reason);
         return;
       }
       if (outcome.kind === 'needs-password') {
@@ -191,6 +193,7 @@ function AddInstanceFlow({ onDone }: { onDone: () => void }) {
             instance={probeResult}
             homeUsername={user?.username || ''}
             remoteUsername={remoteUsername}
+            fallbackReason={fallbackReason}
             isLoading={isLoading}
             error={error}
             onConnect={handleConnect}
@@ -851,6 +854,7 @@ function actionLabel(t: FederationT, reason: PeeringTriggerReason): string {
     case 'friend_add': return t('federation:connections.action.friendRequest');
     case 'space_join': return t('federation:connections.action.spaceJoin');
     case 'direct_message': return t('federation:connections.action.directMessage');
+    case 'instance_connect': return t('federation:connections.action.instanceConnect');
   }
 }
 
@@ -859,6 +863,8 @@ function actionVerbPhrase(t: FederationT, reason: PeeringTriggerReason, target: 
     case 'friend_add': return t('federation:connections.action.friendRequestTo', { target });
     case 'space_join': return t('federation:connections.action.joinSpace', { target });
     case 'direct_message': return t('federation:connections.action.directMessageTo', { target });
+    // The target is the remote's origin; the host is what the user typed.
+    case 'instance_connect': return t('federation:connections.action.connectTo', { target: safeHost(target) });
   }
 }
 
