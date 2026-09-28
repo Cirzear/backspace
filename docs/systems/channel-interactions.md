@@ -17,15 +17,16 @@ and VIEW_CHANNEL for the target. Names are resolved on the host, not accepted
 from the client. The existing per-user gateway rate limit also applies.
 
 Server-confirmed pokes also appear as centered, muted text in the message timeline,
-interleaved by local receipt time. These session-only entries survive channel switches
-but not reload/logout, are capped at 200 entries, and never affect read cursors or
-unread counts. DND suppresses active cues, not these passive timeline entries.
+stored as `messages.type = system` with a server timestamp and snowflake ID.
+They load through normal paginated history after reload, with server-resolved name snapshots.
+Migration 0021 adds the type column and defaults existing messages to user messages.
+System messages are excluded from unread counts and reconnect unread detection. DND suppresses active cues, not these passive timeline entries.
 
 Pokes do not produce floating toast notifications: the timeline entry is their
 confirmation. Failed operations still show errors.
 Only a server-confirmed broadcast produces the finger /
-avatar animation. Pokes do not create message rows, unread counts, sounds, OS
-notifications, or offline history. The current channel's viewers and the actor /
+avatar animation; history loading never replays it. Pokes do not create unread counts, sounds, or OS
+notifications. The current channel's viewers and the actor /
 target see the cue. Recipient Do Not Disturb and space/channel suppression apply;
 reduced-motion users receive text without animation. Rejections are visible.
 

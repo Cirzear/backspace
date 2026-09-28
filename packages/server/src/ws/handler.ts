@@ -1289,7 +1289,7 @@ function buildReadyPayload(userId: string): {
         ids => db.select({
           channelId: schema.messages.channelId,
           lastId: sql<string>`max(${schema.messages.id})`,
-        }).from(schema.messages).where(inArray(schema.messages.channelId, ids)).groupBy(schema.messages.channelId).all(),
+        }).from(schema.messages).where(and(inArray(schema.messages.channelId, ids), eq(schema.messages.type, 'user'))).groupBy(schema.messages.channelId).all(),
       );
       for (const row of lastMsgRows) {
         if (row.lastId) lastMsgMap.set(row.channelId, row.lastId);

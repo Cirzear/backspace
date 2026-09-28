@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { User } from '@backspace/shared';
+import type { MessageWithUser, User } from '@backspace/shared';
 vi.mock('../hooks/useWebSocket', () => ({ wsSend: vi.fn(), wsSendAll: vi.fn() }));
 vi.mock('../audio/AudioManager', () => ({ AudioManager: { getInstance: () => ({ setOutputDevice: vi.fn(), setVolume: vi.fn() }) } }));
 const send = vi.fn();
@@ -32,5 +32,17 @@ describe('chatStore text submission', () => {
     send.mockRejectedValue(new Error('Offline'));
     await expect(useChatStore.getState().sendMessage('chat', 'hello')).rejects.toThrow('Offline');
     expect(useChatStore.getState().messages.get('chat') ?? []).toEqual([]);
+  });
+});
+
+
+describe('passive channel system history', () => {
+  it('stores and deduplicates pokes without scheduling sound or desktop notifications', () => {
+    useChatStore.setState({ realtimeMessageEvents: [] });
+    const message = { id: '123', channelId: 'chat', userId: 'other', type: 'system', content: JSON.stringify({ event: 'channel_poke' }), attachments: [] } as unknown as MessageWithUser;
+    useChatStore.getState().addRealtimeMessage('chat', message);
+    useChatStore.getState().addRealtimeMessage('chat', message);
+    expect(useChatStore.getState().messages.get('chat')).toHaveLength(1);
+    expect(useChatStore.getState().realtimeMessageEvents).toEqual([]);
   });
 });

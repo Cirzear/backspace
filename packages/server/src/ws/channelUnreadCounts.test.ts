@@ -19,7 +19,7 @@ beforeEach(() => {
     INSERT INTO dm_messages VALUES ('9', 'dm', 'other'), ('100', 'dm', 'other'), ('101', 'dm', 'me');
     INSERT INTO dm_messages VALUES ('102', 'closed', 'other'), ('103', 'deleted', 'other');
     CREATE TABLE channels (id TEXT PRIMARY KEY, space_id TEXT, name TEXT, type TEXT, topic TEXT, position INTEGER, category_id TEXT, created_at INTEGER);
-    CREATE TABLE messages (id TEXT PRIMARY KEY, channel_id TEXT, user_id TEXT, reply_to_id TEXT, content TEXT, edited_at INTEGER, created_at INTEGER);
+    CREATE TABLE messages (type TEXT NOT NULL DEFAULT 'user', id TEXT PRIMARY KEY, channel_id TEXT, user_id TEXT, reply_to_id TEXT, content TEXT, edited_at INTEGER, created_at INTEGER);
     CREATE TABLE read_states (user_id TEXT, channel_id TEXT, last_read_message_id TEXT, updated_at INTEGER);
     INSERT INTO channels (id, space_id) VALUES ('chat', 'space'), ('hidden', 'space');
     INSERT INTO messages (id, channel_id, user_id) VALUES ('9', 'chat', 'other'), ('100', 'chat', 'other'), ('101', 'chat', 'other'), ('102', 'chat', 'me'), ('103', 'hidden', 'other');
@@ -28,6 +28,12 @@ beforeEach(() => {
 });
 afterEach(() => sqlite.close());
 describe('exact channel unread counts', () => {
+  it('excludes persisted system history even after clearing the read cursor', () => {
+    sqlite.exec("INSERT INTO messages (id, channel_id, user_id, type) VALUES ('200', 'chat', 'other', 'system')");
+    expect(channelUnreadCounts('me', ['chat'])).toEqual({ chat: 2 });
+    sqlite.exec('DELETE FROM read_states');
+    expect(channelUnreadCounts('me', ['chat'])).toEqual({ chat: 3 });
+  });
   it('counts only accessible DMs and excludes own messages', () => {
     expect(dmUnreadCounts('me', ['dm', 'closed', 'deleted'])).toEqual({ dm: 2 });
     expect(dmUnreadCounts('stranger', ['dm'])).toEqual({});

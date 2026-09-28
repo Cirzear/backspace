@@ -1,4 +1,3 @@
-import { PokeNotices, usePokeTimeline } from './PokeNotice';
 import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { formatters } from '../../i18n/formatters';
@@ -345,7 +344,6 @@ export function MessageList({ channelId, jumpToMessageId, onJumpHandled }: Messa
     });
     return [...messages, ...synthesized].sort((a, b) => a.createdAt - b.createdAt);
   }, [messages, pendingBubbles, messagesById, channelId, currentUser]);
-  const pokeTimeline = usePokeTimeline({ channelId, messages: interleavedMessages, detached: isDetached });
 
   useEffect(() => {
     if (canReadHistory) {
@@ -908,7 +906,7 @@ export function MessageList({ channelId, jumpToMessageId, onJumpHandled }: Messa
           {interleavedMessages.map((msg, i) => {
             const prevMsg = interleavedMessages[i - 1];
             const showDate = shouldShowDateDivider(prevMsg, msg);
-            const isFirstInGroup = !prevMsg || showDate || pokeTimeline.before.has(msg.id) || !isSameGroup(prevMsg, msg);
+            const isFirstInGroup = !prevMsg || showDate || !isSameGroup(prevMsg, msg);
 
             // Walk back to find the nearest non-pending neighbor for "Mark Unread".
             // A `pending-${clientId}` ID would be rejected by the server, so we skip
@@ -924,7 +922,6 @@ export function MessageList({ channelId, jumpToMessageId, onJumpHandled }: Messa
 
             return (
               <React.Fragment key={msg.id}>
-                <PokeNotices notices={pokeTimeline.before.get(msg.id)} />
                 {showDate && (
                   <div className="flex items-center px-5 my-2 select-none pointer-events-none">
                     <div className="flex-1 h-[1px] bg-border-hard" />
@@ -947,7 +944,6 @@ export function MessageList({ channelId, jumpToMessageId, onJumpHandled }: Messa
               </React.Fragment>
             );
           })}
-          <PokeNotices notices={pokeTimeline.tail} />
         </div>
 
         <div ref={bottomRef} />

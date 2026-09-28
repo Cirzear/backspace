@@ -1,4 +1,3 @@
-import { useChannelActivityStore } from '../../stores/channelActivityStore';
 import type { ServerEvent } from '@backspace/shared';
 import { useAuthStore, selectMyChosenStatus } from '../../stores/authStore';
 import { useChatStore } from '../../stores/chatStore';
@@ -8,8 +7,6 @@ import { isRegisteredSelfId } from '../../utils/identity';
 
 type Poke = Extract<ServerEvent, { type: 'channel_poke' }>;
 export function receiveChannelPoke(origin: string, event: Poke): void {
-  // A timeline entry is passive history, not an interrupting notification: retain it even in DND.
-  useChannelActivityStore.getState().addPoke(origin, event);
   const channelId = useChatStore.getState().currentChannelId;
   const inChannel = channelId === event.channelId && getChannelOrigin(channelId) === origin;
   if (!inChannel) return;

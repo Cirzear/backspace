@@ -1,4 +1,3 @@
-import { useChannelActivityStore } from '../../stores/channelActivityStore';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({ toast: vi.fn(), current: 'chat', status: 'online' }));
 vi.mock('../../stores/uiStore', () => ({ useUIStore: { getState: () => ({ addToast: state.toast }) } }));
@@ -9,7 +8,7 @@ vi.mock('../../utils/identity', () => ({ isRegisteredSelfId: (id: string) => id 
 import { useNotificationStore } from '../../stores/notificationStore';
 import { receiveChannelPoke } from './channelPoke';
 const event = { type: 'channel_poke', channelId: 'chat', userId: 'actor', targetUserId: 'target', username: 'Actor', targetUsername: 'Target' } as const;
-beforeEach(() => { vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true }))); useChannelActivityStore.getState().reset(); state.toast.mockClear(); state.current = 'chat'; state.status = 'online'; useNotificationStore.getState().reset(); });
+beforeEach(() => { vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true }))); state.toast.mockClear(); state.current = 'chat'; state.status = 'online'; useNotificationStore.getState().reset(); });
 afterEach(() => { document.body.replaceChildren(); vi.unstubAllGlobals(); });
 describe('server-confirmed poke cue', () => {
   it('preserves the avatar animation without a toast', () => {
@@ -28,10 +27,9 @@ describe('server-confirmed poke cue', () => {
       Element.prototype.animate = originalAnimate;
     }
   });
-  it('records the timeline cue without a floating notification', () => {
+  it('does not create a floating notification with reduced motion', () => {
     receiveChannelPoke('', event);
     expect(state.toast).not.toHaveBeenCalled();
-    expect(useChannelActivityStore.getState().pokes).toHaveLength(1);
   });
   it('does not interrupt unrelated channels or another origin', () => {
     receiveChannelPoke('https://other.example', event);
@@ -43,6 +41,5 @@ describe('server-confirmed poke cue', () => {
     state.status = 'dnd';
     receiveChannelPoke('', event);
     expect(state.toast).not.toHaveBeenCalled();
-    expect(useChannelActivityStore.getState().pokes).toHaveLength(1);
   });
 });
