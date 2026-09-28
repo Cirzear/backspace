@@ -1,3 +1,4 @@
+import { mentionOptions, type MentionOption } from './mentionOptions';
 import { layoutRect } from '../../platform/interfaceScale';
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -9,7 +10,7 @@ import { TypingIndicator } from './TypingIndicator';
 import { InputPopover, type InputPopoverTab } from './InputPopover';
 import { AttachmentProgress } from './AttachmentProgress';
 import { hasPermissionBit, PermissionBits } from '../../utils/permissions';
-import { MAX_MESSAGE_LENGTH, type MemberWithUser } from '@backspace/shared';
+import { MAX_MESSAGE_LENGTH } from '@backspace/shared';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useComposerStore } from '../../stores/composerStore';
@@ -195,18 +196,9 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     }
   }, [stagedTransfers, addToast, t]);
 
-  // Filter members for the mention popover (used for keyboard nav clamping)
-  const filteredMembers = useMemo(() => {
-    if (!mentionState) return [];
-    const q = mentionState.query.toLowerCase();
-    return members
-      .filter((m) => {
-        const name = (m.user.displayName ?? m.user.username).toLowerCase();
-        const username = m.user.username.toLowerCase();
-        return name.includes(q) || username.includes(q);
-      })
-      .slice(0, 8);
-  }, [members, mentionState]);
+  const roles = useSpaceStore(s => s.roles);
+  const canMentionMass = !isDm && hasPermissionBit(channelPerms, PermissionBits.MENTION_EVERYONE);
+  const filteredMembers = useMemo(() => mentionState ? mentionOptions({ query: mentionState.query, members, roles, canMentionMass }) : [], [members, roles, mentionState, canMentionMass]);
 
   const handleTyping = useCallback(() => {
     if (typingTimeoutRef.current) return;
@@ -387,13 +379,13 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   };
 
   const selectMention = useCallback(
-    (member: MemberWithUser) => {
+    (option: MentionOption) => {
       if (!mentionState) return;
       const textarea = textareaRef.current;
       const cursorPos = textarea?.selectionStart ?? draftText.length;
       const before = draftText.slice(0, mentionState.startIndex);
       const after = draftText.slice(cursorPos);
-      const insertion = `<@${member.userId}> `;
+      const insertion = option.token + ' ';
       const newContent = before + insertion + after;
       setDraft(channelId, newContent);
       setMentionState(null);
@@ -837,7 +829,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
         {/* Mention autocomplete popover */}
         {mentionState && filteredMembers.length > 0 && (
           <MentionPopover
-            query={mentionState.query}
+            options={filteredMembers}
             selectedIndex={mentionState.selectedIndex}
             onSelect={selectMention}
             anchorRef={inputContainerRef}

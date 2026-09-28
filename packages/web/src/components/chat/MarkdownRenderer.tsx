@@ -3,6 +3,7 @@ import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Highlight, themes } from 'prism-react-renderer';
 import type { Components } from 'react-markdown';
+import { MassMentionBadge } from './MassMentionBadge';
 import { MentionBadge } from './MentionBadge';
 import { remarkEmojiShortcodes } from '../../utils/remarkEmojiShortcodes';
 
@@ -44,10 +45,11 @@ function walkTree(node: MdastNode) {
 
 function preprocessMentions(raw: string): string {
   return raw.replace(
-    /(```[\s\S]*?```|`[^`]+`)|<@([a-zA-Z0-9_-]+)>/g,
-    (match, codeBlock: string | undefined, userId: string | undefined) => {
+    /(```[\s\S]*?```|`[^`]+`)|<@(&?[a-zA-Z0-9_-]+)>|(?<![\w@])@(everyone|here)(?![\w-])/g,
+    (match, codeBlock: string | undefined, id: string | undefined, mass: string | undefined) => {
       if (codeBlock) return codeBlock;
-      return `[@${userId}](mention://${userId})`;
+      if (mass || id?.startsWith('&')) return '[@' + (mass ?? id) + '](mass-mention://' + (mass ?? id) + ')';
+      return '[@' + id + '](mention://' + id + ')';
     },
   );
 }
@@ -57,7 +59,7 @@ function preprocessMentions(raw: string): string {
 // We whitelist mention:// so the `a` component override receives the full href.
 
 function urlTransform(url: string): string {
-  if (url.startsWith('mention://')) return url;
+  if (url.startsWith('mention://') || url.startsWith('mass-mention://')) return url;
   return defaultUrlTransform(url);
 }
 
@@ -121,6 +123,9 @@ function buildComponents(): Components {
     // remark-parse autolinks <@userId> into mailto:@userId before plugins run,
     // so we intercept that pattern here instead of using a remark plugin.
     a: ({ href, children }) => {
+      if (href?.startsWith('mass-mention://')) {
+        return <MassMentionBadge token={href.slice('mass-mention://'.length)} />;
+      }
       if (href?.startsWith('mention://')) {
         return <MentionBadge userId={href.slice('mention://'.length)} />;
       }

@@ -6,7 +6,7 @@ import { MarkdownRenderer } from './MarkdownRenderer';
 // case touches them; stub them so the rest of the file needs no app state.
 vi.mock('../../stores/spaceStore', () => ({
   useSpaceStore: (selector: (s: unknown) => unknown) =>
-    selector({ members: [], spaces: [], currentSpaceId: null, userViews: new Map() }),
+    selector({ members: [], spaces: [], roles: [{ id: 'team', name: 'Team', color: '#ff0000' }], currentSpaceId: null, userViews: new Map() }),
   getApiForOrigin: vi.fn(),
   resolveUserOrigin: vi.fn(),
 }));
@@ -40,6 +40,12 @@ const MIXED = [
 ].join('\n');
 
 describe('MarkdownRenderer', () => {
+  it('renders mass mentions as labels but leaves code untouched', () => {
+    const { container } = render(<MarkdownRenderer content={'@everyone @here <@&team> ' + '\x60@everyone <@&team>\x60'} />);
+    expect(container.textContent).toContain('@everyone @here @Team');
+    expect(container.querySelector('code')?.textContent).toBe('@everyone <@&team>');
+    expect(container.querySelectorAll('a')).toHaveLength(0);
+  });
   it('renders every element of a mixed markdown message', () => {
     const { container } = render(<MarkdownRenderer content={MIXED} />);
 

@@ -1,3 +1,5 @@
+import { useNotificationMuted } from '../notifications/useNotificationMuted';
+import { notificationMenuItems } from '../notifications/notificationMenuItems';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -1292,6 +1294,12 @@ function ChannelItem({
   channelPermissions: Map<string, string>;
   handleVoiceJoin: (channelId: string) => void;
 }) {
+  const notificationMuted = useNotificationMuted({ origin: getChannelOrigin(channel.id), targetType: 'channel', targetId: channel.id });
+  const handleNotificationMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    useContextMenuStore.getState().open({ x: e.clientX, y: e.clientY }, notificationMenuItems({ origin: getChannelOrigin(channel.id), targetType: 'channel', targetId: channel.id }));
+  };
   const chPerms = channelPermissions.get(channel.id);
   // Editing and deleting a channel check MANAGE_CHANNELS with its overrides,
   // so the settings gear reads this channel's permissions, not the space's.
@@ -1300,7 +1308,8 @@ function ChannelItem({
     const canConnect = hasPermissionBit(chPerms, PermissionBits.CONNECT);
     return (
       <div
-        className={`relative ${isDragging ? 'opacity-50' : ''}`}
+        className={`relative ${isDragging || notificationMuted ? 'opacity-50' : ''}`}
+        onContextMenu={handleNotificationMenu}
         {...channelDragHandlers}
       >
         {dropIndicator === 'before' && <div className="absolute -top-[1px] left-2 right-2 h-[2px] bg-accent-mint rounded-full z-10" />}
@@ -1321,8 +1330,9 @@ function ChannelItem({
 
   return (
     <div
-      className={`relative ${isDragging ? 'opacity-50' : ''}`}
-      {...channelDragHandlers}
+      className={`relative ${isDragging || notificationMuted ? 'opacity-50' : ''}`}
+      onContextMenu={handleNotificationMenu}
+        {...channelDragHandlers}
     >
       {dropIndicator === 'before' && <div className="absolute -top-[1px] left-2 right-2 h-[2px] bg-accent-mint rounded-full z-10" />}
       <button

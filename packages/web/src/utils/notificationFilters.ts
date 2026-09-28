@@ -1,16 +1,15 @@
-import type { UserStatus } from '@backspace/shared';
+import type { UserStatus, NotificationSetting } from '@backspace/shared';
+import { parseMentions } from '@backspace/shared/src/mentions';
 
 /**
  * The rule that decides whether a freshly-arrived chat message alerts the user.
  * Pure; the caller supplies every id the user has (see `messageAlertsUser` in
  * utils/alerts.ts, which both outputs of the `message` alert kind go through).
  *
- * Rule (Discord-default):
- *   - Never for a message authored by self (any id in myIds).
- *   - For a DM, or for content with a `<@${id}>` mention of any id in myIds.
- *   - When allChannels=true, for every other message too. Only the in-app
- *     cue passes it: the "Play sound for every message" preference is a sound
- *     setting and does not widen the OS notification.
+ * Space/channel mute gates both outputs without touching unread state.
+ * Channel level overrides space level. Without an explicit level, DMs and
+ * mentions alert; allChannels widens only the legacy sound preference.
+ * Space mention filters apply in mentions mode, never hide an explicit user ping.
  */
 export interface MessageAlertInput {
   authorUserId: string;
@@ -18,17 +17,26 @@ export interface MessageAlertInput {
   isDmChannel: boolean;
   content: string | null;
   allChannels: boolean;
+  spaceSetting?: NotificationSetting;
+  channelSetting?: NotificationSetting;
+  roleIds?: ReadonlySet<string>;
+  now?: number;
 }
 
 export function isMessageAlert(input: MessageAlertInput): boolean {
   if (input.myIds.has(input.authorUserId)) return false;
-  if (input.allChannels) return true;
   if (input.isDmChannel) return true;
-  if (!input.content) return false;
-  for (const id of input.myIds) {
-    if (input.content.includes(`<@${id}>`)) return true;
-  }
-  return false;
+  const { spaceSetting: space, channelSetting: channel } = input;
+  const now = input.now ?? Date.now();
+  // Space mute is an absolute gate, even for a channel with an explicit level.
+  if ((space?.mutedUntil ?? 0) > now || (channel?.mutedUntil ?? 0) > now) return false;
+  const level = channel?.level ?? space?.level ?? (input.allChannels ? 'all' : 'mentions');
+  if (level === 'nothing') return false;
+  if (level === 'all') return true;
+  const mentions = parseMentions(input.content);
+  if ([...mentions.userIds].some(id => input.myIds.has(id))) return true;
+  if (mentions.everyone && !space?.suppressEveryone) return true;
+  return !space?.suppressRoles && [...mentions.roleIds].some(id => input.roleIds?.has(id));
 }
 
 /**

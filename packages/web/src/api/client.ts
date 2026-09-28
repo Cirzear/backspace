@@ -157,6 +157,9 @@ export class RateLimitError extends HttpError {
 }
 
 export class BackspaceApiClient {
+  readonly notificationSettings: {
+    update: (target: { targetType: import('@backspace/shared').NotificationTargetType; targetId: string }, data: import('@backspace/shared').UpdateNotificationSettingRequest) => Promise<import('@backspace/shared').NotificationSetting>;
+  };
   readonly auth: {
     register: (data: RegisterRequest) => Promise<AuthResponse>;
     login: (data: LoginRequest) => Promise<AuthResponse>;
@@ -454,6 +457,10 @@ export class BackspaceApiClient {
       return response.json() as Promise<T>;
     }
 
+    this.notificationSettings = {
+      update: (target, data) => request('PUT',
+        '/users/@me/notification-settings/' + target.targetType + '/' + encodeURIComponent(target.targetId), data),
+    };
     this.auth = {
       register: (data: RegisterRequest) =>
         request<AuthResponse>('POST', '/auth/register', data, false),

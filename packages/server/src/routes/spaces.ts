@@ -566,7 +566,10 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
       // Clean up read_states for all channels in this space (no FK cascade — channelId is plain text)
       if (channelIds.length > 0) {
         tx.delete(schema.readStates).where(inArray(schema.readStates.channelId, channelIds)).run();
+        tx.delete(schema.notificationSettings).where(inArray(schema.notificationSettings.targetId, channelIds)).run();
       }
+      // notification_settings has no FK on target_id (it serves two target kinds)
+      tx.delete(schema.notificationSettings).where(eq(schema.notificationSettings.targetId, id)).run();
       tx.delete(schema.channels).where(eq(schema.channels.spaceId, id)).run();
       tx.delete(schema.spaceMembers).where(eq(schema.spaceMembers.spaceId, id)).run();
       tx.delete(schema.spaceFolderMembers).where(eq(schema.spaceFolderMembers.spaceId, id)).run();
@@ -1233,6 +1236,7 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
       roleId,
     }).run();
 
+    connectionManager.pushReadyPayload(uid);
     return reply.code(200).send({ success: true });
   });
 
@@ -1253,6 +1257,7 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
       eq(schema.memberRoles.roleId, roleId)
     )).run();
 
+    connectionManager.pushReadyPayload(uid);
     return reply.code(200).send({ success: true });
   });
 

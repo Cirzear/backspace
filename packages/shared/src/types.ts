@@ -266,6 +266,39 @@ export interface ReadState {
   lastReadMessageId: string;
 }
 
+// ─── Notification Settings ──────────────────────────────────────────────────
+// Per-user, per-space and per-channel alert preferences. They only decide
+// whether a message raises the message sound / OS notification; unread state
+// is unaffected. Stored on the instance that hosts the space (like read
+// states), so a federated space's settings live on that space's instance.
+
+/** Which messages alert: every message, only ones that mention the user, or none. */
+export type NotificationLevel = 'all' | 'mentions' | 'nothing';
+
+export type NotificationTargetType = 'space' | 'channel';
+
+export interface NotificationSetting {
+  /** 'space' rows hold the space defaults; 'channel' rows override them for one channel. */
+  targetType: NotificationTargetType;
+  targetId: string;
+  /** null means "inherit": a channel inherits its space, a space inherits the default ('mentions'). */
+  level: NotificationLevel | null;
+  /** Epoch ms when a timed mute ends, MUTED_FOREVER for an indefinite mute, null when not muted. */
+  mutedUntil: number | null;
+  /** Space rows only: ignore `@everyone`/`@here`. */
+  suppressEveryone: boolean;
+  /** Space rows only: ignore role mentions. */
+  suppressRoles: boolean;
+}
+
+export type UpdateNotificationSettingRequest = Omit<NotificationSetting, 'targetType' | 'targetId'>;
+
+/** `mutedUntil` value of an indefinite mute. Chosen so "mutedUntil > now" is the single "is muted" test. */
+export const MUTED_FOREVER = Number.MAX_SAFE_INTEGER;
+
+/** Level a space uses when the user never set one: Discord's default for large spaces. */
+export const DEFAULT_NOTIFICATION_LEVEL: NotificationLevel = 'mentions';
+
 // ─── Message Types ──────────────────────────────────────────────────────────
 
 export interface Message {
@@ -491,7 +524,7 @@ export type ClientEvent =
 
 // Server → Client Events
 export type ServerEvent =
-  | { type: 'ready'; user: User; spaces: SpaceWithChannelsAndMembers[]; dmChannels: DmChannel[]; folders?: SpaceFolder[]; spaceLayout?: SpaceLayoutItem[] | null; layoutUpdatedAt?: number; voiceStates?: Record<string, string[]>; voiceChannelElapsedSeconds?: Record<string, number>; voiceUserStates?: Record<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }>; readStates?: ReadState[]; activeCalls?: ActiveCallInfo[]; spaceVoiceStates?: Record<string, { spaceMuted: boolean; spaceDeafened: boolean }>; userActivities?: Record<string, Activity[]>; rejectedPeerOrigins?: string[]; awaitingApprovalPeerOrigins?: string[]; activePeerOrigins?: string[]; pendingApprovalCount?: number }
+  | { type: 'ready'; user: User; spaces: SpaceWithChannelsAndMembers[]; dmChannels: DmChannel[]; folders?: SpaceFolder[]; spaceLayout?: SpaceLayoutItem[] | null; layoutUpdatedAt?: number; voiceStates?: Record<string, string[]>; voiceChannelElapsedSeconds?: Record<string, number>; voiceUserStates?: Record<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }>; readStates?: ReadState[]; notificationSettings?: NotificationSetting[]; activeCalls?: ActiveCallInfo[]; spaceVoiceStates?: Record<string, { spaceMuted: boolean; spaceDeafened: boolean }>; userActivities?: Record<string, Activity[]>; rejectedPeerOrigins?: string[]; awaitingApprovalPeerOrigins?: string[]; activePeerOrigins?: string[]; pendingApprovalCount?: number }
   | { type: 'message_created'; message: MessageWithUser }
   | { type: 'message_updated'; message: MessageWithUser }
   | { type: 'message_deleted'; messageId: string; channelId: string }
@@ -546,6 +579,7 @@ export type ServerEvent =
   | { type: 'category_deleted'; categoryId: string; spaceId: string }
   | { type: 'channel_layout_updated'; spaceId: string; channels: Channel[]; categories: ChannelCategory[] }
   | { type: 'space_layout_updated'; layout: SpaceLayoutItem[]; folders: SpaceFolder[]; updatedAt?: number }
+  | { type: 'notification_setting_updated'; setting: NotificationSetting }
   | { type: 'mark_unread'; channelId: string; messageId: string }
   | { type: 'embeds_resolved'; messageId: string; channelId: string; embeds: Embed[] }
   | { type: 'dm_embeds_resolved'; messageId: string; dmChannelId: string; embeds: Embed[] }
