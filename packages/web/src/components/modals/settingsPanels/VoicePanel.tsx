@@ -57,7 +57,7 @@ export function VoicePanel() {
             />
           </div>
           <div className="flex items-center justify-between py-2">
-            <div>
+            <div className="flex-1 mr-4">
               <div className="text-sm text-txt-primary">{t('settings:voice.volume.messageSound.label')}</div>
               <div className="text-xs text-txt-tertiary">
                 {t('settings:voice.volume.messageSound.description')}
@@ -75,7 +75,7 @@ export function VoicePanel() {
           </div>
           <div className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3.5">
             <div className="flex items-center justify-between py-2">
-              <div>
+              <div className="flex-1 mr-4">
                 <div className="text-sm text-txt-primary">{t('settings:voice.pip.showOnSwitch.label')}</div>
                 <div className="text-xs text-txt-tertiary">{t('settings:voice.pip.showOnSwitch.description')}</div>
               </div>
@@ -97,7 +97,7 @@ export function VoicePanel() {
         </div>
         <div className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3.5">
           <div className="flex items-center justify-between py-2">
-            <div>
+            <div className="flex-1 mr-4">
               <div className="text-sm text-txt-primary">{t('settings:voice.processing.noiseSuppression.label')}</div>
               <div className="text-xs text-txt-tertiary">{t('settings:voice.processing.noiseSuppression.description')}</div>
             </div>
@@ -105,7 +105,7 @@ export function VoicePanel() {
           </div>
 
           <div className="flex items-center justify-between py-2">
-            <div>
+            <div className="flex-1 mr-4">
               <div className="text-sm text-txt-primary">{t('settings:voice.processing.echoCancellation.label')}</div>
               <div className="text-xs text-txt-tertiary">{t('settings:voice.processing.echoCancellation.description')}</div>
             </div>
@@ -113,7 +113,7 @@ export function VoicePanel() {
           </div>
 
           <div className="flex items-center justify-between py-2">
-            <div>
+            <div className="flex-1 mr-4">
               <div className="text-sm text-txt-primary">{t('settings:voice.processing.autoGain.label')}</div>
               <div className="text-xs text-txt-tertiary">{t('settings:voice.processing.autoGain.description')}</div>
             </div>
