@@ -412,7 +412,7 @@
     "copyDeleteUnheld": "此身份组拥有您没有的权限，因此您无法复制或删除它。"
   },
   "memberRoles": {
-    "title": "身份组 — {{name}}",
+    "title": "编辑 {{name}} 的身份组",
     "viewProfile": "查看资料",
     "affectsAll": "权限修改会影响拥有该身份组的所有成员。",
     "selectRole": "选择一个身份组以编辑其权限。",

@@ -16,23 +16,9 @@ import {
   viewerHoldsEveryBit,
 } from '../../../utils/roleHierarchy';
 import { RoleOrderList } from './RoleOrderList';
+import { LockNote, LOCK_ICON } from '../../ui/LockNote';
 
 const ALL_PERMISSION_DEFS: PermDef[] = PERMISSION_GROUPS.flatMap((group) => group.perms);
-
-// The padlock the privacy notes use, shown on a toggle the viewer cannot switch.
-const LOCK_ICON = 'M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z';
-
-/** A note about a lock in the role editor, with the padlock in front. */
-function LockNote({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-white/[0.03] text-[13px] text-txt-secondary">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="flex-shrink-0 mt-[3px] text-txt-tertiary">
-        <path d={LOCK_ICON} />
-      </svg>
-      <p>{children}</p>
-    </div>
-  );
-}
 
 const PRESET_COLORS = [
   '#b9bbbe', '#a5f3c4', '#ffc9a9', '#c4b5fd', '#93c5fd',
