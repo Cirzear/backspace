@@ -501,7 +501,8 @@
         "description": "Вы уверены, что хотите покинуть это пространство? Чтобы снова присоединиться, вам понадобится новое приглашение."
       },
       "left": "Вы покинули пространство",
-      "leaveFailed": "Не удалось покинуть пространство"
+      "leaveFailed": "Не удалось покинуть пространство",
+      "unreadMessages": "Непрочитанных сообщений: {{quantity}}"
     },
     "dmList": {
       "explore": "Обзор",
@@ -642,6 +643,16 @@
     "permission": "Упоминать @everyone, @here и роли",
     "unmute": "Включить уведомления",
     "muted": "Уведомления отключены",
-    "active": "Уведомления включены"
+    "active": "Уведомления включены",
+    "expiringNow": "истекает сейчас",
+    "remainingMinutes_one": "осталась {{count}} мин.",
+    "remainingMinutes_few": "осталось {{count}} мин.",
+    "remainingMinutes_many": "осталось {{count}} мин.",
+    "remainingMinutes_other": "осталось {{count}} мин.",
+    "remainingHours_one": "остался {{count}} час",
+    "remainingHours_few": "осталось {{count}} часа",
+    "remainingHours_many": "осталось {{count}} часов",
+    "remainingHours_other": "осталось {{count}} часов",
+    "remainingHoursMinutes": "осталось {{hours}} ч. {{minutes}} мин."
   }
 }

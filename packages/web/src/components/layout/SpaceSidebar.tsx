@@ -1,3 +1,4 @@
+import { SpaceUnreadBadge } from './SpaceUnreadBadge';
 import { useNotificationMuted } from '../notifications/useNotificationMuted';
 import { notificationMenuItems } from '../notifications/notificationMenuItems';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
@@ -147,6 +148,7 @@ function SidebarItem({ id, name, icon, avatarColor, active, onClick, onContextMe
   const innerContent = (
     <div className={`relative ${dropIndicator === 'merge' ? 'scale-110 ring-2 ring-accent-mint/60 rounded-full' : ''} transition-transform duration-150`}>
       {buttonContent}
+      {type === 'space' && <SpaceUnreadBadge spaceId={id} />}
       {federationBadge && (
         <div className="absolute -bottom-0.5 -right-0.5 w-[14px] h-[14px] rounded-full bg-surface-base flex items-center justify-center">
           {federationDisconnected ? (
@@ -460,6 +462,8 @@ function FolderFlyout({
               }}
             >
               {/* Space icon */}
+              <div className="relative">
+              <SpaceUnreadBadge spaceId={space.id} />
               <div className="w-8 h-8 rounded-[10px] flex-shrink-0 overflow-hidden flex items-center justify-center" style={grad ? { background: grad.gradient } : undefined}>
                 {icon ? (
                   <img
@@ -470,6 +474,8 @@ function FolderFlyout({
                 ) : (
                   <span className="text-[13px] font-bold text-white">{space.name.charAt(0).toUpperCase()}</span>
                 )}
+              </div>
+
               </div>
 
               {/* Name */}

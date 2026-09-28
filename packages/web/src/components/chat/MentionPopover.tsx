@@ -75,14 +75,13 @@ export function MentionPopover({ options, selectedIndex, onSelect, anchorRef }: 
   const ownerId = useSpaceStore(s => s.spaces.find(space => space.id === s.currentSpaceId)?.ownerId);
   const selectedRef = useRef<HTMLDivElement>(null);
   const floatingRef = useRef<HTMLDivElement>(null);
-  const { style } = useFloatingPosition(anchorRef, floatingRef, { placement: 'top', offset: 4, enabled: !mobile && options.length > 0 });
+  const { style } = useFloatingPosition(anchorRef, floatingRef, { placement: 'top', align: 'start', offset: 4, enabled: options.length > 0 });
   useEffect(() => { selectedRef.current?.scrollIntoView({ block: 'nearest' }); }, [selectedIndex]);
   if (!options.length) return null;
   return createPortal(<>
-    {mobile && <div className="fixed inset-0 z-[300] bg-black/30 pointer-events-none" />}
-    <div ref={floatingRef} style={mobile ? { bottom: 'var(--keyboard-inset)', paddingBottom: 'var(--safe-bottom)', maxHeight: 'min(calc(50*var(--app-dvh)), calc(50*var(--app-vh)))' } : style}
-      className={mobile ? 'fixed left-0 right-0 z-[301] rounded-t-2xl glass-modal overflow-y-auto' : 'w-[280px] glass rounded-lg max-h-[320px] overflow-y-auto scrollbar-thin'}>
-      <div className="px-2 py-1.5 text-[11px] font-bold text-txt-tertiary">{t('labels.members')}</div>
+    <div ref={floatingRef} style={style}
+      className="w-[280px] max-w-[calc(100*var(--app-vw)-16px)] glass rounded-lg max-h-[320px] overflow-y-auto scrollbar-thin">
+      <div className="px-2 py-1.5 text-[11px] font-bold text-txt-tertiary">{t('labels.suggestions')}</div>
       {options.map((option, index) => {
         if (option.kind === 'user') {
           const member = option.member;

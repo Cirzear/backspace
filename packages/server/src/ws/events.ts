@@ -1,3 +1,4 @@
+import { handleChannelPoke } from './channelPoke.js';
 import type { WebSocket } from 'ws';
 import { hasMassMention } from '@backspace/shared/src/mentions.js';
 import { eq, inArray, and } from 'drizzle-orm';
@@ -145,6 +146,9 @@ export function handleClientEvent(
       break;
     case 'message_delete':
       handleMessageDelete(event, userId);
+      break;
+    case 'channel_poke':
+      handleChannelPoke({ event, userId, ws });
       break;
     case 'typing_start':
       handleTypingStart(event, userId, username);

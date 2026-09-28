@@ -1,3 +1,6 @@
+import { useComposerMention } from './useComposerMention';
+import { MentionTextarea } from './MentionTextarea';
+import { composerMentions } from './composerMentions';
 import { mentionOptions, type MentionOption } from './mentionOptions';
 import { layoutRect } from '../../platform/interfaceScale';
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
@@ -75,6 +78,8 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useComposerMention(channelId, textareaRef);
+  const mentionAnchorRef = useRef<HTMLSpanElement>(null);
   const inputContainerRef = useRef<HTMLDivElement>(null);
   // Note: this ref is intentionally typed `HTMLDivElement | null` (mutable
   // ref shape) rather than the more restrictive `RefObject<HTMLDivElement>`
@@ -197,6 +202,8 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   }, [stagedTransfers, addToast, t]);
 
   const roles = useSpaceStore(s => s.roles);
+  const mentionUsers = useSpaceStore(s => s.dmChannels.find(dm => dm.id === channelId)?.members);
+  const mentionModel = useMemo(() => composerMentions({ value: draftText, members, roles, users: mentionUsers }), [draftText, members, roles, mentionUsers]);
   const canMentionMass = !isDm && hasPermissionBit(channelPerms, PermissionBits.MENTION_EVERYONE);
   const filteredMembers = useMemo(() => mentionState ? mentionOptions({ query: mentionState.query, members, roles, canMentionMass }) : [], [members, roles, mentionState, canMentionMass]);
 
@@ -382,7 +389,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     (option: MentionOption) => {
       if (!mentionState) return;
       const textarea = textareaRef.current;
-      const cursorPos = textarea?.selectionStart ?? draftText.length;
+      const cursorPos = textarea ? mentionModel.toWire(textarea.selectionStart, true) : draftText.length;
       const before = draftText.slice(0, mentionState.startIndex);
       const after = draftText.slice(cursorPos);
       const insertion = option.token + ' ';
@@ -391,7 +398,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
       setMentionState(null);
 
       // Restore cursor position after React re-renders
-      const newCursorPos = before.length + insertion.length;
+      const newCursorPos = composerMentions({ value: newContent, members, roles, users: mentionUsers }).toDisplay(before.length + insertion.length);
       requestAnimationFrame(() => {
         if (textarea) {
           textarea.focus();
@@ -400,10 +407,12 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
         }
       });
     },
-    [mentionState, draftText, setDraft, channelId],
+    [mentionState, draftText, setDraft, channelId, mentionModel, members, roles, mentionUsers],
   );
 
   const handleKeyDown = (e: React.KeyboardEvent): void => {
+    // IME confirmation must not select a candidate or send the message.
+    if (e.nativeEvent.isComposing) return;
     // Mention popover keyboard navigation
     if (mentionState && filteredMembers.length > 0) {
       if (e.key === 'ArrowDown') {
@@ -524,8 +533,14 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>): void => {
-    const value = e.target.value;
-    const cursorPos = e.target.selectionStart;
+    const change = mentionModel.update(e.target.value, e.target.selectionStart);
+    const value = change.value;
+    const nextModel = composerMentions({ value, members, roles });
+    const cursorPos = nextModel.toWire(change.cursor, true);
+    // Atomic token deletion can shorten the visible value; keep the caret at the edit.
+    if (!(e.nativeEvent as InputEvent).isComposing) {
+      requestAnimationFrame(() => textareaRef.current?.setSelectionRange(change.cursor, change.cursor));
+    }
     setDraft(channelId, value);
 
     // Detect @mention trigger
@@ -564,22 +579,22 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
         setDraft(channelId, draftText + emoji.native);
         return;
       }
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
+      const start = mentionModel.toWire(textarea.selectionStart);
+      const end = mentionModel.toWire(textarea.selectionEnd, true);
       const before = draftText.slice(0, start);
       const after = draftText.slice(end);
       const newContent = before + emoji.native + after;
       setDraft(channelId, newContent);
 
       // Restore cursor position after the emoji
-      const newCursorPos = start + emoji.native.length;
+      const newCursorPos = composerMentions({ value: newContent, members, roles, users: mentionUsers }).toDisplay(start + emoji.native.length);
       requestAnimationFrame(() => {
         textarea.focus();
         textarea.selectionStart = newCursorPos;
         textarea.selectionEnd = newCursorPos;
       });
     },
-    [draftText, setDraft, channelId],
+    [draftText, setDraft, channelId, mentionModel, members, roles, mentionUsers],
   );
 
   const handleGifSelect = useCallback(
@@ -832,7 +847,8 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
             options={filteredMembers}
             selectedIndex={mentionState.selectedIndex}
             onSelect={selectMention}
-            anchorRef={inputContainerRef}
+            key={draftText}
+            anchorRef={mentionAnchorRef}
           />
         )}
 
@@ -938,9 +954,11 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
           />
 
           {/* Text input */}
-          <textarea
-            ref={textareaRef}
-            value={draftText}
+          <MentionTextarea
+            textareaRef={textareaRef}
+            mentionAnchorRef={mentionAnchorRef}
+            mentionStart={mentionState?.startIndex}
+            model={mentionModel}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
             onPaste={canAttachFiles ? handlePaste : undefined}
@@ -950,7 +968,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
                 ? t('chat:composer.placeholder.dm', { name: channelName.slice(1) })
                 : t('chat:composer.placeholder.channel', { name: channelName }))
             }
-            className="input-embedded flex-1 py-[10px] px-1 resize-none text-[15px] leading-[1.375rem] max-h-[calc(50*var(--app-vh))] scrollbar-thin"
+            className="input-embedded relative block w-full py-[10px] px-1 resize-none text-[15px] leading-[1.375rem] max-h-[calc(50*var(--app-vh))] scrollbar-thin"
             rows={1}
           />
 

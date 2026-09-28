@@ -10,7 +10,7 @@ export function mentionOptions(input: { query: string; members: MemberWithUser[]
   const mass: MentionOption[] = input.canMentionMass ? [
     ...['everyone', 'here'].filter(name => name.includes(query)).map(name => ({ kind: 'mass' as const, token: '@' + name, label: '@' + name })),
     ...input.roles.filter(role => !role.isEveryone && role.name.toLowerCase().includes(query))
-      .map(role => ({ kind: 'mass' as const, token: '<@&' + role.id + '>', label: '@' + role.name, color: role.color })),
+      .map(role => ({ kind: 'mass' as const, token: '<@&' + role.id + '>', label: '@' + role.name.replace(/^@/, ''), color: role.color })),
   ] : [];
   const users: MentionOption[] = input.members.filter(member =>
     (member.user.displayName ?? member.user.username).toLowerCase().includes(query) || member.user.username.toLowerCase().includes(query),

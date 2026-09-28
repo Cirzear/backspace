@@ -1,3 +1,4 @@
+import { useChannelActivityStore } from './channelActivityStore';
 import { useNotificationStore } from './notificationStore';
 import { create } from 'zustand';
 import { isChosenUserStatus, type ChosenUserStatus, type User } from '@backspace/shared';
@@ -66,6 +67,7 @@ function resetUserStores() {
   useChatStore.getState().clearAllMessages();
   useSpaceStore.getState().reset();
   useNotificationStore.getState().reset();
+  useChannelActivityStore.getState().reset();
   useSocialStore.getState().reset();
   useVoiceStore.getState().resetSession();
   useInstanceStore.getState().reset();

@@ -487,7 +487,8 @@
         "description": "Are you sure you want to leave this space? You'll need a new invite to rejoin."
       },
       "left": "Left space",
-      "leaveFailed": "Failed to leave space"
+      "leaveFailed": "Failed to leave space",
+      "unreadMessages": "Unread messages: {{quantity}}"
     },
     "dmList": {
       "explore": "Explore",
@@ -620,6 +621,12 @@
     "permission": "Mention @everyone, @here and roles",
     "unmute": "Unmute",
     "muted": "Muted",
-    "active": "Notifications enabled"
+    "active": "Notifications enabled",
+    "expiringNow": "expiring now",
+    "remainingMinutes_one": "{{count}} min left",
+    "remainingMinutes_other": "{{count}} min left",
+    "remainingHours_one": "{{count}} hour left",
+    "remainingHours_other": "{{count}} hours left",
+    "remainingHoursMinutes": "{{hours}}h {{minutes}}m left"
   }
 }

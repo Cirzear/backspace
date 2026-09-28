@@ -480,7 +480,8 @@
         "description": "确定要退出此空间吗？重新加入需要新的邀请链接。"
       },
       "left": "已退出空间",
-      "leaveFailed": "退出空间失败"
+      "leaveFailed": "退出空间失败",
+      "unreadMessages": "{{quantity}} 条未读消息"
     },
     "dmList": {
       "explore": "探索",
@@ -609,6 +610,12 @@
     "permission": "提及 @everyone、@here 和身份组",
     "unmute": "取消免打扰",
     "muted": "已开启免打扰",
-    "active": "未开启免打扰"
+    "active": "未开启免打扰",
+    "expiringNow": "即将到期",
+    "remainingMinutes_one": "剩余 {{count}} 分钟",
+    "remainingMinutes_other": "剩余 {{count}} 分钟",
+    "remainingHours_one": "剩余 {{count}} 小时",
+    "remainingHours_other": "剩余 {{count}} 小时",
+    "remainingHoursMinutes": "剩余 {{hours}} 小时 {{minutes}} 分钟"
   }
 }

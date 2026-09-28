@@ -1,15 +1,29 @@
 import { useState } from 'react';
+import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import { MUTED_FOREVER, type NotificationLevel } from '@backspace/shared';
 import { Modal } from '../ui/Modal';
 import { describeError } from '../../i18n/errors';
 import { emptyNotificationSetting, notificationKey, useNotificationStore, type NotificationTarget } from '../../stores/notificationStore';
 
+/** Human-readable remaining duration for an active timed mute. */
+function formatRemaining(untilMs: number, t: TFunction<'spaces'>): string {
+  const remaining = Math.max(0, Math.ceil((untilMs - Date.now()) / 60_000));
+  if (remaining < 1) return t('notifications.expiringNow');
+  if (remaining < 60) return t('notifications.remainingMinutes', { count: remaining });
+  const hours = Math.floor(remaining / 60);
+  const mins = remaining % 60;
+  return mins > 0
+    ? t('notifications.remainingHoursMinutes', { hours, minutes: mins })
+    : t('notifications.remainingHours', { count: hours });
+}
+
 function NotificationForm({ target }: { target: NotificationTarget }) {
   const { t } = useTranslation('spaces');
   const [initial] = useState(() => useNotificationStore.getState().settings[notificationKey(target)] ?? emptyNotificationSetting);
   const [level, setLevel] = useState<NotificationLevel | null>(initial.level);
-  const [mute, setMute] = useState((initial.mutedUntil ?? 0) > Date.now() ? 'existing' : 'off');
+  const isCurrentlyMuted = (initial.mutedUntil ?? 0) > Date.now();
+  const [mute, setMute] = useState(isCurrentlyMuted ? 'existing' : 'off');
   const [suppressEveryone, setEveryone] = useState(initial.suppressEveryone);
   const [suppressRoles, setRoles] = useState(initial.suppressRoles);
   const [saving, setSaving] = useState(false);
@@ -31,6 +45,16 @@ function NotificationForm({ target }: { target: NotificationTarget }) {
       setSaving(false);
     }
   };
+  // Build mute options: show 'existing' with remaining time only when there is an active mute.
+  const muteOptions = isCurrentlyMuted
+    ? ['existing', 'off', 'minutes15', 'hour1', 'hours8', 'forever'] as const
+    : ['off', 'minutes15', 'hour1', 'hours8', 'forever'] as const;
+  const muteLabel = (value: (typeof muteOptions)[number]): string => {
+    if (value === 'existing' && initial.mutedUntil !== null && initial.mutedUntil !== MUTED_FOREVER) {
+      return `${t('notifications.existing')} (${formatRemaining(initial.mutedUntil, t)})`;
+    }
+    return t(`notifications.${value}`);
+  };
   return <form className="space-y-4" onSubmit={e => { e.preventDefault(); void save(); }}>
     <p className="text-sm text-txt-secondary">{t('notifications.description')}</p>
     <fieldset disabled={saving} className="space-y-4">
@@ -41,7 +65,7 @@ function NotificationForm({ target }: { target: NotificationTarget }) {
       </label>
       <label className="block">{t('notifications.mute')}
         <select className="block w-full mt-2 bg-surface-elevated rounded p-2" value={mute} onChange={e => setMute(e.target.value)}>
-          {(['existing', 'off', 'minutes15', 'hour1', 'hours8', 'forever'] as const).map(value => <option key={value} value={value}>{t(`notifications.${value}`)}</option>)}
+          {muteOptions.map(value => <option key={value} value={value}>{muteLabel(value)}</option>)}
         </select>
       </label>
       {target.targetType === 'space' && <>

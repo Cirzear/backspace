@@ -1,3 +1,7 @@
+import { insertComposerMention } from './useComposerMention';
+import { useChannelActivityStore } from '../../stores/channelActivityStore';
+import { getChannelOrigin } from '../../stores/spaceStore';
+import { wsSend } from '../../hooks/useWebSocket';
 import { layoutRect, layoutPixels } from '../../platform/interfaceScale';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
@@ -399,6 +403,25 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     ? { spaceId: currentSpaceId, userId: message.userId }
     : undefined;
 
+  const supportsPoke = useChannelActivityStore(s => s.pokeOrigins[getChannelOrigin(channelKey)] === true);
+  const handleAuthorMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (pending || !message.user) return;
+    useContextMenuStore.getState().open({ x: e.clientX, y: e.clientY }, [
+      { type: 'action', key: 'mention-author', label: '@' + displayName,
+        disabled: !canSendMessages || isDeadDmThread,
+        onClick: () => insertComposerMention(channelKey, message.userId) },
+      { type: 'action', key: 'poke-author', label: t('chat:poke.action'),
+        disabled: !canSendMessages || isDmMessage || !supportsPoke,
+        onClick: () => {
+          if (!wsSend({ type: 'channel_poke', channelId: channelKey, targetUserId: message.userId }, getChannelOrigin(channelKey))) {
+            useUIStore.getState().addToast(t('chat:poke.disconnected'), 'warning');
+          }
+        } },
+    ]);
+  };
+
   const handleUsernameClick = (e: React.MouseEvent) => {
     if (!message.user) return;
     e.stopPropagation();
@@ -435,7 +458,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
       {/* Avatar or timestamp column */}
       <div className="w-10 flex-shrink-0 flex items-start justify-start">
         {isFirstInGroup || message.replyTo ? (
-          <div className="mt-0.5">
+          <div className="mt-0.5 relative" data-poke-user={message.userId} onContextMenu={handleAuthorMenu}>
             <ProfileAvatar
               src={displayIdentity.avatar}
               name={displayName}
@@ -492,7 +515,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
 
         {(isFirstInGroup || message.replyTo) && (
           <div className="flex items-baseline gap-2 mb-0.5">
-            <span onClick={handleUsernameClick}>
+            <span onClick={handleUsernameClick} onContextMenu={handleAuthorMenu}>
               <Username
                 username={displayName}
                 className="font-semibold cursor-pointer hover:underline text-[15px] leading-tight"

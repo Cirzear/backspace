@@ -1332,7 +1332,7 @@ function ChannelItem({
     <div
       className={`relative ${isDragging || notificationMuted ? 'opacity-50' : ''}`}
       onContextMenu={handleNotificationMenu}
-        {...channelDragHandlers}
+      {...channelDragHandlers}
     >
       {dropIndicator === 'before' && <div className="absolute -top-[1px] left-2 right-2 h-[2px] bg-accent-mint rounded-full z-10" />}
       <button

@@ -487,7 +487,8 @@
         "description": "Willst du diesen Space wirklich verlassen? Zum erneuten Beitreten brauchst du eine neue Einladung."
       },
       "left": "Du hast den Space verlassen",
-      "leaveFailed": "Space konnte nicht verlassen werden"
+      "leaveFailed": "Space konnte nicht verlassen werden",
+      "unreadMessages": "Ungelesene Nachrichten: {{quantity}}"
     },
     "dmList": {
       "explore": "Entdecken",
@@ -620,6 +621,12 @@
     "permission": "@everyone, @here und Rollen erwähnen",
     "unmute": "Stummschaltung aufheben",
     "muted": "Stummgeschaltet",
-    "active": "Benachrichtigungen aktiviert"
+    "active": "Benachrichtigungen aktiviert",
+    "expiringNow": "läuft gerade ab",
+    "remainingMinutes_one": "noch {{count}} Min.",
+    "remainingMinutes_other": "noch {{count}} Min.",
+    "remainingHours_one": "noch {{count}} Stunde",
+    "remainingHours_other": "noch {{count}} Stunden",
+    "remainingHoursMinutes": "noch {{hours}} Std. {{minutes}} Min."
   }
 }
