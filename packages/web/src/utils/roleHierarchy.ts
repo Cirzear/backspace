@@ -2,6 +2,8 @@ import type { MemberWithUser, Role } from '@backspace/shared';
 import {
   canActOnMember,
   canManageRoleAt,
+  hasPermissionBit,
+  PermissionBits,
   topRolePosition,
   roleBitsChangeRefusal,
   overrideChangeRefusal,
@@ -113,6 +115,29 @@ export function viewerCanActOnUserInSpace(spaceId: string, targetUserId: string)
   const target = members.find((m) => m.userId === targetUserId);
   if (!space || !target) return true;
   return viewerCanActOn(space, members, target);
+}
+
+/**
+ * Whether the viewer may open the member role editor for `target` in `space`:
+ * they hold MANAGE_ROLES there (`myPermissions`, the space's own answer;
+ * unknown means no), the target is neither the viewer (by their id on the
+ * space's instance) nor the owner, the viewer may act on the target, and
+ * at least one role other than @everyone ranks below the viewer, so there is
+ * a role to give or take. `roles` is the space's loaded role list.
+ */
+export function viewerCanEditMemberRoles(
+  space: Pick<TaggedSpace, 'id' | 'ownerId' | '_instanceOrigin'>,
+  members: readonly MemberWithUser[],
+  roles: readonly Role[],
+  myPermissions: string | undefined,
+  target: MemberWithUser,
+): boolean {
+  if (!hasPermissionBit(myPermissions, PermissionBits.MANAGE_ROLES)) return false;
+  if (target.userId === myUserIdInSpace(space) || target.userId === space.ownerId) return false;
+  const hasRoleToManage = roles.some(
+    (role) => role.spaceId === space.id && role.id !== space.id && viewerCanManageRoleAt(space, members, role.position),
+  );
+  return hasRoleToManage && viewerCanActOn(space, members, target);
 }
 
 // ─── Held-bits rule ─────────────────────────────────────────────────────────

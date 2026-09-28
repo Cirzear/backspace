@@ -8,8 +8,9 @@ vi.mock('../audio/AudioManager', () => ({
   },
 }));
 
-import { myStandingIn, viewerCanActOn, viewerCanManageRoleAt } from './roleHierarchy';
-import { useSpaceStore, type TaggedSpace } from '../stores/spaceStore';
+import { myStandingIn, viewerCanActOn, viewerCanManageRoleAt, viewerCanEditMemberRoles } from './roleHierarchy';
+import { useSpaceStore, setMyUserIdForOrigin, type TaggedSpace } from '../stores/spaceStore';
+import { PermissionBits, permissionsToString, ALL_PERMISSIONS } from './permissions';
 import { useAuthStore } from '../stores/authStore';
 
 // The viewer's standing is unknown (null, the server decides) when the
@@ -69,5 +70,68 @@ describe('myStandingIn', () => {
     const members = seed({ mod: 1, helper: 1 });
     useSpaceStore.setState({ roles: [] });
     expect(myStandingIn(SPACE, members)).toBeNull();
+  });
+});
+
+// The member role editor is offered from the profile card only when the
+// viewer could change something there: MANAGE_ROLES, a target that is neither
+// the viewer (on the space's own instance) nor the owner and ranks below the
+// viewer, and at least one role below the viewer's top role.
+describe('viewerCanEditMemberRoles', () => {
+  const MANAGE = permissionsToString(PermissionBits.MANAGE_ROLES);
+
+  function fixture(): { members: MemberWithUser[]; roles: Role[] } {
+    const lead = role('r-lead', 3);
+    const helper = role('r-helper', 1);
+    const members = [
+      member('owner', []), member('me', [lead]), member('peer', [lead]), member('helper', [helper]), member('plain', []),
+    ];
+    const roles = [role(SPACE_ID, 0), lead, role('r-mid', 2), helper];
+    useAuthStore.setState({ user: user('me') });
+    useSpaceStore.setState({ spaces: [SPACE], currentSpaceId: SPACE_ID, roles, members });
+    return { members, roles };
+  }
+  const byId = (members: MemberWithUser[], id: string) => members.find((m) => m.userId === id)!;
+
+  it('offers members ranked below the viewer, with or without roles', () => {
+    const { members, roles } = fixture();
+    expect(viewerCanEditMemberRoles(SPACE, members, roles, MANAGE, byId(members, 'helper'))).toBe(true);
+    expect(viewerCanEditMemberRoles(SPACE, members, roles, MANAGE, byId(members, 'plain'))).toBe(true);
+  });
+
+  it('never offers the viewer, the owner, or a member ranked at or above the viewer', () => {
+    const { members, roles } = fixture();
+    expect(viewerCanEditMemberRoles(SPACE, members, roles, MANAGE, byId(members, 'me'))).toBe(false);
+    expect(viewerCanEditMemberRoles(SPACE, members, roles, MANAGE, byId(members, 'owner'))).toBe(false);
+    expect(viewerCanEditMemberRoles(SPACE, members, roles, MANAGE, byId(members, 'peer'))).toBe(false);
+  });
+
+  it('needs MANAGE_ROLES, known or not', () => {
+    const { members, roles } = fixture();
+    const helper = byId(members, 'helper');
+    expect(viewerCanEditMemberRoles(SPACE, members, roles, permissionsToString(PermissionBits.KICK_MEMBERS), helper)).toBe(false);
+    expect(viewerCanEditMemberRoles(SPACE, members, roles, undefined, helper)).toBe(false);
+    expect(viewerCanEditMemberRoles(SPACE, members, roles, permissionsToString(PermissionBits.ADMINISTRATOR), helper)).toBe(true);
+  });
+
+  it('is not offered when no role below the viewer exists to give or take', () => {
+    const { members } = fixture();
+    useAuthStore.setState({ user: user('owner') });
+    const onlyEveryone = [role(SPACE_ID, 0)];
+    expect(viewerCanEditMemberRoles(SPACE, members, onlyEveryone, permissionsToString(ALL_PERMISSIONS), byId(members, 'plain'))).toBe(false);
+  });
+
+  it('knows the viewer by their id on the space\'s instance, not their home id', () => {
+    const orbit = 'https://orbit.example';
+    const remote: TaggedSpace = { ...SPACE, _instanceOrigin: orbit };
+    const lead = role('r-lead', 2);
+    const helper = role('r-helper', 1);
+    const members = [member('owner', []), member('me-local', [lead]), member('helper', [helper])];
+    const roles = [role(SPACE_ID, 0), lead, helper];
+    useAuthStore.setState({ user: user('me') });
+    useSpaceStore.setState({ spaces: [remote], currentSpaceId: SPACE_ID, roles, members });
+    setMyUserIdForOrigin(orbit, 'me-local');
+    expect(viewerCanEditMemberRoles(remote, members, roles, MANAGE, members[1]!)).toBe(false);
+    expect(viewerCanEditMemberRoles(remote, members, roles, MANAGE, members[2]!)).toBe(true);
   });
 });

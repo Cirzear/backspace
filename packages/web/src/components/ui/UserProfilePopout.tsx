@@ -18,6 +18,7 @@ import { replaceEmojiShortcodes } from '../../utils/emojiShortcodes';
 import { computeFloatingPosition, type AnchorRect, type Placement } from '../../hooks/useFloatingPosition';
 import { useProfileMemberRoles } from '../../hooks/useProfileMember';
 import { useShownStatus } from '../../hooks/useShownStatus';
+import { viewerCanEditMemberRoles } from '../../utils/roleHierarchy';
 import { ProfileRoles } from './ProfileRoles';
 
 /** Gap between the card and the element it was opened from. */
@@ -54,6 +55,17 @@ export function UserProfilePopout({ user: propUser, onClose, anchor, placement =
   const origin = resolveUserOrigin(user);
   const userApi = getApiForOrigin(origin);
   const roles = useProfileMemberRoles(member);
+  const isMobile = useUIStore((s) => s.isMobile);
+  // Edit Roles opens the member role editor, which is desktop-only. It is
+  // offered by the rule the editor gates with (permissions.md, "Role
+  // hierarchy"), read from the loaded space the card was opened in.
+  const canEditRoles = useSpaceStore((s) => {
+    if (!member || s.currentSpaceId !== member.spaceId) return false;
+    const space = s.spaces.find((sp) => sp.id === member.spaceId);
+    const target = s.members.find((m) => m.userId === member.userId);
+    if (!space || !target) return false;
+    return viewerCanEditMemberRoles(space, s.members, s.roles, s.spacePermissions.get(space.id), target);
+  }) && !isMobile;
 
   const [mutualCounts, setMutualCounts] = useState<{ friends: number; spaces: number } | null>(null);
 
@@ -123,6 +135,12 @@ export function UserProfilePopout({ user: propUser, onClose, anchor, placement =
   const handleViewFullProfile = () => {
     onClose();
     openModal('userProfile', { userId: user.id, user, origin, member });
+  };
+
+  const handleEditRoles = () => {
+    if (!member) return;
+    onClose();
+    openModal('memberRoles', { spaceId: member.spaceId, userId: member.userId });
   };
 
   const handleAvatarClick = (event: React.MouseEvent) => {
@@ -247,6 +265,14 @@ export function UserProfilePopout({ user: propUser, onClose, anchor, placement =
         >
           {t('social:profile.sendMessage')}
         </button>
+        {canEditRoles && (
+          <button
+            onClick={handleEditRoles}
+            className="w-full mt-1.5 py-2 rounded-lg text-[13px] font-medium text-txt-secondary hover:text-txt-primary bg-transparent hover:bg-white/[0.04] transition-colors"
+          >
+            {t('social:profile.editRoles')}
+          </button>
+        )}
         <button
           onClick={handleViewFullProfile}
           className="w-full mt-1.5 py-2 rounded-lg text-[13px] font-medium text-txt-tertiary hover:text-txt-secondary bg-transparent hover:bg-white/[0.04] transition-colors"

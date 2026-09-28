@@ -68,6 +68,7 @@
     "roles": "身份组",
     "memberSince": "注册时间",
     "sendMessage": "发送消息",
+    "editRoles": "编辑身份组",
     "viewFull": "查看完整个人资料",
     "addFriend": "添加好友"
   },

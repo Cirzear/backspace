@@ -321,6 +321,7 @@ rule (above). Every gated surface:
 |---|---|---|
 | Members list: kick and ban | `spaceSettingsPanels/MembersPanel.tsx` | hidden for members ranked at or above the viewer |
 | Members list: role checkboxes | `spaceSettingsPanels/MembersPanel.tsx` | roles at or above the viewer's top role disabled (`settings.members.rolesAboveYou`); a role the member does not have yet and that carries a bit the viewer does not hold disabled (`settings.members.rolesUnheld`); each reason shown under the list with a lock, and as the row's title; the editor does not open for members ranked at or above the viewer |
+| Profile card: Edit Roles | `ui/UserProfilePopout.tsx` | desktop only; offered for a member of the loaded space when `viewerCanEditMemberRoles` holds: the viewer holds MANAGE_ROLES, the member is neither the viewer (by their id on the space's instance) nor the owner and ranks below the viewer, and some role other than @everyone ranks below the viewer; opens the member role editor |
 | Role list: reorder | `spaceSettingsPanels/RoleOrderList.tsx` | lock instead of controls on roles at or above the viewer's top role |
 | Role list: Create Role | `spaceSettingsPanels/RolesPanel.tsx` | disabled unless the viewer ranks above position 1 |
 | Role editor: whole role | `spaceSettingsPanels/RolesPanel.tsx` | read-only with the `roles.aboveYou` note for a role at or above the viewer's top role; no Delete |
@@ -337,7 +338,8 @@ The helpers in `web/src/utils/roleHierarchy.ts` are the surface every role
 and permission editor gates with: `myUserIdInSpace`, `myStandingIn`,
 `viewerCanActOn`, `viewerCanManageRoleAt`, `viewerCanActOnUserInSpace`,
 `useViewerHeldPermissions` / `viewerHeldPermissions`, `viewerCanSwitchBit`,
-`unswitchableBits`, `viewerCanCreateRoleWith` and `viewerCanRemoveOverride`.
+`unswitchableBits`, `viewerCanCreateRoleWith`, `viewerCanRemoveOverride` and
+`viewerCanEditMemberRoles`.
 Each compares with the viewer's id and permissions on the space's own
 instance, never the home id.
 
