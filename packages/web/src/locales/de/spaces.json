@@ -452,6 +452,7 @@
     "partialFailure_other": "{{count}} Überschreibungen konnten nicht gespeichert werden"
   },
   "sidebar": {
+    "dmUnreadMessages": "{{quantity}} ungelesene Direktnachrichten",
     "directMessages": "Direktnachrichten",
     "addSpace": "Space hinzufügen",
     "joinSpace": "Space beitreten",

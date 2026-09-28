@@ -452,6 +452,7 @@
     "partialFailure_other": "{{count}} overrides failed to save"
   },
   "sidebar": {
+    "dmUnreadMessages": "{{quantity}} unread direct messages",
     "directMessages": "Direct Messages",
     "addSpace": "Add a Space",
     "joinSpace": "Join a Space",

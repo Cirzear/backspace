@@ -462,6 +462,7 @@
     "partialFailure_other": "Не удалось сохранить {{count}} переопределения"
   },
   "sidebar": {
+    "dmUnreadMessages": "Непрочитанные личные сообщения: {{quantity}}",
     "directMessages": "Личные сообщения",
     "addSpace": "Добавить пространство",
     "joinSpace": "Присоединиться к пространству",

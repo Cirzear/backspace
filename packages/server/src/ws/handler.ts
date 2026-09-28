@@ -1,4 +1,4 @@
-import { channelUnreadCounts, unreadCountEvent } from './channelUnreadCounts.js';
+import { channelUnreadCounts, dmUnreadCounts, unreadCountEvent } from './channelUnreadCounts.js';
 import type { FastifyInstance } from 'fastify';
 import type { WebSocket } from 'ws';
 import { verifyJwt } from '../utils/auth.js';
@@ -1739,7 +1739,7 @@ function buildReadyPayload(userId: string): {
     pendingApprovalCount = countResult?.count ?? 0;
   }
 
-  return { user, spaces, dmChannels, folders, spaceLayout, layoutUpdatedAt, voiceStates, voiceChannelElapsedSeconds, voiceUserStates, spaceVoiceStates, supportsPoke: true, unreadCounts: channelUnreadCounts(userId, spaces.flatMap(space => space.channels.map(channel => channel.id))), readStates, notificationSettings: listNotificationSettings(userId), activeCalls, userActivities, rejectedPeerOrigins, awaitingApprovalPeerOrigins, activePeerOrigins, pendingApprovalCount };
+  return { user, spaces, dmChannels, folders, spaceLayout, layoutUpdatedAt, voiceStates, voiceChannelElapsedSeconds, voiceUserStates, spaceVoiceStates, supportsPoke: true, unreadCounts: { ...channelUnreadCounts(userId, spaces.flatMap(space => space.channels.map(channel => channel.id))), ...dmUnreadCounts(userId, dmChannels.map(dm => dm.id)) }, readStates, notificationSettings: listNotificationSettings(userId), activeCalls, userActivities, rejectedPeerOrigins, awaitingApprovalPeerOrigins, activePeerOrigins, pendingApprovalCount };
 }
 
 export async function registerWebSocket(app: FastifyInstance): Promise<void> {

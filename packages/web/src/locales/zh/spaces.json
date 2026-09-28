@@ -447,6 +447,7 @@
     "partialFailure_other": "{{count}} 个权限覆盖保存失败"
   },
   "sidebar": {
+    "dmUnreadMessages": "{{quantity}} 条未读私信",
     "directMessages": "私信列表",
     "addSpace": "添加空间",
     "joinSpace": "加入空间",

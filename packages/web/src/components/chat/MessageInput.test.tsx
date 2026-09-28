@@ -66,6 +66,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   useChatStore.getState().clearAllMessages();
   useComposerStore.setState({ states: new Map() });
   useAuthStore.setState({ user: null });
@@ -160,11 +161,45 @@ describe('author context menu mention', () => {
     render(<><Message message={ownMessage} isCompact={false} isFirstInGroup previousMessageId={null} /><MessageInput channelId="dm-1" channelName="general" /></>);
     fireEvent.contextMenu(screen.getByText('Alice'));
     const menu = useContextMenuStore.getState().menu!.items;
+    expect(menu.map(item => item.key)).toEqual(expect.arrayContaining(['reply', 'copy-text', 'mark-unread', 'edit', 'delete', 'mention-author', 'poke-author']));
     const mention = menu.find(item => item.key === 'mention-author');
     expect(mention?.type).toBe('action');
     act(() => { if (mention?.type === 'action') mention.onClick(); });
     expect(useComposerStore.getState().get('dm-1').draftText).toBe('hello <@me> ');
     const input = screen.getByRole('textbox') as HTMLTextAreaElement;
     await waitFor(() => { expect(input).toHaveValue('hello @Alice '); expect(input).toHaveFocus(); expect(input.selectionStart).toBe(input.value.length); });
+  });
+});
+
+
+describe('MessageInput slow sends', () => {
+  it('consumes a draft immediately, prevents repeated Enter and preserves subsequent typing', async () => {
+    let finish!: () => void;
+    const sending = new Promise<void>(resolve => { finish = resolve; });
+    const send = vi.spyOn(useChatStore.getState(), 'sendMessage').mockReturnValue(sending);
+    useComposerStore.getState().setDraft('dm-1', 'first');
+    render(<MessageInput channelId="dm-1" channelName="general" />);
+    const input = screen.getByRole('textbox');
+    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(input).toHaveValue('');
+    fireEvent.change(input, { target: { value: 'next draft' } });
+    await act(async () => { finish(); await sending; });
+    expect(input).toHaveValue('next draft');
+  });
+
+  it('retains failed text without overwriting a newer draft', async () => {
+    let fail!: (error: Error) => void;
+    const sending = new Promise<void>((_resolve, reject) => { fail = reject; });
+    vi.spyOn(useChatStore.getState(), 'sendMessage').mockReturnValue(sending);
+    useComposerStore.getState().setDraft('dm-1', 'failed text');
+    render(<MessageInput channelId="dm-1" channelName="general" />);
+    const input = screen.getByRole('textbox');
+    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.change(input, { target: { value: 'new text' } });
+    await act(async () => { fail(new Error('Offline')); await sending.catch(() => {}); });
+    expect(input).toHaveValue('failed text\nnew text');
   });
 });

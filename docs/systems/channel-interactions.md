@@ -2,7 +2,9 @@
 
 ## Author menu
 
-Right-clicking an author's avatar or name offers a mention. It appends a stable
+Right-clicking an author's avatar or name retains the original message menu
+(reply, copy, mark unread, edit/delete according to permissions) and appends
+mention and poke actions. A mention appends a stable
 `<@userId>` token to the current channel draft and focuses the composer; the
 composer displays the resolved name with mention highlighting.
 
@@ -37,3 +39,21 @@ cache-length estimates or unread-channel counts are used.
 Space badges sum visible unread channels, render 1–99 or 99+, and use gray instead of red when
 the space is muted without clearing its underlying unread state. Older hosts keep
 the existing unread dot; they cannot provide exact counts until upgraded.
+
+
+## Text submission
+
+Enter consumes the live draft synchronously and uses the existing optimistic
+message display instead of waiting for the HTTP response. Repeated Enter on the
+now-empty composer does not send again. Completion does not clear newer typing.
+Request failures roll back the optimistic message, show an error, and return the
+failed text to its original channel draft without discarding newer text.
+
+## Direct-message badge
+
+The top DM/logo icon displays the total unread message count (1–99, then 99+).
+The host includes active, non-deleted DM conversations in the same ready snapshot
+and updates counts after DM creation/deletion and read-cursor changes. Membership
+is checked and own messages are excluded. The UI counts only each conversation's
+canonical serving origin, not its federated mirrors. Read conversations and
+unknown counts are excluded; exact DM counts require the host update.

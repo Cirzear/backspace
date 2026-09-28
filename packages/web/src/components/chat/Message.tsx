@@ -287,7 +287,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     setShowReactionPicker(false);
   }, [addReaction, message.id]);
 
-  const handleContextMenu = (e: React.MouseEvent) => {
+  const handleContextMenu = (e: React.MouseEvent, includeAuthorActions = false) => {
     if (pending) {
       e.preventDefault();
       e.stopPropagation();
@@ -353,6 +353,11 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
       onMarkUnread: (msgId: string) => markUnread(channelKey, msgId),
     });
 
+    // Author actions extend the existing message menu rather than replacing it.
+    if (includeAuthorActions && message.user) {
+      if (items.length) items.push({ type: 'separator', key: 'author-actions' });
+      items.push(...authorMenuItems());
+    }
     if (items.length === 0) return;
     useContextMenuStore.getState().open({ x: e.clientX, y: e.clientY }, items);
   };
@@ -404,11 +409,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     : undefined;
 
   const supportsPoke = useChannelActivityStore(s => s.pokeOrigins[getChannelOrigin(channelKey)] === true);
-  const handleAuthorMenu = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (pending || !message.user) return;
-    useContextMenuStore.getState().open({ x: e.clientX, y: e.clientY }, [
+  const authorMenuItems = (): import('../../stores/contextMenuStore').ContextMenuItem[] => [
       { type: 'action', key: 'mention-author', label: '@' + displayName,
         disabled: !canSendMessages || isDeadDmThread,
         onClick: () => insertComposerMention(channelKey, message.userId) },
@@ -419,8 +420,8 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
             useUIStore.getState().addToast(t('chat:poke.disconnected'), 'warning');
           }
         } },
-    ]);
-  };
+    ];
+  const handleAuthorMenu = (e: React.MouseEvent) => handleContextMenu(e, true);
 
   const handleUsernameClick = (e: React.MouseEvent) => {
     if (!message.user) return;

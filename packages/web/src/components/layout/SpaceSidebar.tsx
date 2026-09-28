@@ -1,3 +1,4 @@
+import { DmUnreadBadge } from './DmUnreadBadge';
 import { SpaceUnreadBadge } from './SpaceUnreadBadge';
 import { useNotificationMuted } from '../notifications/useNotificationMuted';
 import { notificationMenuItems } from '../notifications/notificationMenuItems';
@@ -149,6 +150,7 @@ function SidebarItem({ id, name, icon, avatarColor, active, onClick, onContextMe
     <div className={`relative ${dropIndicator === 'merge' ? 'scale-110 ring-2 ring-accent-mint/60 rounded-full' : ''} transition-transform duration-150`}>
       {buttonContent}
       {type === 'space' && <SpaceUnreadBadge spaceId={id} />}
+      {type === 'dm' && <DmUnreadBadge />}
       {federationBadge && (
         <div className="absolute -bottom-0.5 -right-0.5 w-[14px] h-[14px] rounded-full bg-surface-base flex items-center justify-center">
           {federationDisconnected ? (
