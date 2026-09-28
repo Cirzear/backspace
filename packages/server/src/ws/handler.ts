@@ -1177,6 +1177,7 @@ function buildReadyPayload(userId: string): {
   spaceVoiceStates: Record<string, { spaceMuted: boolean; spaceDeafened: boolean; permissionMuted: boolean }>;
   notificationSettings: import("@backspace/shared").NotificationSetting[];
   unreadCounts: Record<string, number>;
+  supportsPoke: boolean;
   readStates: ReadState[];
   activeCalls: ActiveCallInfo[];
   userActivities: Record<string, Activity[]>;
@@ -1275,7 +1276,7 @@ function buildReadyPayload(userId: string): {
         ids => db.select({
           channelId: schema.messages.channelId,
           lastId: sql<string>`max(${schema.messages.id})`,
-        }).from(schema.messages).where(inArray(schema.messages.channelId, ids)).groupBy(schema.messages.channelId).all(),
+        }).from(schema.messages).where(and(inArray(schema.messages.channelId, ids), eq(schema.messages.type, 'user'))).groupBy(schema.messages.channelId).all(),
       );
       for (const row of lastMsgRows) {
         if (row.lastId) lastMsgMap.set(row.channelId, row.lastId);
@@ -1654,7 +1655,7 @@ function buildReadyPayload(userId: string): {
     pendingApprovalCount = countResult?.count ?? 0;
   }
 
-  return { user, spaces, dmChannels, folders, spaceLayout, layoutUpdatedAt, voiceStates, voiceChannelElapsedSeconds, voiceUserStates, spaceVoiceStates, unreadCounts: { ...channelUnreadCounts(userId, spaces.flatMap(space => space.channels.map(channel => channel.id))), ...dmUnreadCounts(userId, dmChannels.map(dm => dm.id)) }, readStates, notificationSettings: listNotificationSettings(userId), activeCalls, userActivities, userActivityIdentities, rejectedPeerOrigins, awaitingApprovalPeerOrigins, activePeerOrigins, pendingApprovalCount };
+  return { user, spaces, dmChannels, folders, spaceLayout, layoutUpdatedAt, voiceStates, voiceChannelElapsedSeconds, voiceUserStates, spaceVoiceStates, supportsPoke: true, unreadCounts: { ...channelUnreadCounts(userId, spaces.flatMap(space => space.channels.map(channel => channel.id))), ...dmUnreadCounts(userId, dmChannels.map(dm => dm.id)) }, readStates, notificationSettings: listNotificationSettings(userId), activeCalls, userActivities, userActivityIdentities, rejectedPeerOrigins, awaitingApprovalPeerOrigins, activePeerOrigins, pendingApprovalCount };
 }
 
 export async function registerWebSocket(app: FastifyInstance): Promise<void> {

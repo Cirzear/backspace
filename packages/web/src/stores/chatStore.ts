@@ -561,6 +561,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         updated = updated.slice(updated.length - MAX_MESSAGES_PER_CHANNEL);
       }
       newMessages.set(channelId, updated);
+      // Channel system history is passive: do not enqueue sound/desktop notification events.
+      if (normalizedMessage.type === 'system' && !('dmChannelId' in normalizedMessage)) {
+        return { messages: newMessages };
+      }
       // Append to realtimeMessageEvents (capped; see addedRealtimeMessageEvents)
       const newEvents = [...state.realtimeMessageEvents, { channelId, message: normalizedMessage }];
       if (newEvents.length > REALTIME_MESSAGE_EVENT_CAP) {

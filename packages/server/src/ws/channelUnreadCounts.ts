@@ -18,6 +18,7 @@ export function channelUnreadCounts(userId: string, channelIds: string[]): Recor
     // IDs are decimal snowflakes stored as TEXT: compare numerically, not lexically.
     const result = db.select({ count: sql<number>`count(*)` }).from(schema.messages).where(and(
       eq(schema.messages.channelId, channel.id), ne(schema.messages.userId, userId),
+      eq(schema.messages.type, 'user'), // Passive system history never increments unread badges.
       sql`cast(${schema.messages.id} as integer) > cast(${read?.lastReadMessageId ?? '0'} as integer)`,
     )).get();
     counts[channel.id] = result!.count;

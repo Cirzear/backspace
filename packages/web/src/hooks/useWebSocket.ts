@@ -1,4 +1,5 @@
 import { useChannelActivityStore } from '../stores/channelActivityStore';
+import { receiveChannelPoke } from '../components/chat/channelPoke';
 import React, { useEffect, useRef } from 'react';
 import { useNotificationStore } from '../stores/notificationStore';
 import { useAuthStore } from '../stores/authStore';
@@ -194,6 +195,12 @@ function handleEvent(origin: string, event: ServerEvent): void {
     case 'channel_unread_count':
       useChannelActivityStore.getState().updateCounts(origin, event.counts);
       break;
+    case 'channel_poke_failed':
+      useUIStore.getState().addToast(event.message, 'warning');
+      break;
+    case 'channel_poke':
+      receiveChannelPoke(origin, event);
+      break;
     case 'ready':
       useNotificationStore.getState().hydrate({ origin, userId: event.user.id, spaces: event.spaces, settings: event.notificationSettings ?? [] });
       // Register this user's ID for cross-instance self-identification
@@ -303,7 +310,7 @@ function handleEvent(origin: string, event: ServerEvent): void {
         }
       }
 
-      useChannelActivityStore.getState().hydrate(origin, { counts: event.unreadCounts });
+      useChannelActivityStore.getState().hydrate(origin, { counts: event.unreadCounts, supportsPoke: event.supportsPoke });
       // Initialize/update unread tracking for this origin (home or remote)
       if (event.readStates) {
         const { channelLastMessageIds, channelOriginMap } = useSpaceStore.getState();
@@ -585,7 +592,7 @@ function handleEvent(origin: string, event: ServerEvent): void {
         const { voiceChannelIds } = useSpaceStore.getState();
         const myId = isHome ? useAuthStore.getState().user?.id : getMyUserIdForOrigin(origin);
         // Skip voice channels — they have no text reading/acking UI
-        if (event.message.channelId !== currentChannelId && event.message.userId !== myId && !voiceChannelIds.has(event.message.channelId)) {
+        if (event.message.type !== 'system' && event.message.channelId !== currentChannelId && event.message.userId !== myId && !voiceChannelIds.has(event.message.channelId)) {
           markChannelUnread(event.message.channelId);
         }
       }
@@ -1489,11 +1496,13 @@ export function getHomeWsConnected(): boolean {
 }
 
 /** Send an event over the WebSocket. Can be used outside of React components. */
-export function wsSend(event: ClientEvent, origin: string = HOME_ORIGIN): void {
+export function wsSend(event: ClientEvent, origin: string = HOME_ORIGIN): boolean {
   const conn = connections.get(origin);
   if (conn?.ws && conn.ws.readyState === WebSocket.OPEN) {
     conn.ws.send(JSON.stringify(event));
+    return true;
   }
+  return false;
 }
 
 /** Send an event to ALL connected WebSocket instances (home + remotes). */
