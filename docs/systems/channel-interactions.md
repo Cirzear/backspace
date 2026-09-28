@@ -15,6 +15,11 @@ Space channel hosts advertise `ready.supportsPoke`. The authenticated
 and VIEW_CHANNEL for the target. Names are resolved on the host, not accepted
 from the client. The existing per-user gateway rate limit also applies.
 
+Server-confirmed pokes also appear as centered, muted text in the message timeline,
+interleaved by local receipt time. These session-only entries survive channel switches
+but not reload/logout, are capped at 200 entries, and never affect read cursors or
+unread counts. DND suppresses active cues, not these passive timeline entries.
+
 Only a server-confirmed broadcast produces the lightweight in-app cue and finger /
 avatar animation. Pokes do not create message rows, unread counts, sounds, OS
 notifications, or offline history. The current channel's viewers and the actor /

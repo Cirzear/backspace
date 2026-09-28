@@ -1,3 +1,4 @@
+import { useChannelActivityStore } from '../../stores/channelActivityStore';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({ toast: vi.fn(), current: 'chat', status: 'online' }));
 vi.mock('../../stores/uiStore', () => ({ useUIStore: { getState: () => ({ addToast: state.toast }) } }));
@@ -9,7 +10,7 @@ vi.mock('../../i18n', () => ({ default: { t: () => 'Actor poked Target' } }));
 import { useNotificationStore } from '../../stores/notificationStore';
 import { receiveChannelPoke } from './channelPoke';
 const event = { type: 'channel_poke', channelId: 'chat', userId: 'actor', targetUserId: 'target', username: 'Actor', targetUsername: 'Target' } as const;
-beforeEach(() => { vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true }))); state.toast.mockClear(); state.current = 'chat'; state.status = 'online'; useNotificationStore.getState().reset(); });
+beforeEach(() => { vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true }))); useChannelActivityStore.getState().reset(); state.toast.mockClear(); state.current = 'chat'; state.status = 'online'; useNotificationStore.getState().reset(); });
 describe('server-confirmed poke cue', () => {
   it('shows a lightweight cue for the current channel', () => {
     receiveChannelPoke('', event);
@@ -25,5 +26,6 @@ describe('server-confirmed poke cue', () => {
     state.status = 'dnd';
     receiveChannelPoke('', event);
     expect(state.toast).not.toHaveBeenCalled();
+    expect(useChannelActivityStore.getState().pokes).toHaveLength(1);
   });
 });
