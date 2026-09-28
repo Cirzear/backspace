@@ -2,9 +2,10 @@
 
 ## Author menu
 
-Right-clicking an author's avatar or name retains the original message menu
-(reply, copy, mark unread, edit/delete according to permissions) and appends
-mention and poke actions. A mention appends a stable
+Right-clicking a message opens the original message menu (reply, copy, mark
+unread, edit/delete according to permissions). Right-clicking an author's avatar
+or name opens a separate menu containing only mention and poke actions.
+A mention appends a stable
 `<@userId>` token to the current channel draft and focuses the composer; the
 composer displays the resolved name with mention highlighting.
 
@@ -20,7 +21,9 @@ interleaved by local receipt time. These session-only entries survive channel sw
 but not reload/logout, are capped at 200 entries, and never affect read cursors or
 unread counts. DND suppresses active cues, not these passive timeline entries.
 
-Only a server-confirmed broadcast produces the lightweight in-app cue and finger /
+Pokes do not produce floating toast notifications: the timeline entry is their
+confirmation. Failed operations still show errors.
+Only a server-confirmed broadcast produces the finger /
 avatar animation. Pokes do not create message rows, unread counts, sounds, OS
 notifications, or offline history. The current channel's viewers and the actor /
 target see the cue. Recipient Do Not Disturb and space/channel suppression apply;

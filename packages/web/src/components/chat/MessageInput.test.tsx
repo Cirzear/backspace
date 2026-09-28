@@ -155,13 +155,24 @@ describe('MessageInput mention composition', () => {
 });
 
 describe('author context menu mention', () => {
+  it('keeps message and avatar context menus separate', () => {
+    useSpaceStore.setState({ channelPermissions: new Map([['dm-1', String(PermissionBits.SEND_MESSAGES)]]) });
+    const { container } = render(<Message message={ownMessage} isCompact={false} isFirstInGroup previousMessageId={null} />);
+    fireEvent.contextMenu(screen.getByText('last message'));
+    const keys = useContextMenuStore.getState().menu!.items.map(item => item.key);
+    expect(keys).toEqual(expect.arrayContaining(['reply', 'copy-text', 'mark-unread', 'edit', 'delete']));
+    expect(keys).not.toContain('mention-author');
+    expect(keys).not.toContain('poke-author');
+    fireEvent.contextMenu(container.querySelector('[data-poke-user]')!);
+    expect(useContextMenuStore.getState().menu!.items.map(item => item.key)).toEqual(['mention-author', 'poke-author']);
+  });
   it('appends a mention to the existing draft and focuses the displayed name', async () => {
     useSpaceStore.setState({ members: [{ userId: me.id, user: me } as MemberWithUser], channelPermissions: new Map([['dm-1', String(PermissionBits.SEND_MESSAGES)]]) });
     useComposerStore.getState().setDraft('dm-1', 'hello');
     render(<><Message message={ownMessage} isCompact={false} isFirstInGroup previousMessageId={null} /><MessageInput channelId="dm-1" channelName="general" /></>);
     fireEvent.contextMenu(screen.getByText('Alice'));
     const menu = useContextMenuStore.getState().menu!.items;
-    expect(menu.map(item => item.key)).toEqual(expect.arrayContaining(['reply', 'copy-text', 'mark-unread', 'edit', 'delete', 'mention-author', 'poke-author']));
+    expect(menu.map(item => item.key)).toEqual(['mention-author', 'poke-author']);
     const mention = menu.find(item => item.key === 'mention-author');
     expect(mention?.type).toBe('action');
     act(() => { if (mention?.type === 'action') mention.onClick(); });

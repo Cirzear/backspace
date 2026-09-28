@@ -287,7 +287,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     setShowReactionPicker(false);
   }, [addReaction, message.id]);
 
-  const handleContextMenu = (e: React.MouseEvent, includeAuthorActions = false) => {
+  const handleContextMenu = (e: React.MouseEvent) => {
     if (pending) {
       e.preventDefault();
       e.stopPropagation();
@@ -353,11 +353,6 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
       onMarkUnread: (msgId: string) => markUnread(channelKey, msgId),
     });
 
-    // Author actions extend the existing message menu rather than replacing it.
-    if (includeAuthorActions && message.user) {
-      if (items.length) items.push({ type: 'separator', key: 'author-actions' });
-      items.push(...authorMenuItems());
-    }
     if (items.length === 0) return;
     useContextMenuStore.getState().open({ x: e.clientX, y: e.clientY }, items);
   };
@@ -421,7 +416,13 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
           }
         } },
     ];
-  const handleAuthorMenu = (e: React.MouseEvent) => handleContextMenu(e, true);
+  const handleAuthorMenu = (e: React.MouseEvent) => {
+    // Do not bubble into the message menu: author actions are a separate interaction.
+    e.preventDefault();
+    e.stopPropagation();
+    if (pending || !message.user) return;
+    useContextMenuStore.getState().open({ x: e.clientX, y: e.clientY }, authorMenuItems());
+  };
 
   const handleUsernameClick = (e: React.MouseEvent) => {
     if (!message.user) return;
