@@ -557,6 +557,17 @@
       "label": "Owner title",
       "hint": "Visible to all members in this space. Use 1–{{max}} characters; this does not change permissions.",
       "reset": "Reset to default"
+    },
+    "menu": {
+      "profile": "View profile",
+      "nickname": "Change space nickname…",
+      "roles": "Roles / permission groups"
+    },
+    "nickname": {
+      "title": "Change space nickname",
+      "label": "Space nickname",
+      "description": "Only applies to this space. Your account name and nicknames in other spaces stay unchanged.",
+      "reset": "Reset to default"
     }
   },
   "mobile": {

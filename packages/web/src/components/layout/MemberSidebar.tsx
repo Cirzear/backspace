@@ -11,10 +11,10 @@ import { ActivityCard, hasRichActivity, getActivityAccentClass } from '../ui/Act
 import { getPrimaryActivity } from '@backspace/shared/src/activities.js';
 import { parseFederatedUsername, isFederationGlobeApplicable } from '../../utils/identity';
 import { useCanonicalUserView } from '../../utils/userViewLookup';
-import { hasPermissionBit, PermissionBits } from '../../utils/permissions';
-import { useAuthStore } from '../../stores/authStore';
 import { useDelayedLoading } from '../../hooks/useDelayedLoading';
 import { OwnerTitleHeading } from './OwnerTitleHeading';
+import { useMemberContextMenu } from './memberMenu/useMemberContextMenu';
+import { useContextMenuStore } from '../../stores/contextMenuStore';
 
 /**
  * Owner headings are editable separately; online and role groups keep their
@@ -69,6 +69,11 @@ function getMemberGroup(member: MemberWithUser, ownerId: string | undefined): Me
   };
 }
 
+function memberNameTone(isOffline: boolean, colored: boolean): string {
+  if (colored) return isOffline ? 'opacity-60' : '';
+  return isOffline ? 'text-txt-tertiary' : 'text-txt-primary';
+}
+
 function MemberSidebarRow({
   member,
   isOffline,
@@ -77,6 +82,7 @@ function MemberSidebarRow({
   isRichActivity,
   accentClass,
   onClickMember,
+  onContextMenuMember,
 }: {
   member: MemberWithUser;
   isOffline: boolean;
@@ -84,11 +90,12 @@ function MemberSidebarRow({
   activities: Activity[];
   isRichActivity: boolean;
   accentClass: string;
+  onContextMenuMember: (e: React.MouseEvent, member: MemberWithUser, user: MemberWithUser['user']) => void;
   onClickMember: (e: React.MouseEvent, member: MemberWithUser, user: MemberWithUser['user']) => void;
 }) {
   const canonical = useCanonicalUserView(member.user);
   const { baseName } = parseFederatedUsername(canonical.username);
-  const displayName = canonical.displayName ?? baseName;
+  const displayName = member.nickname ?? canonical.displayName ?? baseName;
 
   const rowClass = isRichActivity
     ? `flex items-center gap-2.5 px-2.5 py-2 rounded-[10px] mb-1 cursor-pointer transition-colors glass-pill border-l-2 ${accentClass}`
@@ -98,6 +105,8 @@ function MemberSidebarRow({
     <div
       key={member.userId}
       onClick={(e) => onClickMember(e, member, canonical)}
+      onContextMenu={(e) => onContextMenuMember(e, member, canonical)}
+      data-context-menu
       className={rowClass}
     >
       <Avatar
@@ -111,7 +120,7 @@ function MemberSidebarRow({
       <div className="flex-1 min-w-0">
         <Username
           username={displayName}
-          className={`text-[13.5px] leading-[1.2] font-medium truncate ${colorStyle ? (isOffline ? 'opacity-60' : '') : (isOffline ? 'text-txt-tertiary' : 'text-txt-primary')}`}
+          className={`text-[13.5px] leading-[1.2] font-medium truncate ${memberNameTone(isOffline, !!colorStyle)}`}
           style={colorStyle}
         />
         {!isOffline && isFederationGlobeApplicable(canonical) && (
@@ -133,19 +142,15 @@ export function MemberSidebar() {
   const { formatNumber } = useFormatters();
   const members = useSpaceStore((s) => s.members);
   const spaces = useSpaceStore((s) => s.spaces);
-  const roles = useSpaceStore((s) => s.roles);
-  const spacePermissions = useSpaceStore((s) => s.spacePermissions);
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId);
   const loadingSpaceId = useSpaceStore((s) => s.loadingSpaceId);
   const memberListOpen = useUIStore((s) => s.memberListOpen);
   const openUserProfile = useUIStore((s) => s.openUserProfile);
-  const closeUserProfile = useUIStore((s) => s.closeUserProfile);
-  const openModal = useUIStore((s) => s.openModal);
-  const currentUser = useAuthStore((s) => s.user);
   const userActivities = useActivityStore((s) => s.userActivities);
 
   const space = spaces.find(s => s.id === currentSpaceId);
   const ownerId = space?.ownerId;
+  const memberMenu = useMemberContextMenu(space);
 
   const { roleGroups, offlineMembers } = useMemo(() => {
     const online = members.filter(m => m.user.status !== 'offline');
@@ -187,20 +192,8 @@ export function MemberSidebar() {
 
   const handleMemberClick = (e: React.MouseEvent, member: MemberWithUser, user: MemberWithUser['user']) => {
     e.stopPropagation();
-    // With MANAGE_ROLES, clicking someone else opens the role editor — the
-    // same thing space settings lets a moderator do, one click from the list.
-    // Own roles and the owner's roles are not editable, and a space with no
-    // assignable roles has nothing to edit, so those keep the profile card.
-    const canEditRoles = !!space
-      && hasPermissionBit(spacePermissions.get(space.id), PermissionBits.MANAGE_ROLES)
-      && roles.some((r) => r.id !== space.id)
-      && member.userId !== currentUser?.id
-      && member.userId !== space.ownerId;
-    if (canEditRoles) {
-      closeUserProfile();
-      openModal('memberRoles', { spaceId: space.id, userId: member.userId });
-      return;
-    }
+    // Left click always means profile, regardless of the viewer's permissions.
+    useContextMenuStore.getState().close();
     openUserProfile(user, e.currentTarget.getBoundingClientRect(), 'left', { spaceId: member.spaceId, userId: member.userId });
   };
 
@@ -227,11 +220,14 @@ export function MemberSidebar() {
         isRichActivity={isRichActivity}
         accentClass={accentClass}
         onClickMember={handleMemberClick}
+        onContextMenuMember={memberMenu.open}
       />
     );
   };
 
   return (
+    <>
+    {memberMenu.dialogs}
     <div className="w-60 bg-surface-members flex-shrink-0 overflow-y-auto select-none no-scrollbar hidden desktop:block border-l border-border-hard">
       {showMemberSkeleton ? (
         <div className="px-3 pt-4" role="status" aria-label={t('spaces:members.loading')}>
@@ -280,5 +276,6 @@ export function MemberSidebar() {
       </div>
       )}
     </div>
+    </>
   );
 }

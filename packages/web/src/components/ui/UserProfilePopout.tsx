@@ -18,6 +18,7 @@ import { computeFloatingPosition, type AnchorRect, type Placement } from '../../
 import { useProfileMemberRoles } from '../../hooks/useProfileMember';
 import { useShownStatus } from '../../hooks/useShownStatus';
 import { ProfileRoles } from './ProfileRoles';
+import { ProfileSpaceNickname } from './ProfileSpaceNickname';
 
 /** Gap between the card and the element it was opened from. */
 const ANCHOR_OFFSET = 8;
@@ -179,6 +180,7 @@ export function UserProfilePopout({ user: propUser, onClose, anchor, placement =
 
         {/* Name & info */}
         <div>
+          <ProfileSpaceNickname member={member} />
           <Username
             username={user.displayName ?? baseName}
             className="text-[16px] font-semibold leading-tight"
