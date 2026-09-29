@@ -144,11 +144,15 @@ export function ReactionPill({ emoji, reactions, onToggle }: ReactionPillProps) 
           ref={floatingRef}
           role="tooltip"
           style={style}
-          className="glass rounded-md px-2.5 py-1.5 flex items-center gap-2 max-w-[360px] pointer-events-none animate-fade-in"
+          className={`glass flex items-center pointer-events-none animate-fade-in ${imageUrl
+            ? 'flex-col w-[224px] max-w-[calc(100*var(--app-vw)-24px)] rounded-xl overflow-hidden'
+            : 'rounded-md px-2.5 py-1.5 gap-2 max-w-[360px]'}`}
         >
-          {imageUrl ? <img src={imageUrl} alt={t('chat:stickers.preview')} className="w-36 h-36 object-contain" />
+          {imageUrl ? <div className="w-full p-4 bg-surface-elevated/50">
+            <img src={imageUrl} alt={t('chat:stickers.preview')} className="w-full h-40 object-contain" />
+          </div>
             : <span className="text-[16px] leading-none flex-shrink-0">{emoji}</span>}
-          <span className="text-[13px] leading-[18px] text-txt-secondary [overflow-wrap:anywhere]">
+          <span className={`text-[13px] leading-[18px] text-txt-secondary [overflow-wrap:anywhere] ${imageUrl ? 'w-full border-t border-border-soft px-3 py-2.5 text-center' : ''}`}>
             {before}
             <span className="font-medium text-txt-primary">{names}</span>
             {after}

@@ -1,7 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { StickerPicker } from './StickerPicker';
-import { SaveStickerButton } from './SaveStickerButton';
 import { StickerMessage } from './StickerMessage';
 import { api } from '../../api/client';
 import { uploadSticker } from './stickerUpload';
@@ -15,11 +14,24 @@ const sticker = { id: 'a'.repeat(64), name: 'Happy', token: `sticker:https://cha
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubGlobal('URL', class extends URL {
+    static createObjectURL = vi.fn(() => 'blob:sticker-preview');
+    static revokeObjectURL = vi.fn();
+  });
   vi.mocked(api.stickers.list).mockResolvedValue([sticker]);
   vi.mocked(api.stickers.remove).mockResolvedValue({ success: true });
   vi.mocked(api.stickers.collect).mockResolvedValue(sticker);
   vi.mocked(uploadSticker).mockResolvedValue(sticker);
 });
+
+afterEach(() => vi.unstubAllGlobals());
+
+function chooseImage() {
+  fireEvent.click(screen.getByRole('button', { name: 'Upload image' }));
+  fireEvent.change(screen.getByLabelText('Choose image', { selector: 'input' }), { target: { files: [new File(['png'], 'x.png', { type: 'image/png' })] } });
+  fireEvent.load(screen.getByAltText('Preview sticker'));
+  fireEvent.click(screen.getByRole('button', { name: 'Add to my stickers' }));
+}
 
 describe('sticker controls', () => {
   it('selects a sticker and removes only after successful API confirmation', async () => {
@@ -27,7 +39,9 @@ describe('sticker controls', () => {
     render(<StickerPicker onSelect={onSelect} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Happy' }));
     expect(onSelect).toHaveBeenCalledWith(sticker.token);
-    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    expect(screen.queryByRole('button', { name: 'Remove Happy' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Happy' }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Happy' })).not.toBeInTheDocument());
     expect(api.stickers.remove).toHaveBeenCalledWith(sticker.id);
   });
@@ -36,34 +50,27 @@ describe('sticker controls', () => {
     vi.mocked(api.stickers.list).mockResolvedValue([]);
     vi.mocked(uploadSticker).mockRejectedValueOnce(new Error('Invalid image'));
     render(<StickerPicker onSelect={vi.fn()} />);
-    await screen.findByText('No stickers yet. Upload an image to get started.');
-    fireEvent.change(screen.getByLabelText('Upload image'), { target: { files: [new File(['bad'], 'x.png')] } });
+    await screen.findByText('Your sticker collection starts here');
+    chooseImage();
     expect(await screen.findByRole('alert')).toHaveTextContent('Invalid image');
-    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+    expect(screen.getByRole('img')).toHaveAttribute('src', 'blob:sticker-preview');
+    expect(screen.getByRole('textbox', { name: 'Sticker name' })).toHaveValue('x');
   });
 
   it('deduplicates successful uploads in the current list', async () => {
     render(<StickerPicker onSelect={vi.fn()} />);
     await screen.findByRole('button', { name: 'Happy' });
-    fireEvent.change(screen.getByLabelText('Upload image'), { target: { files: [new File(['png'], 'x.png')] } });
+    chooseImage();
     await waitFor(() => expect(uploadSticker).toHaveBeenCalledOnce());
+    await screen.findByRole('button', { name: 'Happy' });
     expect(screen.getAllByRole('button', { name: 'Happy' })).toHaveLength(1);
   });
 
-  it('collects the original token and previews the full image', async () => {
+  it('previews the full image without a permanent collection button', async () => {
     render(<StickerMessage token={sticker.token} />);
     fireEvent.click(screen.getByRole('button', { name: 'Preview sticker' }));
     expect(preview).toHaveBeenCalledWith(sticker.token.slice('sticker:'.length));
-    fireEvent.click(screen.getByRole('button', { name: 'Add to my stickers' }));
-    expect(await screen.findByRole('status')).toHaveTextContent('Added to my stickers');
-    expect(api.stickers.collect).toHaveBeenCalledWith({ id: sticker.id, token: sticker.token });
-    // Collection may have been removed in the picker; the message must remain collectible.
-    fireEvent.click(screen.getByRole('button', { name: 'Add to my stickers' }));
-    await waitFor(() => expect(api.stickers.collect).toHaveBeenCalledTimes(2));
-  });
-
-  it('does not fetch remote message images for collection', () => {
-    render(<SaveStickerButton source="https://remote.test/api/uploads/private.png" name="Image" />);
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add to my stickers' })).not.toBeInTheDocument();
+    expect(screen.getByRole('img')).toHaveAttribute('data-sticker-source', sticker.token);
   });
 });

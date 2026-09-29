@@ -3,6 +3,8 @@
 ## Scope
 
 - Personal collections support upload, send, collection from local image attachments or sticker messages, and removal.
+- Uploads use a local preview and editable name before explicit confirmation, with file selection, drag-and-drop, and clipboard paste. Removal is isolated in management mode.
+- Collection is available in the existing right-click image menu (long-press on mobile), not as a permanent button beneath messages. Hover reaction cards place the large sticker above the reacting users.
 - The existing message reaction picker also offers personal stickers. Reactions keep the existing grouping, permission checks, user identity resolution, and add/remove transport. Hover previews add the large image beside the existing reactor summary.
 - No public gallery and no cross-instance collection or server-side URL fetching in this version. A remote sticker can still be displayed using its originating asset URL; collection is rejected explicitly.
 

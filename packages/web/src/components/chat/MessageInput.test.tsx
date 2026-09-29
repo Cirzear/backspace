@@ -229,3 +229,16 @@ it('sends a personal sticker without discarding the current text draft', async (
   expect(send).toHaveBeenCalledWith('dm-1', token);
   expect(screen.getByRole('textbox')).toHaveValue('unfinished draft');
 });
+
+it('offers collection only in the sticker context menu and keeps existing message actions', async () => {
+  const token = `sticker:https://chat.test/api/stickers/assets/${'a'.repeat(64)}.webp`;
+  const collect = vi.spyOn(api.stickers, 'collect').mockResolvedValue({ id: 'a'.repeat(64), name: 'Happy', token });
+  render(<Message message={{ ...ownMessage, content: token }} isCompact={false} isFirstInGroup previousMessageId={null} />);
+  expect(screen.queryByRole('button', { name: 'Add to my stickers' })).not.toBeInTheDocument();
+  fireEvent.contextMenu(screen.getByAltText('My stickers'));
+  const items = useContextMenuStore.getState().menu!.items;
+  expect(items.map(item => item.key)).toEqual(expect.arrayContaining(['collect-sticker', 'save-image', 'copy-image', 'reply', 'delete']));
+  const item = items.find(item => item.key === 'collect-sticker');
+  await act(async () => { if (item?.type === 'action') await item.onClick(); });
+  expect(collect).toHaveBeenCalledWith({ id: 'a'.repeat(64), token });
+});

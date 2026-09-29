@@ -333,6 +333,9 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     const imgEl = (e.target as HTMLElement).closest('img') as HTMLImageElement | null;
     const isContentImage = imgEl && !imgEl.closest('[data-avatar]') && !imgEl.closest('[data-embed-thumbnail]');
     const imageUrl = isContentImage ? imgEl.src : null;
+    // Attachment previews may be thumbnails; collection always uses the original source.
+    const stickerSource = isContentImage ? imgEl.dataset.stickerSource : null;
+    const stickerName = isContentImage ? imgEl.alt : undefined;
 
     // Detect right-click on a video/audio element and resolve its underlying attachment.
     // `message` is the persisted form here — pending messages return early above.
@@ -361,6 +364,8 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
       selectedText,
       previousMessageId,
       imageUrl,
+      stickerSource,
+      stickerName,
       sourceUrl,
       videoUrl: videoAtt ? attUrlOf(videoAtt.filename) : null,
       videoFilename: videoAtt ? videoAtt.originalName : null,

@@ -1,4 +1,3 @@
-import { SaveStickerButton } from './SaveStickerButton';
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { Attachment } from '@backspace/shared';
@@ -244,13 +243,13 @@ export function AttachmentRenderer({ attachment }: AttachmentRendererProps) {
         >
           <img
             src={thumbUrl ?? attUrl}
+            data-sticker-source={attUrl}
             alt={originalName}
             className="w-full h-full max-w-[400px] max-h-[300px] object-contain cursor-pointer hover:brightness-95 transition-all"
             onClick={() => openImagePreview(attUrl)}
             loading="lazy"
           />
         </div>
-        <SaveStickerButton source={attUrl} name={originalName} />
         {federationInlineBadge && <div className="mt-1">{federationInlineBadge}</div>}
       </div>
     );
