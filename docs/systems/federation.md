@@ -481,9 +481,13 @@ Two harness profiles exist because production collapses three origins into one s
 | Profile | `PUBLIC_ORIGIN` | What it makes real | Suites |
 |---------|-----------------|--------------------|--------|
 | `bootIdentityPeered` | unset → `https://<DOMAIN>` | Distinct identity domains, so `extractDomain` can tell three instances apart. The handshake leaves the initiator a transport-keyed peer row and the responder an identity-keyed one, so **inbound** relay is fully real. | attribution, stub-claiming, reply-confinement |
-| `bootTransportPeered` | `http://127.0.0.1:<port>` | Identity == transport == peer key, so **outbound** routing (`getGroupDmTargetOrigins`, `sendCallRelay`) resolves to a live peer and the outbox worker really delivers. Federation workers and synthetic LiveKit credentials are enabled. | relay-scoping, call-addressing |
+| `bootTransportPeered` | `http://127.0.0.1:<port>` | Identity == transport == peer key, so **outbound** routing (`getGroupDmTargetOrigins`, `sendCallRelay`) resolves to a live peer and the outbox worker really delivers. Federation workers and synthetic LiveKit credentials are enabled. | relay-scoping, call-addressing, outbox-delivery |
 
 `test/helpers/relayTap.ts` is a transparent recording reverse proxy placed in front of a peer: it records every S2S request and forwards it verbatim (same bytes, so the HMAC still verifies), so peering and delivery behave normally while the wire stays readable. It exists because two claims are only observable in transit — which instances a `dm_call_start` was addressed to and which room tokens each payload carried, and whether an all-local DM's create *and* its delete were both broadcast (a leaked pair leaves the receiver's DB looking exactly like a conversation that was never relayed).
+
+Two more tap controls exist for delivery tests: `holdRelayResponses()` forwards relay POSTs but holds the receiver's answers until released (the receiver has applied the batch, the sender has not heard back: the on-the-wire window), and `failNextRelays(n)` answers the next `n` relay POSTs 503 without forwarding them.
+
+**Relay waits and their failure report.** A suite waits for a worker-delivered relay with `waitForRelay(check, { sender, receiver, peerOrigin?, what, timeoutMs? })` from `federationE2E.ts`, not a bare `waitUntil`. On timeout it throws with `describeRelayState`: the sender's peer rows (status, failure counters, last seen/failed, probe pacing), the sender's outbox entries for the receiver's peer row (event type, entity, attempts, next retry, age; the outbox has no delivered flag, so no entry means nothing is waiting), and the last 40 lines of both instances' logs, where the worker writes every failed attempt and rejection. The logs are quoted because `cleanup()` deletes the run directory. `waitForOutboxDrained` waits until the sender has nothing queued or on the wire for a peer.
 
 `packages/server/tsconfig.e2e.json` type-checks these suites and the shared helpers; the main server `tsconfig.json` includes only `src/**/*`, so nothing under `test/` is otherwise compiled. CI runs both (`typecheck:e2e`, then `pnpm -r test`) inside the required "Build & test" job.
 
@@ -991,6 +995,16 @@ Trigger (API/WS handler)
 | `update` | `update` | Payload updated, type becomes latest |
 | `delete` | `update` | Payload updated, type becomes `delete` |
 | any | none | New entry inserted |
+| any | on the wire | Payload and type become the incoming event's; the merge waits for the peer's answer |
+
+The table (`mergeUndeliveredEvent` in `federationOutbox.ts`) assumes the peer has not received the existing entry. That is not known while the worker has the entry **on the wire**: read for a POST whose answer has not come back. `federationOutbox.ts` keeps those outbox ids in memory (`rowsOnTheWire`, set by `beginOutboxDelivery`, cleared by `finishOutboxDelivery`), and an event queued for one of them is stored as itself and marks the entry superseded. When the answer comes:
+
+- **Taken** (accepted, or rejected as `duplicate`): a superseded entry is kept (not deleted with the batch) and goes out on the next tick as the newer event. An edit or delete of a message whose create was on the wire is therefore sent as an `update` / `delete`, and a status change made while the previous one was on the wire is not lost.
+- **Not taken** (any other terminal rejection, a retryable rejection, not mentioned, auth failure, HTTP error, network error or timeout, worker stopping): a superseded entry is merged now by the table with the sent event as the existing one (`requeueAfterUndeliveredSend`): a create and delete cancel out, a create with a later edit stays a create (and is refused again if the refusal was terminal). It stays due and is not backed off; only entries nobody touched move to their next backoff step.
+
+Superseding an entry also gives it `createdAt = now` (at least one more than before), because the worker stamps each event's `timestamp` with its entry's `createdAt` and receivers that order by it (read state applies only a strictly greater timestamp) must see the newer event as newer. The original `createdAt` is kept in `rowsOnTheWire` and restored when the entry is merged as not taken, so it keeps its place ahead of entries queued after it.
+
+Before #367 the worker settled entries by id whatever had been merged into them meanwhile, so an accepted batch deleted the newer event with it, and the create-then-delete rule dropped a delete whose create had already reached the peer.
 
 ### Outbox Delivery Worker (`federationWorker.ts:processOutboxTick`)
 
@@ -1000,7 +1014,7 @@ Trigger (API/WS handler)
 
 1. Query entries where `nextRetryAt <= now` joined with active peers, ordered by `createdAt ASC`, limit 50
 2. Group by peer
-3. For each peer, reconstruct `FederationRelayEvent[]` from stored payloads:
+3. For each peer, read its entries again (an earlier peer's POST in the same tick may have taken up to the timeout, and entries merged into or removed meanwhile go out as they are now), mark them on the wire (`beginOutboxDelivery`, see [Coalescing Rules](#coalescing-rules-per-peer-per-entity)), and reconstruct `FederationRelayEvent[]` from stored payloads:
    - Parse JSON payload
    - Copy fields: `federatedId`, `participants`, `message`, `reactions`, `reaction`, `target`, `membership`, `ownership`, `group`, `friendship`, file_rejected fields
    - Set `eventType`, `contextType`, `messageId`, `dmChannelId`, `encryptionVersion`, `timestamp`
@@ -1009,7 +1023,7 @@ Trigger (API/WS handler)
 6. POST to `{peerOrigin}/api/federation/relay`
 7. On success (200):
    - Compute the **terminal entity set** = accepted entries ∪ duplicate-rejected entries
-   - Delete all terminal entries from outbox (matched by `entityId` -> `outboxId`)
+   - Delete all terminal entries from outbox (matched by `entityId` -> `outboxId`), except entries superseded while on the wire
    - Every other entry in the batch (non-terminal rejections, and any entry the response does not mention) stays in the outbox and moves to its next backoff step (`attempts + 1`, `nextRetryAt = now + backoff`). Before this, such entries kept their `nextRetryAt` and were resent on every 10-second tick; a run of them at the head of the `createdAt`-ordered batch could crowd newer events out of it
    - Log non-terminal rejected entries at `console.warn`
    - Store `result.maxUploadSize` on peer record
@@ -1049,6 +1063,8 @@ Logged at `console.log` ("outbox entry removed (terminal)") to distinguish from 
 | 5 | 1 hour |
 | 6 | 6 hours |
 | 7+ | 24 hours (cap) |
+
+Test instances divide these waits, see [Retry backoff divisor (test only)](#retry-backoff-divisor-test-only).
 
 The schedule above (`BACKOFF_SCHEDULE_MS`) paces per-entry retries. Peer-level recovery from `unreachable` is separate and demand-driven: `processRecoveryTick` probes unreachable peers on `RECOVERY_BACKOFF_MS = [30s, 1m, 5m, 15m]` while they have queued mail (15-min backstop when silent), paced by the per-peer `last_probe_at` / `probe_attempts` columns and the `probePeerReachable` helper in `utils/federationRecovery.ts`. See [PEER_UNREACHABLE_THRESHOLD](#peer_unreachable_threshold).
 
@@ -2050,6 +2066,12 @@ DM channel hard-delete cascades: reactions, embeds, attachments (DB rows + disk 
 ### Test-Only Routes
 
 `POST /api/admin/test/seed-peer` directly inserts a `federation_peers` row, skipping the multi-step peer handshake. Strictly gated: `NODE_ENV='test'` AND `ENABLE_TEST_ROUTES='1'` together; returns 404 in any other configuration. Used exclusively by the two-instance integration harness in `packages/server/test/`. Validates `origin` (must be http(s) URL), `hmacSecret` (≥32 chars), and `status` (must be one of `'active'`, `'pending'`, `'awaiting_approval'`, `'rejected'`, `'revoked'`, `'needs_attention'`, `'unreachable'`, `'accepted'`).
+
+### Retry backoff divisor (test only)
+
+`FEDERATION_BACKOFF_DIVISOR` (`config.federation.backoffDivisor`, read once in `config.ts`) divides every federation retry wait: `BACKOFF_SCHEDULE_MS` for outbox entries and file downloads, and `RECOVERY_BACKOFF_MS` for unreachable-peer probes and pending-peer handshakes (`retryWait` in `federationWorker.ts`). Unset or 1 is the production schedule. It must be a whole number ≥ 1, so it can only shorten waits; 0 and fractions refuse to boot. The health-check interval and the 15-minute silent-peer backstop are not retry waits and are not divided.
+
+The two-instance harness sets 30 in every spawned instance (`HARNESS_BACKOFF_DIVISOR` in `twoInstanceHarness.ts`), so the retries come after 1 s, 2 s, 10 s. Production's first retry is 30 s, longer than any relay wait in the e2e suites, so without it a relay whose first attempt failed on a loaded runner (a busy peer, a timed-out request) would fail its test while the instance behaved as designed. Not an operator setting: a larger divisor only makes an instance retry a struggling peer harder.
 
 ### Rate-limit bypass (test only)
 

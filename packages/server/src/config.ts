@@ -231,6 +231,15 @@ const version = readPackageVersion();
  */
 const passwordHashCost = process.env.NODE_ENV === 'test' ? 4 : 12;
 
+/**
+ * `FEDERATION_BACKOFF_DIVISOR`, test only. What it divides and why the harness
+ * sets it: docs/systems/federation.md, "Retry backoff divisor (test only)".
+ */
+const federationBackoffDivisor = envCount('FEDERATION_BACKOFF_DIVISOR', 1);
+if (federationBackoffDivisor < 1) {
+  throw new Error('Environment variable FEDERATION_BACKOFF_DIVISOR must be at least 1, got: 0');
+}
+
 export const config = {
   port: envInt('PORT', 3000),
   host: env('HOST', '0.0.0.0'),
@@ -266,6 +275,8 @@ export const config = {
      * test harness sets it for the same reason.
      */
     allowPrivatePeers: envBool('FEDERATION_ALLOW_PRIVATE_PEERS', false),
+    /** `FEDERATION_BACKOFF_DIVISOR`, see above. */
+    backoffDivisor: federationBackoffDivisor,
   },
 
   uploadDir: env('UPLOAD_DIR', resolve(__dirname, '../../../data/uploads')),
