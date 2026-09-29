@@ -69,6 +69,8 @@ Source: `packages/server/src/ws/handler.ts`, `packages/server/src/ws/events.ts`
 | `voice_move` | userId, targetChannelId | MOVE_MEMBERS |
 | `voice_disconnect` | userId | DISCONNECT_MEMBERS |
 
+All four also need the actor to outrank the target (permissions.md, "Role hierarchy"); a refusal is an `error` with `code: 'role_hierarchy'`.
+
 ### DM Calls
 | type | fields | notes |
 |------|--------|-------|
@@ -92,7 +94,7 @@ Source: `packages/server/src/ws/handler.ts`, `packages/server/src/ws/events.ts`
 |------|--------|-------|
 | `ready` | (see Ready Payload below) | user |
 | `pong` | — | user |
-| `error` | message | user |
+| `error` | message, code? | user |
 
 ### Messages
 | type | fields | scope |
@@ -130,7 +132,7 @@ handler alike, so both paths reach the same audience. (`reaction_added` and
 ### Presence & Activity
 | type | fields | scope |
 |------|--------|-------|
-| `presence_update` | userId, status, activities? | friends + DM co-members + space co-members of the user (via `collectProfileBroadcastTargetIds`), plus self for multi-tab sync. For federated stubs, the local instance receives status via S2S `presence_update` relay from the home (see `federation.md` §10 — Presence Sync) and re-broadcasts to the same recipient set. |
+| `presence_update` | userId, status, activities?, homeUserId?, homeInstance? | friends + DM co-members + space co-members of the user (via `collectProfileBroadcastTargetIds`), plus self for multi-tab sync. For federated stubs, the local instance receives status and activities via S2S `presence_update` relay from the home (see `federation.md` §10 — Presence Sync) and re-broadcasts to the same recipient set, with `activities` whenever the relay changed them (empty clears). `activities` absent = unchanged. `homeUserId`/`homeInstance` are the subject row's federated identity, both null for a row native to this instance; the client keys activities and friend status by that identity (activity-presence.md "Keying"). Every emitter builds the event with `presenceUpdateFor`/`presenceUpdateEvent` (`ws/presenceEvent.ts`). Also sent when a friendship is created: each side gets the other's current status and activities (activity-presence.md "Friendship Snapshot"). Servers that predate the identity fields omit them. |
 | `user_updated` | user | user |
 
 ### Space / Channel Management
@@ -228,14 +230,15 @@ reason: `'displaced'` (new tab) | `'session_closed'`
   spaceVoiceStates?: Record<string, { spaceMuted, spaceDeafened, permissionMuted }>,
   readStates?: ReadState[],
   activeCalls?: ActiveCallInfo[],  // includes federatedCallHost?, livekitUrl?, livekitToken? for federated calls
-  userActivities?: Record<userId, Activity[]>,
+  userActivities?: Record<userId, Activity[]>,  // space members, DM members and friends; keys are this instance's row ids
+  userActivityIdentities?: Record<userId, { homeUserId: string | null, homeInstance: string | null }>,  // identity of each userActivities key; null pair = native row
   rejectedPeerOrigins: string[],         // origins with status 'rejected'; used for DM unreachable indicators
   awaitingApprovalPeerOrigins: string[], // origins with status 'awaiting_approval'
   pendingApprovalCount: number           // count of peer_approval_requests rows; only non-zero for admins
 }
 ```
 
-**Federation filtering:** When the connecting user is federated (`homeInstance` is set), the server omits all DM-related data from the ready payload. `dmChannels` and `activeCalls` are sent as empty arrays, and `readStates` is filtered to only include space channel entries. Federated users receive their DM data from their home instance's ready payload instead.
+**Federated users:** When the connecting user is federated (`homeInstance` is set), the ready payload carries their DMs on this instance like anyone else's: `dmChannels` (this instance's copies, each with its `federatedId`, which is how the client shows a conversation it also gets from the user's home once) and `activeCalls` for those memberships. `readStates` is filtered to the space channels and DMs in the payload, and a DM with messages but no read state yet gets one at its newest message, so conversations mirrored here before the user first connected do not show as unread.
 
 **Voice-state assembly:** `voiceStates` / `voiceChannelElapsedSeconds` / `voiceUserStates` / `spaceVoiceStates` for each of the user's spaces are produced by `ConnectionManager.buildSpaceVoiceState(spaceId, userId)` — the single source of truth shared with the mid-session join push (see below). `voiceChannelElapsedSeconds` is a whole-second duration computed from the in-memory `VoiceRoom.startedAt`; clients advance that duration from receipt time, so server/client clock skew cannot change the value. It disappears when the room becomes empty. Because rooms are intentionally in-memory, a server restart clears both occupancy and its duration until participants reconnect; this is not persisted to the database. Voice presence is VIEW_CHANNEL-filtered per `computePermissions`: a user is never told who occupies a voice channel they cannot see.
 

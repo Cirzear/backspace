@@ -1,37 +1,46 @@
 import { MassMentionBadge } from './MassMentionBadge';
 import { MentionBadge } from './MentionBadge';
 import { replaceEmojiShortcodesInMarkdownSource } from '../../utils/emojiShortcodes';
+import { splitMentionTokens } from '../../utils/mentionTokens';
 
-const MENTION_SPLIT = /(<@&?[a-zA-Z0-9_-]+>|(?<![\w@])@(?:everyone|here)(?![\w-]))/g;
-const MENTION_TOKEN = /^<@([a-zA-Z0-9_-]+)>$/;
+const MASS_MENTION_SPLIT = /(<@&[a-zA-Z0-9_-]+>|(?<![\w@])@(?:everyone|here)(?![\w-]))/g;
 
 interface InlineMessageTextProps {
   content: string;
+  /** The channel the text was written in; its mentions resolve there (see `MentionBadge`). */
+  channelId: string | null;
+}
+
+function renderTextSegment(text: string, baseKey: number) {
+  const parts = text.split(MASS_MENTION_SPLIT);
+  return parts.map((part, j) => {
+    if (part === '@everyone' || part === '@here') {
+      return <MassMentionBadge key={`${baseKey}-${j}`} token={part.slice(1)} />;
+    }
+    const role = part.match(/^<@(&[a-zA-Z0-9_-]+)>$/);
+    if (role) {
+      return <MassMentionBadge key={`${baseKey}-${j}`} token={role[1]!} />;
+    }
+    return replaceEmojiShortcodesInMarkdownSource(part);
+  });
 }
 
 /**
  * One line of message text without Markdown, as a reply preview shows it:
- * `<@userId>` tokens become non-interactive mention badges (the preview
- * itself is the jump control), `:shortcode:` text becomes emoji
+ * `<@userId>` tokens outside code become non-interactive mention badges (the
+ * preview itself is the jump control; the scan is the one the full message
+ * uses, see utils/mentionTokens.ts), `:shortcode:` text becomes emoji
  * (not inside code, and not where a colon is escaped as `\:`), and everything
  * else is plain text.
  */
-export function InlineMessageText({ content }: InlineMessageTextProps) {
-  const parts = content.split(MENTION_SPLIT);
+export function InlineMessageText({ content, channelId }: InlineMessageTextProps) {
   return (
     <>
-      {parts.map((part, i) => {
-        if (part === '@everyone' || part === '@here') {
-          return <MassMentionBadge key={i} token={part.slice(1)} />;
-        }
-        const role = part.match(/^<@(&[a-zA-Z0-9_-]+)>$/);
-        if (role) {
-          return <MassMentionBadge key={i} token={role[1]!} />;
-        }
-        const match = part.match(MENTION_TOKEN);
-        if (match) return <MentionBadge key={i} userId={match[1]!} interactive={false} />;
-        return replaceEmojiShortcodesInMarkdownSource(part);
-      })}
+      {splitMentionTokens(content).map((segment, i) =>
+        segment.kind === 'mention'
+          ? <MentionBadge key={i} userId={segment.userId} channelId={channelId} interactive={false} />
+          : renderTextSegment(segment.text, i),
+      )}
     </>
   );
 }

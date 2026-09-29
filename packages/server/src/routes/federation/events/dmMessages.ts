@@ -1,15 +1,18 @@
 import path from 'node:path';
 import { getDb, schema } from '../../../db/index.js';
 import { normalizeOriginForCompare } from '../../../utils/federationAuth.js';
-import { computeFederatedId, getGroupDmTargetOrigins } from '../../../utils/federationOutbox.js';
+import { getGroupDmTargetOrigins } from '../../../utils/federationOutbox.js';
+import { findOrCreateOneOnOne, oneOnOneKey } from '../../../utils/dmConversation.js';
+import { loadDmChannelWire } from '../../../utils/dmChannelWire.js';
 import { deleteAttachmentFiles } from '../../../utils/fileCleanup.js';
+import { rewriteRelayedMentions } from '../../../utils/federationMentions.js';
 import { sanitizeUser } from '../../../utils/sanitize.js';
 import { generateSnowflake } from '../../../utils/snowflake.js';
 import { connectionManager } from '../../../ws/handler.js';
 import { getDmMessageWithUser } from '../../dm.js';
 import { and, eq, isNull, or } from 'drizzle-orm';
 import type { FederationMessageTarget, FederationRelayEvent } from '@backspace/shared';
-import { buildDmChannelPayload, buildDmMessagePayload, dmChannelMembers, findOrCreateDmChannel, isRelayTarget, isUrlFromPeer, mayRelayInto, memberWithIdentity, nonMemberRefusal, resolveLocalDmMessage, resolveRelayedReplyTarget } from '../dmChannels.js';
+import { buildDmMessagePayload, dmChannelMembers, isRelayTarget, isUrlFromPeer, mayRelayInto, memberWithIdentity, nonMemberRefusal, resolveLocalDmMessage, resolveRelayedReplyTarget } from '../dmChannels.js';
 import { attributionRefusal, extractDomain, relayActorOfUser, resolveOrCreateReplicatedUser, resolveRelayActor, sameRelayActor } from '../identity.js';
 import { hydrateReplicatedUserProfile } from '../profile.js';
 
@@ -130,20 +133,23 @@ export async function processCreateEvent(
       rejected.push({ messageId: event.messageId, reason: 'invalid_target' });
       return;
     }
-    const federatedId = computeFederatedId(
-      resolvedParticipants[0]!.homeUserId,
-      resolvedParticipants[1]!.homeUserId,
-    );
-    localDmChannelId = findOrCreateDmChannel(
-      federatedId,
-      [resolvedParticipants[0]!.localUser.id, resolvedParticipants[1]!.localUser.id],
-      db,
-    );
+    // Both members open: the message that creates a copy here is delivered
+    // with it.
+    localDmChannelId = findOrCreateOneOnOne(db, pair[0]!, pair[1]!, { open: 'both' }).channelId;
+    // A call that rang here before this copy existed is bound to it now.
+    connectionManager.lateBindFederatedCall(oneOnOneKey(pair[0]!, pair[1]!), localDmChannelId);
   }
 
   // The wire's `replyToId` is the sender's local id and is never adopted; the
   // shared-coordinate `replyTo` is resolved inside this conversation instead.
   const replyToId = resolveRelayedReplyTarget(event.message.replyTo, sourceInstance, localDmChannelId, db);
+
+  // Mention tokens carry the sender's ids; store them as this instance's.
+  // System content is not text with tokens and is stored as sent.
+  const isSystem = event.message.type === 'system';
+  const content = isSystem
+    ? event.message.content
+    : rewriteRelayedMentions(event.message.content, event.message.mentions, db);
 
   // Insert the message
   const localMessageId = generateSnowflake();
@@ -152,8 +158,8 @@ export async function processCreateEvent(
       id: localMessageId,
       dmChannelId: localDmChannelId,
       userId: authorUser.id,
-      content: event.message.content,
-      type: event.message.type === 'system' ? 'system' : 'user',
+      content,
+      type: isSystem ? 'system' : 'user',
       replyToId,
       createdAt: event.message.createdAt,
       editedAt: null,
@@ -242,7 +248,7 @@ export async function processCreateEvent(
           ))
           .run();
 
-        const payload = buildDmChannelPayload(localDmChannelId, db, fullMessage);
+        const payload = loadDmChannelWire(db, localDmChannelId, fullMessage);
         if (payload) {
           connectionManager.sendToUser(member.userId, {
             type: 'dm_channel_created',
@@ -443,7 +449,10 @@ export function processUpdateEvent(
   }
   const localMsg = resolved.localMsg;
 
-  const content = event.message?.content ?? null;
+  // Mention tokens carry the sender's ids; store them as this instance's.
+  const content = localMsg.type === 'system'
+    ? event.message?.content ?? null
+    : rewriteRelayedMentions(event.message?.content ?? null, event.message?.mentions, db);
   const editedAt = event.message?.editedAt ?? Date.now();
 
   db.update(schema.dmMessages)

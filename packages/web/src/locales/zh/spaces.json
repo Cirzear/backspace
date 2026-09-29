@@ -349,7 +349,9 @@
       },
       "updateRolesFailed": "更新身份组失败",
       "kickFailed": "踢出成员失败",
-      "banFailed": "封禁成员失败"
+      "banFailed": "封禁成员失败",
+      "rolesAboveYou": "与您的最高身份组同级或更高的身份组已锁定。",
+      "rolesUnheld": "无法授予拥有您没有的权限的身份组。"
     }
   },
   "bans": {
@@ -369,11 +371,21 @@
     "create": "创建身份组",
     "creating": "正在创建…",
     "listHeading": "身份组列表",
-    "description": "身份组用于定义成员具备的权限。排名越高的身份组优先级越高。",
+    "description": "身份组用于定义成员具备的权限。",
+    "hierarchyHint": "列表中越靠上的身份组，等级越高。",
     "defaultName": "新身份组",
     "copyName": "{{name}} 的副本",
     "backToList": "返回身份组列表",
     "created": "身份组已创建。请在下方进行个性化配置。",
+    "aboveYou": "此身份组与您的最高身份组同级或更高。您可以查看，但无法更改。",
+    "reorder": {
+      "handle": "移动 {{name}}",
+      "handleHint": "拖动，或使用上下方向键",
+      "up": "将 {{name}} 上移",
+      "down": "将 {{name}} 下移",
+      "locked": "{{name}} 与您的最高身份组同级或更高",
+      "moved": "{{name}} 已移至第 {{position}} 位（共 {{total}} 位）"
+    },
     "identity": "身份信息",
     "nameLabel": "身份组名称",
     "colorLabel": "身份组颜色",
@@ -393,10 +405,14 @@
     "createFailed": "创建身份组失败",
     "saveFailed": "保存身份组失败",
     "deleteFailed": "删除身份组失败",
-    "copyFailed": "复制身份组失败"
+    "copyFailed": "复制身份组失败",
+    "unheldLocked": "您只能切换自己拥有的权限，其他权限已锁定。",
+    "unheldPermission": "您没有此权限",
+    "copyUnheld": "此身份组拥有您没有的权限，因此您无法复制它。",
+    "copyDeleteUnheld": "此身份组拥有您没有的权限，因此您无法复制或删除它。"
   },
   "memberRoles": {
-    "title": "身份组 — {{name}}",
+    "title": "编辑 {{name}} 的身份组",
     "viewProfile": "查看资料",
     "affectsAll": "权限修改会影响拥有该身份组的所有成员。",
     "selectRole": "选择一个身份组以编辑其权限。",
@@ -444,7 +460,14 @@
     "noMoreRoles": "没有更多可添加的身份组",
     "loadFailed": "加载权限覆盖失败",
     "saveFailed": "保存权限覆盖失败",
-    "partialFailure_other": "{{count}} 个权限覆盖保存失败"
+    "partialFailure_other": "{{count}} 个权限覆盖保存失败",
+    "unheldLocked": "您只能切换自己拥有的权限，其他权限已锁定。",
+    "unheldPermission": "您没有此权限",
+    "removeUnheld": "此权限覆盖设置了您没有的权限。只有拥有这些权限的人才能移除它。",
+    "removeUnheldShort": "只有拥有这些权限的人才能移除它",
+    "aboveYouRole": "此身份组与您的最高身份组同级或更高。您可以查看其权限覆盖，但无法更改或移除。",
+    "aboveYouMember": "此成员与您同级或更高。您可以查看其权限覆盖，但无法更改或移除。",
+    "aboveYouShort": "与您的最高身份组同级或更高"
   },
   "sidebar": {
     "dmUnreadMessages": "{{quantity}} 条未读私信",

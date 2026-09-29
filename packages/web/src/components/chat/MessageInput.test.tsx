@@ -123,7 +123,8 @@ describe('MessageInput mention composition', () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();
     useSpaceStore.setState({
-      members: [{ userId: 'me', user: me, roles: [] }] as unknown as MemberWithUser[],
+      channelToSpaceMap: new Map([['dm-1', 'space-1']]),
+      members: [{ spaceId: 'space-1', userId: 'me', user: me, roles: [] }] as unknown as MemberWithUser[],
       roles: [],
       channelPermissions: new Map([['dm-1', (PermissionBits.SEND_MESSAGES).toString()]]),
     });

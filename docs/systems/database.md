@@ -1,7 +1,7 @@
 # Database Schema Reference
 
 Source of truth: `packages/server/src/db/schema.ts` (Drizzle ORM)
-Migrations: drizzle-kit generates SQL from `schema.ts` (`pnpm db:generate` from `packages/server/`). On startup, `initDatabase()` runs `drizzle.migrate()` against `packages/server/drizzle/`, then `ensureDefaults()` (settings row, Snowflake worker ID, instance epoch, `installedAt` backfill, first-admin promotion). Migration history was squashed to a single baseline on 2026-04-24 (backlog #31 Phase 2).
+Migrations: drizzle-kit generates SQL from `schema.ts` (`pnpm db:generate` from `packages/server/`). On startup, `initDatabase()` runs `drizzle.migrate()` against `packages/server/drizzle/`, then `ensureDefaults()` (settings row, Snowflake worker ID, instance epoch, `installedAt` backfill, first-admin promotion), `backfillOneOnOneDmMembership()` and `backfillOneOnOneKeys()` (every 1-on-1 `dm_channels` row gets the key of its two members; see dm-system.md "Federated ID Algorithm"). Migration history was squashed to a single baseline on 2026-04-24 (backlog #31 Phase 2).
 Engine: SQLite via `better-sqlite3`
 IDs: Snowflake text, permissions: bigint decimal strings
 
@@ -39,6 +39,8 @@ IDs: Snowflake text, permissions: bigint decimal strings
 | lastActiveDay | text | | UTC day (`YYYY-MM-DD`) of the last authenticated WebSocket activity; written at most once per day. Used by telemetry to count active accounts. |
 | lastClient | text | | `'web'`, `'desktop'` or `'mobile'`, taken from the client's WebSocket auth message. |
 | createdAt | integer NOT NULL | | Epoch ms |
+
+**Index:** `idx_users_home_user_id` on `(home_user_id)` (migration `0020_users_home_user_id_index`). Every federated identity lookup (`resolveRelayActor`, `resolveLocalUser`, the relay's participant, author and mention resolution) filters on `home_user_id` first. It is a single-column index on purpose: a home user id matches about one row, and most pair lookups compare `home_instance` normalized (scheme stripped, lowercased) or in code, where a `(home_user_id, home_instance)` composite's second column cannot be used.
 
 ### spaces
 | Column | Type | Default | Notes |
@@ -156,7 +158,7 @@ PK: id
 |--------|------|---------|-------|
 | id | text PK | | |
 | ownerId | text | | NULL for 1-on-1, set for group |
-| federatedId | text | | Cross-instance identifier |
+| federatedId | text | | Conversation key, UNIQUE (`idx_dm_federated`). Every 1-on-1 holds its pair key from insert (and from the startup backfill); a group holds a minted UUID once a member is homed elsewhere, NULL before |
 | ownerHomeUserId | text | | Owner's canonical home ID |
 | ownerHomeInstance | text | | Owner's home instance URL |
 | deletedAt | integer | | Soft-delete (GC after 24h if no local members) |
@@ -230,7 +232,7 @@ PK: (userId, friendId)
 | spaceId | text NOT NULL | | FK → spaces.id CASCADE |
 | name | text NOT NULL | | |
 | color | text | `'#b9bbbe'` | Hex |
-| position | integer | 0 | Hierarchy position |
+| position | integer | 0 | Hierarchy rank: @everyone 0, other roles distinct from 1 up, higher is more senior (permissions.md, "Role hierarchy") |
 | permissions | text | | Bigint decimal string |
 | createdAt | integer NOT NULL | | |
 

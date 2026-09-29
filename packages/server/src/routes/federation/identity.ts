@@ -4,7 +4,7 @@ import { getDb, schema } from '../../db/index.js';
 import { getOurOrigin, normalizeOriginForCompare } from '../../utils/federationAuth.js';
 import { generateSnowflake } from '../../utils/snowflake.js';
 import { and, eq, isNull, or, sql } from 'drizzle-orm';
-import { randomBytes } from 'node:crypto';
+import { firstFreeUsername, handleFromHint, renamePlaceholderNamedStub } from './stubName.js';
 
 /**
  * Extract bare domain from a homeInstance value.
@@ -263,7 +263,7 @@ export type RelayActorResolution =
  * identity domain (`DOMAIN`). They differ only when `PUBLIC_ORIGIN` overrides
  * the transport, and a reference to a native user may carry either.
  */
-function isOwnDomain(domain: string): boolean {
+export function isOwnDomain(domain: string): boolean {
   if (!domain) return false;
   return domain === extractDomain(getOurOrigin()).toLowerCase() || domain === getOurIdentityDomain();
 }
@@ -358,7 +358,9 @@ export function resolveLocalUser(
  *
  * Three-tier matching:
  * 1. Identity: the row that IS `homeUserId` + `homeInstance` (`resolveRelayActor`)
- * 2. Domain + username hint: normalized homeInstance domain + username base match
+ * 2. Domain + username hint: normalized homeInstance domain + username base
+ *    match, among rows that have no `homeUserId` yet (the only rows a name
+ *    can bind; `backfillHomeUserId` then records the id on the match)
  * 3. Not found: returns undefined
  *
  * When tier 1 reports `mismatch` (the `homeUserId` belongs only to local users
@@ -403,6 +405,10 @@ function lookupFederatedUser(
       and(
         eq(schema.users.homeInstance, domain),
         eq(schema.users.isDeleted, 0),
+        // A username match binds only a row that has no home id yet. A row
+        // with a home id is already one identity; tier 1 found it or it is
+        // someone else, and a name must not turn it into the one asked for.
+        isNull(schema.users.homeUserId),
         // Detached (home-orphaned) accounts are sovereign: never re-bindable to
         // the domain's new incarnation via username heuristics — that is exactly
         // how a new same-name user would capture the established account.
@@ -484,7 +490,13 @@ export function resolveOrCreateReplicatedUser(
   hints?: { username?: string | null; status?: 'online' | 'idle' | 'dnd' | 'offline' | null; deleted?: boolean | null },
 ): typeof schema.users.$inferSelect | null {
   const existing = lookupFederatedUser(homeUserId, homeInstance, db, hints);
-  if (existing.kind === 'found') return backfillHomeUserId(existing.user, homeUserId, db);
+  if (existing.kind === 'found') {
+    // A row met before its username was known still carries a placeholder
+    // name (`isPlaceholderNamedStub`); the first username hint renames it. A
+    // row suffixed because its handle was held is re-checked by each hint
+    // with that handle (`applyPlaceholderRename`).
+    return renamePlaceholderNamedStub(backfillHomeUserId(existing.user, homeUserId, db), hints?.username, db);
+  }
   // The id belongs only to local users of another identity. It names no one
   // here, and a stub for it would give one id two identities on this instance.
   if (existing.kind === 'mismatch') {
@@ -528,27 +540,17 @@ export function resolveOrCreateReplicatedUser(
 
   // Use the home user's real username when the caller passes a hint (the wire
   // profile snapshot from friend_request_create / friend_add / DM relay carries
-  // it). This makes the local stub's `username` human-readable, so client-side
-  // `parseFederatedUsername(username).baseName` returns the real handle. Falls
-  // back to the snowflake-id scheme when no hint is available (legacy paths).
-  const localPart = (hints?.username ?? homeUserId).toLowerCase();
-  const baseUsername = `${localPart}@${domain}`.toLowerCase();
-
-  // Guard against the (unlikely) case where this username already
-  // exists — e.g. a prior partial replication or manual creation.
-  let username = baseUsername;
-  let collision = db.select().from(schema.users).where(eq(schema.users.username, username)).get();
-  let attempt = 0;
-  while (collision) {
-    attempt++;
-    username = `${localPart}_${attempt}@${domain}`.toLowerCase();
-    collision = db.select().from(schema.users).where(eq(schema.users.username, username)).get();
-    if (attempt > 10) {
-      // Extremely unlikely; use a random suffix to break out
-      username = `${localPart}_${randomBytes(4).toString('hex')}@${domain}`.toLowerCase();
-      break;
-    }
-  }
+  // it, and the client routes ask the home first, see
+  // `resolveRemoteIdentityForClient`). This makes the local stub's `username`
+  // human-readable, so client-side `parseFederatedUsername(username).baseName`
+  // returns the real handle. Only a handle-shaped hint counts, as for the
+  // rename (`handleFromHint`). Without one the stub is named
+  // `<homeUserId>@<domain>`, and the first later handle renames it (above).
+  const localPart = handleFromHint(hints?.username) ?? homeUserId.toLowerCase();
+  // A name another row already holds (a partial replication, or a handle
+  // freed by an account deletion and registered again) gets a suffix no
+  // handle can contain (`firstFreeUsername`).
+  const username = firstFreeUsername(localPart, domain, db);
 
   const userId = generateSnowflake();
   const now = Date.now();

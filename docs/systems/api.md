@@ -146,6 +146,8 @@ DELETE /spaces/:id/roles/:rid                                                   
 POST   /spaces/:id/members/:uid/roles { roleId }                                 → { success }  [MANAGE_ROLES]
 DELETE /spaces/:id/members/:uid/roles/:rid                                        → { success }  [MANAGE_ROLES]
 ```
+Kick, ban, the member role routes and the role routes also enforce the role hierarchy, answering `403 role_hierarchy` (permissions.md, "Role hierarchy"). `POST` and `PATCH /roles` also apply the held-bits rule (permissions.md, "Held-bits rule"): switching on a bit the actor does not hold answers `403 cannot_grant_unowned_permissions`, switching one off `403 cannot_change_unowned_permissions`; `DELETE /roles/:rid` of a role carrying a bit the actor does not hold answers `403 cannot_change_unowned_permissions`, and giving a member such a role (`PATCH /members/:uid`, `POST /members/:uid/roles`) `403 cannot_grant_unowned_permissions`; a malformed or negative `permissions` value answers `400 permissions_invalid`. `PATCH /roles/:rid` answers `404 role_not_in_space` for a role of another space. `PATCH /roles/:rid { position }` moves the role to that position (1 = just above @everyone) and renumbers the others; a new role is created at 1. The single-role routes refuse a role of another space with `400 role_not_in_space`.
+
 `DELETE /spaces/:id/roles/:rid` answers `404 role_not_in_space` for a role id that is not in the space, and otherwise deletes the role together with every channel and category override that names it (overrides carry no foreign key to the role).
 
 ## Channels (`routes/channels.ts`) — auth required
@@ -163,7 +165,7 @@ GET    /channels/:id/overrides                                   → { overrides
 PUT    /channels/:id/overrides  { targetType, targetId, allow, deny } → { success }  [MANAGE_ROLES]
 DELETE /channels/:id/overrides/:targetType/:targetId              → { success }  [MANAGE_ROLES]
 ```
-All three check `MANAGE_ROLES` space-wide (permissions.md, "Client gating"). `DELETE` removes the override row, so the target falls back to its space-wide permissions in that channel; the category routes below do the same for a category. A `PUT` or `DELETE` is followed by `channel_updated` (with the recipient's new `myPermissions`) or `channel_deleted` for each connected member of the space, and a category write also sends `category_updated`. The editor stages removals and sends them on Save.
+All three check `MANAGE_ROLES` space-wide (permissions.md, "Client gating"). `PUT` and `DELETE` (here and on categories) also follow the role hierarchy (permissions.md, "Role hierarchy"): an override on a role at or above the actor's top role, or on another member ranked at or above the actor, answers `403 role_hierarchy`; a `PUT` naming a role that is not in the space answers `400 role_not_in_space`. `PUT` and `DELETE` (here and on categories) also apply the held-bits rule against the stored override (permissions.md, "Held-bits rule"): a newly allowed unheld bit answers `403 cannot_grant_unowned_permissions`, a newly denied one `403 cannot_deny_unowned_permissions`, and clearing one, or deleting an override that sets one, `403 cannot_change_unowned_permissions`. `DELETE` removes the override row, so the target falls back to its space-wide permissions in that channel; the category routes below do the same for a category. A `PUT` or `DELETE` is followed by `channel_updated` (with the recipient's new `myPermissions`) or `channel_deleted` for each connected member of the space, and a category write also sends `category_updated`. The editor stages removals and sends them on Save.
 
 ### Categories
 ```
@@ -186,31 +188,37 @@ DELETE /messages/:id                                      → { success }  [auth
 
 ## DMs (`routes/dm.ts`) — auth required
 ```
-POST   /dm                     { targetUserId, targetUsername? }     → { dmChannel }
-POST   /dm/group               { name, memberUserIds[] }            → { dmChannel }
+GET    /dm                                                          → DmChannel[] (open DMs, same shape as the ready payload, newest activity first)
+POST   /dm                     { userId } | { homeUserId, homeInstance } → DmChannel (200 existing 1-on-1, 201 new)
+POST   /dm/group               { users: [{ id, homeUserId?, homeInstance? }], fromDmChannelId? } → 201 DmChannel [2-9 users + caller; each a friend, or a member of the 1-on-1 `fromDmChannelId`]
 PATCH  /dm/:id                 { name?, icon? }                     → { id, name, icon, metadataUpdatedAt } [owner; group only]
-DELETE /dm/:id                                                      → { success } (soft-close)
-POST   /dm/:id/members         { userIds[] }                        → { dmChannel } [owner, max 10]
-DELETE /dm/:id/members                                              → { success } (leave)
+DELETE /dm/:id                                                      → { success } [member] (soft-close)
+POST   /dm/:id/members         { userId } | { homeUserId, homeInstance } → DmChannel [any member; group only; target must be a friend; max 10]
+DELETE /dm/:id/members                                              → { success } (leave) [group only]
 DELETE /dm/:id/members/:targetUserId  ?homeInstance=                → { success } [owner kick; cannot self-kick; group only; segment is homeUserId when ?homeInstance is set]
-POST   /dm/:id/transfer        { newOwnerId? | (homeUserId+homeInstance) } → { success } [owner; resolved member must be in channel; not self]
-GET    /dm/:id/messages        ?before=&limit=50                    → { messages[] }
-POST   /dm/:id/messages        { content, attachments?, replyToId? } → { message }
-PATCH  /dm/messages/:id        { content }                          → { message } [author]
+POST   /dm/:id/transfer        { newOwnerId? | (homeUserId+homeInstance) } → { success } [owner; group only; resolved member must be in channel; not self]
+POST   /dm/space-invite        { target: { userId } | { homeUserId, homeInstance }, spaceId, spaceInstanceOrigin, inviteCode } → SpaceInviteResponse { dmChannelId, messageId, message } [target must be a friend]
+GET    /dm/:id/messages        ?before=&limit=50 (1-100)            → DmMessageWithUser[] [member]
+POST   /dm/:id/messages        { content?, attachments?, replyToId? } → 201 DmMessageWithUser [member; content or attachments required]
+PATCH  /dm/messages/:id        { content }                          → DmMessageWithUser [author]
 DELETE /dm/messages/:id                                             → { success } [author]
 ```
 
+**Naming a remote user (federated identity in a DM route).** `POST /dm`, `POST /dm/group`, `POST /dm/:id/members`, `DELETE /dm/:id/members/:targetUserId?homeInstance=`, `POST /dm/:id/transfer` and `POST /dm/space-invite` accept a remote user as the pair `homeUserId` + `homeInstance` and resolve it through `resolveRemoteIdentityForClient` (`utils/federationClientIdentity.ts`). The body never carries a username: the name comes from the identity's home. A known row with its real name is used as is, whatever the state of its home. A new row is created only when the `homeUserId` is a snowflake (decimal digits). For an unknown identity, or a known row that still carries a placeholder name (`<homeUserId>@<domain>`, or a display name; see federation.md "Stub Username Backfill"), whose domain is an active peer, the server asks the home over the signed `POST /api/federation/users/by-home-id` and creates or renames the row as `<username>@<domain>` with the reported profile hydrated, so the first DM already shows the person's name; when the home answers that there is no such user, nothing is created. The route waits at most 2 s for the home (`CLIENT_HOME_LOOKUP_TIMEOUT_MS`); `POST /dm/group` asks the homes of all its members at once. When the home cannot be asked or does not answer (no active peer yet, unreachable, rate limited, too slow) the row is created under `<homeUserId>@<domain>`, as before, and renamed by the first username that arrives later, including the backfill when the peering becomes active (see federation.md "Stub Username Backfill"); that home is not asked about that id again for 60 s (in memory). The DM's first message starts the peering as it always has. Every refusal answers with the route's existing not-found code (`404 user_not_found`, `404 users_not_found` for the group route).
+
+**`POST /dm`** — Opens the caller's 1-on-1 with the target, found or created by `findOrCreateOneOnOne` (`utils/dmConversation.ts`): the row holding the pair's key first, then a row whose members are exactly the pair, else a new keyed row. 201 when the row was created, 200 when it existed; the body is the `DmChannel` from `loadDmChannelWire`, the same shape as the ready payload. An existing conversation the caller had closed is reopened for them (with a `dm_reopen` relay). Nothing is sent to the target: a new conversation holds the target's membership closed, and one the target closed stays closed, until the next message or call in it reopens it for them with `dm_channel_created` (#360). See `docs/systems/dm-system.md` "1-on-1 DM Creation".
+
 **`PATCH /dm/:id`** — Owner-only update of a group DM's `name` and `icon`. Either field may be omitted (no-op), null (clear), or set. Empty/whitespace name collapses to null. `icon` accepts a bare attachment filename owned by the caller (image/*, ≤ `GROUP_DM_ICON_MAX_BYTES`) or an absolute http(s) URL. No-op short-circuit when nothing actually changes — emits no system message and no federation relay. See `docs/systems/dm-system.md` "Group Metadata Update" for the full transaction, federation relay, and icon URL round-trip rules.
 
-**`DELETE /dm/:id/members/:targetUserId`** — Owner kicks a member from a group DM. The `:targetUserId` segment carries either a local user id on the owner's instance OR a federated home user id when the `?homeInstance=<origin>` query string is present (server resolves via `resolveOrCreateReplicatedUser` — same pattern as `POST /dm/:id/members`). Federated form is required for federated targets, because the client's cached user view returns the user's home id, not the owner instance's local replicated id. Reuses the leave path with `reason: 'kick'`; evicts the target from the DM voice room first. Sends `dm_channel_closed` to the kicked user. Receivers enforce `sourceInstance === ownerHomeInstance`; non-owner kicks reject as `unauthorized_source`.
+**`DELETE /dm/:id/members/:targetUserId`** — Owner kicks a member from a group DM. The `:targetUserId` segment carries either a local user id on the owner's instance OR a federated home user id when the `?homeInstance=<origin>` query string is present (server resolves via `resolveRemoteIdentityForClient` — same pattern as `POST /dm/:id/members`). Federated form is required for federated targets, because the client's cached user view returns the user's home id, not the owner instance's local replicated id. Reuses the leave path with `reason: 'kick'`; evicts the target from the DM voice room first. Sends `dm_channel_closed` to the kicked user. Receivers enforce `sourceInstance === ownerHomeInstance`; non-owner kicks reject as `unauthorized_source`.
 
-**`POST /dm/:id/transfer`** — Owner transfers ownership to another current member without leaving. Body accepts either a local id (`newOwnerId`) or a federated identity (`homeUserId` + `homeInstance`). When both forms are supplied, federated args take precedence. Server resolves via `resolveOrCreateReplicatedUser` before checking membership — mirrors `POST /dm/:id/members`. Updates `ownerId`, `ownerHomeUserId`, `ownerHomeInstance`; inserts an `owner_changed` system message; broadcasts `dm_owner_updated`; queues an `ownership_transfer` outbox event. Reuses the existing receiver path (`processOwnershipTransferEvent`) with no protocol changes.
+**`POST /dm/:id/transfer`** — Owner transfers ownership to another current member without leaving. Body accepts either a local id (`newOwnerId`) or a federated identity (`homeUserId` + `homeInstance`). When both forms are supplied, federated args take precedence. Server resolves via `resolveRemoteIdentityForClient` before checking membership — mirrors `POST /dm/:id/members`. Updates `ownerId`, `ownerHomeUserId`, `ownerHomeInstance`; inserts an `owner_changed` system message; broadcasts `dm_owner_updated`; queues an `ownership_transfer` outbox event. Reuses the existing receiver path (`processOwnershipTransferEvent`) with no protocol changes.
 
 ## Social (`routes/social.ts`) — auth required
 ```
 GET    /social/friends                                    → { friends[] }
 GET    /social/requests                                   → { requests[] }
-POST   /social/requests        { username }               → { success, requestId }
+POST   /social/requests        { username } | { homeUserId, homeInstance, username? } → { success, requestId }
 PATCH  /social/requests/:id    { status: 'accepted'|'declined' } → { request }
 DELETE /social/requests/:id                               → { success } (cancel, sender-only)
 DELETE /social/friends/:id                                → { success }
@@ -220,24 +228,30 @@ GET    /social/search          ?q=                        → { users[] }
 
 ### POST /api/social/requests — routing & error codes
 
-`body.username` may be `bare` (local), `bare@<own host>` (also routed local — server normalizes), or `bare@<remote host>` (federated branch). The client sends the trimmed handle verbatim; all parsing, routing, peering, and remote lookup are server-side.
+The target is named one of two ways (`SendFriendRequest` in `packages/shared/src/types.ts`):
+
+- **By identity:** `homeUserId` + `homeInstance` (bare host or full origin), both required together, else 400 `validation_failed`. Takes precedence over `username`. A `homeInstance` that is this instance's host (port included) or one of its bare domain names (`isOwnDomain`: the origin's host or `DOMAIN`) names a native user here by id (`users.id`, or the `homeUserId` natives carry); anything else is the federated branch with the peer asked by `POST /api/federation/users/by-home-id` instead of `/users/lookup`. The web client uses this for every user it already holds (profile modal, discover and search cards), because a replicated row's `username` is only this instance's label and may be `<homeUserId>@<domain>`, which no peer can look up.
+- **By username:** `bare` (local), `bare@<own host>` (also routed local — server normalizes), or `bare@<remote host>` (federated branch). Used for a typed handle; the client sends it trimmed and verbatim.
+
+Clients that send an identity send `username` alongside: a server that predates the identity fields ignores them and reads `username`. All parsing, routing, peering, and remote lookup are server-side.
 
 | HTTP | error code | When |
 |---|---|---|
 | 200 | (success, idempotent) | Same-direction pending request already exists; returns existing `requestId` |
 | 201 | (success, created) | New friend request created |
-| 400 | `username_required` | Missing/empty/non-string username |
+| 400 | `username_required` | No identity, and a missing/empty/non-string username |
+| 400 | `validation_failed` | Only one of `homeUserId` / `homeInstance`, or either is empty or not a string (`homeUserId` at most 128 characters) |
 | 400 | `cannot_friend_self` | Looked-up identity matches sender |
 | 400 | `invalid_target_domain` | Scheme resolution failed (e.g., non-localhost HTTP target when our scheme is HTTPS) |
 | 403 | `peer_rejected` | Remote instance has rejected federation; admin must intervene |
 | 403 | `not_authoritative_for_sender` | Caller is a federated (replicated) user; should not have reached here |
-| 404 | `user_not_found` | Remote lookup returned 404 (no such user, or tombstoned) |
+| 404 | `user_not_found` | No such local user, or the remote lookup (by name or by home id) found no native user (also tombstoned) |
 | 409 | `already_friends` | Friendship row already exists |
 | 409 | `peer_pending_approval` | Remote admin needs to approve the peering relationship |
 | 409 | `peer_pending_local_admin` | Local instance has `autoAcceptPeering=0` and the user attempted to friend-add a never-peered remote target. The user's own admin must approve before any traffic reaches the wire. Distinct from `peer_pending_approval` (remote admin must approve). See [federation.md → Outbound Peering Gate](federation.md#outbound-peering-gate). |
 | 409 | `peer_pending` | Peer handshake in flight |
 | 409 | `incoming_request_exists` | Opposite-direction pending request exists; response includes `requestId` for deep-link |
-| 429 | `lookup_rate_limited` | Remote `/users/lookup` returned 429; `Retry-After` header forwarded |
+| 429 | `lookup_rate_limited` | Remote `/users/lookup` or `/users/by-home-id` returned 429; `Retry-After` header forwarded |
 | 503 | `peer_unreachable` | Remote instance unreachable (network/timeout/lookup-unreachable) |
 
 ## Search (`routes/search.ts`) — auth required

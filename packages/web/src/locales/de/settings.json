@@ -98,8 +98,8 @@
     "pip": {
       "sectionTitle": "Schwebefenster",
       "showOnSwitch": {
-        "label": "Schwebefenster beim Kanalwechsel anzeigen",
-        "description": "Während du in einem Sprachkanal oder Anruf bist, bleibt dieser in einem Schwebefenster sichtbar, wenn du einen anderen Kanal öffnest. Schalte dies aus, um es auszublenden."
+        "label": "Schwebefenster während Anrufen anzeigen",
+        "description": "Wenn du in einem Sprachkanal oder Anruf bist und dir etwas anderes ansiehst, bleibt der Anruf in einem kleinen Fenster sichtbar."
       }
     },
     "processing": {

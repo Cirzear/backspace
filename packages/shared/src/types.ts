@@ -1,5 +1,6 @@
 export * from './federationTypes.js';
 export * from './instanceTypes.js';
+import type { ErrorCode } from './errors.js';
 import type { PeeringNotificationKind } from './federationTypes.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -416,18 +417,25 @@ export interface DmLastMessagePreview {
   attachments?: Array<{ type: string; filename: string }>;
 }
 
+/**
+ * A DM conversation as a current server puts it on the wire. Every field is
+ * required, nullable where the row can be null, so a server payload that
+ * forgets one does not compile; the server builds it only through
+ * `utils/dmChannelWire.ts` (ADR 0002).
+ */
 export interface DmChannel {
   id: string;
-  federatedId?: string | null;
-  ownerId?: string | null;
-  ownerHomeUserId?: string | null;
-  ownerHomeInstance?: string | null;
+  /** The conversation key: `null` only for a group no other instance holds. */
+  federatedId: string | null;
+  ownerId: string | null;
+  ownerHomeUserId: string | null;
+  ownerHomeInstance: string | null;
   createdAt: number;
   members: User[];
-  lastMessage?: DmLastMessagePreview | DmMessageWithUser | null;
-  name?: string | null;
-  icon?: string | null;
-  metadataUpdatedAt?: number;
+  lastMessage: DmLastMessagePreview | DmMessageWithUser | null;
+  name: string | null;
+  icon: string | null;
+  metadataUpdatedAt: number;
 }
 
 export interface DmMessage {
@@ -529,9 +537,21 @@ export type ClientEvent =
   | { type: 'activity_update'; activities: Activity[] }
   | { type: 'ping' };
 
+/**
+ * Who a presence snapshot is about, beyond the delivering instance's local row
+ * id: the row's `homeUserId` and `homeInstance`, both null for a user native to
+ * the delivering instance. The client keys activities by the federated identity
+ * this names (see activityStore), so every instance's view of one person lands
+ * on one key. Absent on servers that predate the fields.
+ */
+export interface PresenceIdentity {
+  homeUserId: string | null;
+  homeInstance: string | null;
+}
+
 // Server → Client Events
 export type ServerEvent =
-  | { type: 'ready'; user: User; spaces: SpaceWithChannelsAndMembers[]; dmChannels: DmChannel[]; folders?: SpaceFolder[]; spaceLayout?: SpaceLayoutItem[] | null; layoutUpdatedAt?: number; voiceStates?: Record<string, string[]>; voiceChannelElapsedSeconds?: Record<string, number>; voiceUserStates?: Record<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }>; unreadCounts?: Record<string, number>; supportsPoke?: boolean; readStates?: ReadState[]; notificationSettings?: NotificationSetting[]; activeCalls?: ActiveCallInfo[]; spaceVoiceStates?: Record<string, { spaceMuted: boolean; spaceDeafened: boolean }>; userActivities?: Record<string, Activity[]>; rejectedPeerOrigins?: string[]; awaitingApprovalPeerOrigins?: string[]; activePeerOrigins?: string[]; pendingApprovalCount?: number }
+  | { type: 'ready'; user: User; spaces: SpaceWithChannelsAndMembers[]; dmChannels: DmChannel[]; folders?: SpaceFolder[]; spaceLayout?: SpaceLayoutItem[] | null; layoutUpdatedAt?: number; voiceStates?: Record<string, string[]>; voiceChannelElapsedSeconds?: Record<string, number>; voiceUserStates?: Record<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }>; unreadCounts?: Record<string, number>; supportsPoke?: boolean; readStates?: ReadState[]; notificationSettings?: NotificationSetting[]; activeCalls?: ActiveCallInfo[]; spaceVoiceStates?: Record<string, { spaceMuted: boolean; spaceDeafened: boolean }>; userActivities?: Record<string, Activity[]>; userActivityIdentities?: Record<string, PresenceIdentity>; rejectedPeerOrigins?: string[]; awaitingApprovalPeerOrigins?: string[]; activePeerOrigins?: string[]; pendingApprovalCount?: number }
   | { type: 'channel_poke_failed'; message: string }
   | { type: 'channel_unread_count'; counts: Record<string, number> }
   | { type: 'channel_poke'; channelId: string; userId: string; targetUserId: string; username: string; targetUsername: string }
@@ -539,7 +559,7 @@ export type ServerEvent =
   | { type: 'message_updated'; message: MessageWithUser }
   | { type: 'message_deleted'; messageId: string; channelId: string }
   | { type: 'typing'; channelId: string; userId: string; username: string }
-  | { type: 'presence_update'; userId: string; status: string; activities?: Activity[] }
+  | ({ type: 'presence_update'; userId: string; status: string; activities?: Activity[] } & Partial<PresenceIdentity>)
   | { type: 'voice_state_update'; channelId: string; userId: string; action: 'join' | 'leave'; channelElapsedSeconds?: number }
   | { type: 'member_joined'; spaceId: string; member: MemberWithUser }
   | { type: 'member_updated'; spaceId: string; member: MemberWithUser }
@@ -617,7 +637,9 @@ export type ServerEvent =
       newOwnerHomeInstance?: string | null;
     }
   | { type: 'pong' }
-  | { type: 'error'; message: string };
+  // `code` is set where the refusal has a stable ErrorCode (e.g. a voice
+  // moderation action refused by the role hierarchy); older senders omit it.
+  | { type: 'error'; message: string; code?: ErrorCode };
 
 // ─── API Request/Response Types ─────────────────────────────────────────────
 
@@ -861,8 +883,21 @@ export interface FriendRequest {
   user?: User; // The other user (if it's an incoming request, the sender; if outgoing, the recipient)
 }
 
+/**
+ * Body of `POST /api/social/requests`. The target is named one of two ways:
+ *
+ * - By federated identity (`homeUserId` + `homeInstance`), when the client
+ *   already holds the user. Takes precedence over `username`; both fields are
+ *   required together. `homeInstance` is a bare domain or a full origin.
+ * - By `username`, for a handle the user typed (`name` or `name@domain`).
+ *
+ * Clients that send an identity also send `username`: a server that predates
+ * the identity fields ignores them and reads `username`.
+ */
 export interface SendFriendRequest {
-  username: string;
+  username?: string;
+  homeUserId?: string;
+  homeInstance?: string;
 }
 
 export interface UpdateFriendRequest {

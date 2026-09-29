@@ -1,8 +1,9 @@
 import { create } from 'zustand';
-import type { Friend, FriendRequest, User } from '@backspace/shared';
+import type { Friend, FriendRequest, SendFriendRequest, User } from '@backspace/shared';
 import { api } from '../api/client';
 import { useInstanceStore, waitForAutoConnect } from './instanceStore';
 import { normalizeUserAssets } from '../utils/assetUrls';
+import { activityKey, type PresenceSubject } from '../utils/identity';
 
 // ─── Tagged types (origin tracking for federation) ───────────────────────────
 
@@ -32,7 +33,11 @@ interface SocialState {
   error: string | null;
   loadFriends: () => Promise<void>;
   loadRequests: () => Promise<void>;
-  sendFriendRequest: (username: string) => Promise<string | undefined>;
+  /**
+   * Send a friend request from the home instance. A typed handle is
+   * `{ username }`; a user the client holds is named by `friendRequestTarget`.
+   */
+  sendFriendRequest: (target: SendFriendRequest | string) => Promise<string | undefined>;
   updateFriendRequest: (id: string, status: 'accepted' | 'declined') => Promise<void>;
   cancelFriendRequest: (id: string) => Promise<void>;
   removeFriend: (id: string) => Promise<void>;
@@ -40,7 +45,7 @@ interface SocialState {
   addIncomingRequest: (request: FriendRequest, origin: string) => void;
   addOutboundRequest: (request: FriendRequest, origin: string) => void;
   addFriendFromAccepted: (friend: Friend, requestId: string, origin: string) => void;
-  updateFriendPresence: (userId: string, status: string) => void;
+  updateFriendPresence: (subject: PresenceSubject, origin: string, status: string) => void;
   updateFriendProfile: (user: User) => void;
   removeFriendLocally: (userId: string, origin: string) => void;
   removeRequestById: (requestId: string, origin: string, userId?: string) => void;
@@ -184,10 +189,14 @@ export const useSocialStore = create<SocialState>((set, get) => ({
     }
   },
 
-  sendFriendRequest: async (username: string) => {
+  sendFriendRequest: async (target: SendFriendRequest | string) => {
     set({ isLoading: true, error: null });
     try {
-      const res = await api.social.sendRequest(username.trim());
+      const input: SendFriendRequest = typeof target === 'string' ? { username: target } : target;
+      const body: SendFriendRequest = input.username === undefined
+        ? input
+        : { ...input, username: input.username.trim() };
+      const res = await api.social.sendRequest(body);
       set({ isLoading: false });
       // Server emits friend_request_sent over WS; useWebSocket appends the row
       // optimistically. As a safety net for tabs that race the WS event, refresh
@@ -396,11 +405,14 @@ export const useSocialStore = create<SocialState>((set, get) => ({
     }));
   },
 
-  // Called from WS handler on presence_update to keep friend status live
-  updateFriendPresence: (userId: string, status: string) => {
+  // Called from WS handler on presence_update to keep friend status live.
+  // Matched by the same key as activities (activityKey), so a delivery from
+  // any instance reaches the friend it is about and no other.
+  updateFriendPresence: (subject: PresenceSubject, origin: string, status: string) => {
+    const key = activityKey(subject, origin);
     set((state) => ({
       friends: state.friends.map(f =>
-        (f.id === userId || f.homeUserId === userId) ? { ...f, status: status as Friend['status'] } : f
+        activityKey(f, f._instanceOrigin) === key ? { ...f, status: status as Friend['status'] } : f
       ),
     }));
   },

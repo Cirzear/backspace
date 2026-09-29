@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import type { User } from '@backspace/shared';
@@ -10,13 +10,17 @@ import type { User } from '@backspace/shared';
 vi.mock('../../stores/spaceStore', () => ({
   useSpaceStore: Object.assign(
     (selector: (s: Record<string, unknown>) => unknown) =>
-      selector({ addDmChannel: vi.fn(), findExistingDmForUser: vi.fn() }),
-    { getState: () => ({ addDmChannel: vi.fn(), findExistingDmForUser: vi.fn() }) },
+      selector({ upsertDmCopy: vi.fn(), findExistingDmForUser: vi.fn() }),
+    { getState: () => ({ upsertDmCopy: vi.fn(), findExistingDmForUser: vi.fn() }) },
   ),
   getApiForOrigin: () => ({ uploads: { url: (k: string) => `/uploads/${k}` } }),
   resolveUserOrigin: () => 'local',
 }));
-vi.mock('../../api/client', () => ({ api: { dm: { create: vi.fn() } } }));
+// Keep the real HttpError class: describeError narrows on it when a request fails.
+vi.mock('../../api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/client')>()),
+  api: { dm: { create: vi.fn() } },
+}));
 vi.mock('../../utils/mutuals', () => ({
   loadFederatedMutuals: vi.fn().mockResolvedValue({ mutualFriends: [], mutualSpaces: [] }),
 }));
@@ -26,6 +30,7 @@ vi.mock('../../hooks/useShownStatus', () => ({ useShownStatus: (_u: User, status
 
 import { UserProfilePopout } from './UserProfilePopout';
 import { useUIStore } from '../../stores/uiStore';
+import { api, HttpError } from '../../api/client';
 
 const CARD_W = 340;
 const CARD_H = 420;
@@ -99,6 +104,34 @@ describe('UserProfilePopout', () => {
     expect(useUIStore.getState().activeModal).toBe('userProfile');
     expect(useUIStore.getState().modalData).toMatchObject({ userId: 'u-1' });
     expect(closed).toBe(true);
+  });
+
+  it('shows a display name that contains "@" in full, and splits only the username', () => {
+    const user: User = { ...makeUser(), displayName: 'ada@work', username: 'ada' };
+    const { container } = render(
+      <MemoryRouter>
+        <UserProfilePopout user={user} onClose={() => {}} anchor={anchorAt(300, 200)} />
+      </MemoryRouter>,
+    );
+    expect(container.textContent).toContain('ada@work');
+    expect(container.textContent).toContain('@ada');
+  });
+
+  it('tells the user why Send Message failed, and stays open', async () => {
+    vi.mocked(api.dm.create).mockRejectedValueOnce(new HttpError(404, 'User not found', null, 'user_not_found'));
+    const addToast = vi.fn();
+    useUIStore.setState({ addToast });
+    const onClose = vi.fn();
+    render(
+      <MemoryRouter>
+        <UserProfilePopout user={makeUser()} onClose={onClose} anchor={anchorAt(300, 200)} />
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(screen.getByText('Send Message'));
+
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith('Could not open the conversation: No user with that name was found.', 'warning'));
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it('sits beside its anchor', () => {

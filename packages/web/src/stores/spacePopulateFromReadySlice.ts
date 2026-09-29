@@ -1,10 +1,14 @@
 import type { DmChannel, SpaceFolder, SpaceLayoutItem, SpaceWithChannelsAndMembers } from '@backspace/shared';
-import { normalizeUserAssets } from '../utils/assetUrls';
-import { sortDmChannels } from '../utils/dmSorting';
-import { useChatStore } from './chatStore';
-
 import type { StateCreator } from 'zustand';
-import { type TaggedSpace, pushLayoutToOrigin } from './spaceStore';
+import { normalizeUserAssets } from '../utils/assetUrls';
+import { applyDmPinMoves } from '../utils/dmOriginFailover';
+import { mergeOriginListing } from './dmConversations';
+import {
+  deriveDmView,
+  dmPinContext,
+  pushLayoutToOrigin,
+  type TaggedSpace,
+} from './spaceStore';
 import type { SpaceState } from './spaceStoreTypes';
 
 export const createPopulateFromReadySlice: StateCreator<SpaceState, [], [], Pick<SpaceState, 'populateFromReady'>> = (set, get) => ({
@@ -19,7 +23,7 @@ export const createPopulateFromReadySlice: StateCreator<SpaceState, [], [], Pick
       banner: s.banner ?? null,
       avatarColor: s.avatarColor ?? null,
       ownerId: s.ownerId,
-      ownerTitle: s.ownerTitle,
+      ownerTitle: s.ownerTitle ?? null,
       inviteCode: s.inviteCode,
       visibility: s.visibility ?? 'private' as const,
       directoryListed: s.directoryListed ?? false,
@@ -40,10 +44,6 @@ export const createPopulateFromReadySlice: StateCreator<SpaceState, [], [], Pick
     const channelOriginMap = new Map(get().channelOriginMap);
     const voiceChannelIds = new Set(get().voiceChannelIds);
     const categoryOriginMap = new Map(get().categoryOriginMap);
-    const dmAlternatives = new Map<string, Map<string, string>>();
-    for (const [fid, byOrigin] of get().dmAlternatives) {
-      dmAlternatives.set(fid, new Map(byOrigin));
-    }
 
     // If home, clear home-origin entries first to avoid stale data
     if (isHome) {
@@ -138,74 +138,20 @@ export const createPopulateFromReadySlice: StateCreator<SpaceState, [], [], Pick
       }
     }
 
-    // Build a set of existing federatedIds for dedup (only from OTHER origins —
-    // DMs from the reconnecting origin will be replaced, not deduplicated)
-    const existingFederatedIds = new Map<string, string>(); // federatedId → dmChannelId
-    for (const dm of get().dmChannels) {
-      if (dm.federatedId) {
-        const dmOrigin = get().channelOriginMap.get(dm.id);
-        if (dmOrigin !== origin) {
-          existingFederatedIds.set(dm.federatedId, dm.id);
-        }
-      }
-    }
-
-    // Filter incoming DMs: skip duplicates (same federatedId already loaded from another origin)
-    const filteredDms: typeof incomingDms = [];
-    for (const dm of incomingDms) {
-      if (dm.federatedId && existingFederatedIds.has(dm.federatedId)) {
-        // Duplicate cross-instance DM — keep the existing copy
-        continue;
-      }
-      filteredDms.push(dm);
-      if (dm.federatedId) {
-        existingFederatedIds.set(dm.federatedId, dm.id);
-      }
-    }
-
-    for (const dm of filteredDms) {
-      channelOriginMap.set(dm.id, origin);
-      if (dm.lastMessage?.id) {
-        channelLastMessageIds.set(dm.id, dm.lastMessage.id);
-      }
-    }
-
-    // Record every DM's (origin → localChannelId) for failover lookup,
-    // regardless of whether the dedup pass kept this copy in dmChannels.
-    for (const dm of incomingDms) {
-      if (!dm.federatedId) continue;
-      let byOrigin = dmAlternatives.get(dm.federatedId);
-      if (!byOrigin) {
-        byOrigin = new Map();
-        dmAlternatives.set(dm.federatedId, byOrigin);
-      }
-      byOrigin.set(origin, dm.id);
-    }
-
-    // Merge: remove DMs belonging to this origin from existing state, then append incoming
-    const existingDmsFromOtherOrigins = get().dmChannels.filter(dm => {
-      const dmOrigin = get().channelOriginMap.get(dm.id);
-      return dmOrigin !== origin;
-    });
-    const mergedDms = [...existingDmsFromOtherOrigins, ...filteredDms];
-
-    // Sort DMs using unread-first ordering. On initial load, unreadChannels may
-    // still be empty (read states are processed after populateFromReady); the
-    // safety-net re-sort in setReadStates handles that case.
-    const { unreadChannels, currentChannelId } = useChatStore.getState();
-    const sortedDms = sortDmChannels(mergedDms, unreadChannels, currentChannelId);
+    // Every DM this origin holds replaces its previous copies; the merge
+    // module dedups them against the other origins' copies and pins one copy
+    // per conversation. The DM fields of the store are derived from the result.
+    const dmOperation = mergeOriginListing(get().dmConversations, origin, incomingDms, new Map(), dmPinContext());
+    const dmView = deriveDmView(dmOperation.next, get().dmChannels, channelOriginMap, channelLastMessageIds);
 
     const update: Partial<SpaceState> = {
+      ...dmView,
       spaces: mergedSpaces,
-      dmChannels: sortedDms,
       channelToSpaceMap,
-      channelLastMessageIds,
       spacePermissions,
       channelPermissions,
-      channelOriginMap,
       voiceChannelIds,
       categoryOriginMap,
-      dmAlternatives,
     };
 
     // LWW layout merge: accept incoming layout only if its timestamp is >= ours
@@ -224,6 +170,9 @@ export const createPopulateFromReadySlice: StateCreator<SpaceState, [], [], Pick
     }
 
     set(update as any);
+    if (dmOperation.pinMoves.length > 0) {
+      applyDmPinMoves(dmOperation.pinMoves);
+      get().resortDmChannels();
+    }
   },
-
 });

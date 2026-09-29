@@ -417,7 +417,8 @@ export function AppLayout() {
         <GroupDmSettings />
         <UserProfileModal />
         <ConnectAndJoinModal />
-        <MemberRolesModal />
+        {/* MemberRolesModal is desktop-only: it opens from the profile card's
+            Edit Roles, and its two-pane layout has no mobile form. */}
         <IncomingCallModal />
         <ImagePreview />
         {/* PictureInPicture is desktop-only. Mobile has its own purpose-built

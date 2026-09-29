@@ -7,6 +7,9 @@ import { authenticate } from '../utils/auth.js';
 import { sendError } from '../utils/httpErrors';
 import { hasPermission, isMember, isSpaceOwner, PermissionBits } from '../utils/permissions.js';
 import { sanitizeUser } from '../utils/sanitize.js';
+import { canActOnMember, canManageRoleAt } from '@backspace/shared/src/permissions.js';
+import { canActOnMemberInSpace, getHierarchyStanding } from '../utils/roleHierarchy.js';
+import { roleGrantRefusal } from './spaceRoles.js';
 import { checkVoicePermissions } from '../ws/events.js';
 import { connectionManager } from '../ws/handler.js';
 
@@ -111,15 +114,50 @@ function validateRoleUpdate(context: MemberUpdateContext, roleIds: unknown): boo
     sendError(reply, 400, 'role_ids_invalid');
     return false;
   }
-  const roles = getDb().select().from(schema.roles).where(eq(schema.roles.spaceId, spaceId)).all();
-  const validIds = new Set(roles.map((role) => role.id));
+  const db = getDb();
+  const spaceRoles = db.select().from(schema.roles).where(eq(schema.roles.spaceId, spaceId)).all();
+  const spaceRolePositions = new Map(spaceRoles.map(r => [r.id, r.position ?? 0]));
   for (const roleId of roleIds) {
-    if (!validIds.has(roleId)) {
+    if (!spaceRolePositions.has(roleId)) {
       sendError(reply, 400, 'role_not_in_space', { roleId });
       return false;
     }
     if (roleId === spaceId) {
       sendError(reply, 400, 'everyone_role_not_assignable');
+      return false;
+    }
+  }
+
+  // Role hierarchy: the member must rank below the actor, and every role
+  // this request adds or removes must sit below the actor's top role.
+  const actorStanding = getHierarchyStanding(spaceId, actorId);
+  if (!canActOnMember(actorStanding, getHierarchyStanding(spaceId, targetId))) {
+    sendError(reply, 403, 'role_hierarchy');
+    return false;
+  }
+  const currentRoleIds = new Set(
+    db.select({ roleId: schema.memberRoles.roleId })
+      .from(schema.memberRoles)
+      .where(and(eq(schema.memberRoles.spaceId, spaceId), eq(schema.memberRoles.userId, targetId)))
+      .all()
+      .map(r => r.roleId),
+  );
+  const requestedRoleIds = new Set(roleIds);
+  const changedRoleIds = [
+    ...roleIds.filter(r => !currentRoleIds.has(r)),
+    ...[...currentRoleIds].filter(r => !requestedRoleIds.has(r)),
+  ];
+  for (const roleId of changedRoleIds) {
+    if (!canManageRoleAt(actorStanding, spaceRolePositions.get(roleId) ?? 0)) {
+      sendError(reply, 403, 'role_hierarchy');
+      return false;
+    }
+  }
+  // Held-bits rule: a role this request adds must carry only bits the actor holds.
+  for (const roleId of roleIds.filter(r => !currentRoleIds.has(r))) {
+    const refusal = roleGrantRefusal(spaceId, actorId, spaceRoles.find(r => r.id === roleId)?.permissions ?? null);
+    if (refusal) {
+      sendError(reply, 403, refusal);
       return false;
     }
   }
@@ -308,6 +346,11 @@ export function removeSpaceMemberRoutes(app: FastifyInstance): void {
     // Cannot kick the owner
     if (isSpaceOwner(id, uid)) {
       return sendError(reply, 400, 'cannot_target_owner');
+    }
+
+    // Kicking someone else needs a higher top role than theirs
+    if (!isSelf && !canActOnMemberInSpace(id, request.userId, uid)) {
+      return sendError(reply, 403, 'role_hierarchy');
     }
 
     db.delete(schema.spaceMembers)

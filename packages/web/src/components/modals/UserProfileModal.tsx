@@ -15,6 +15,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { getAvatarGradient, getSpaceGradient, adjustColor, mutedGradient } from '../../utils/gradients';
 import { parseFederatedUsername } from '../../utils/identity';
 import { loadFederatedMutuals, type TaggedMutualFriend, type MutualSpace } from '../../utils/mutuals';
+import { friendRequestTarget } from '../../utils/friendRequestTarget';
 import { presenceLabel } from '../../i18n/presence';
 import { replaceEmojiShortcodes } from '../../utils/emojiShortcodes';
 import { getProfileMember, useProfileMemberRoles } from '../../hooks/useProfileMember';
@@ -34,7 +35,7 @@ export function UserProfileModal() {
   const addToast = useUIStore((s) => s.addToast);
   const navigate = useNavigate();
   const f = useFormatters();
-  const addDmChannel = useSpaceStore((s) => s.addDmChannel);
+  const upsertDmCopy = useSpaceStore((s) => s.upsertDmCopy);
   const friends = useSocialStore((s) => s.friends);
   const requests = useSocialStore((s) => s.requests);
   const sendFriendRequest = useSocialStore((s) => s.sendFriendRequest);
@@ -167,19 +168,20 @@ export function UserProfileModal() {
         homeUserId: user.homeUserId ?? undefined,
         homeInstance: user.homeInstance ?? undefined,
       });
-      addDmChannel(channel);
+      // The answer joins its conversation; open the conversation's row.
+      const rowId = upsertDmCopy('', channel, 'stated');
       useUIStore.getState().setShowDms(true);
       closeModal();
-      navigate(`/channels/@me/${channel.id}`);
+      navigate(`/channels/@me/${rowId}`);
     } catch (err) {
-      console.error('Failed to create DM channel:', err);
+      addToast(t('social:sendMessage.failed', { reason: describeError(err) }), 'warning');
     }
   };
 
   const handleAddFriend = async () => {
     setFriendActionLoading(true);
     try {
-      await sendFriendRequest(user.username);
+      await sendFriendRequest(friendRequestTarget(user, userOrigin));
     } catch (err) {
       addToast(describeError(err), 'warning');
     } finally {
@@ -278,10 +280,7 @@ export function UserProfileModal() {
 
           <div className="mb-3">
             <ProfileSpaceNickname member={memberContext} />
-            <Username
-              username={displayName}
-              className="text-[20px] font-bold leading-tight"
-            />
+            <span className="text-[20px] font-bold leading-tight">{displayName}</span>
             <div className="text-[14px] text-txt-tertiary mt-0.5">
               <Username username={user.username} showAt className="text-[14px] text-txt-tertiary" />
             </div>

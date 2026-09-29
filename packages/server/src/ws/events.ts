@@ -7,22 +7,23 @@ import { generateSnowflake } from '../utils/snowflake.js';
 import { connectionManager, getVoiceRoomElapsedSeconds } from './handler.js';
 import type { VoiceRoom, DmRoomMeta, SpaceRoomMeta } from './handler.js';
 import { isMember, getChannelSpaceId, isDmMember, isDeadOneOnOne, hasPermission, computePermissions, PermissionBits } from '../utils/permissions.js';
-import { broadcastDmMessage, getDmMessageWithUser, isDmReplyTargetInChannel } from '../routes/dm.js';
+import { broadcastDmMessage, getDmMessageWithUser, isDmReplyTargetInChannel, reopenForClosedMembers } from '../routes/dm.js';
 import { fetchReplyToMessages, isReplyTargetInChannel } from '../routes/messages.js';
-import { MAX_MESSAGE_LENGTH, isChosenUserStatus, type MessageWithUser, type Attachment, type DmMessageWithUser, type Embed, type Activity, type ActivityType, type ActivityTimestamps, type ActivityAssets, type ServerEvent, type DmCallUndeliverableFailure, type DmCallUndeliverableReason } from '@backspace/shared';
+import { MAX_MESSAGE_LENGTH, isChosenUserStatus, type MessageWithUser, type Attachment, type DmMessageWithUser, type Embed, type ServerEvent, type DmCallUndeliverableFailure, type DmCallUndeliverableReason } from '@backspace/shared';
 import type { CallRelayResult, CallFanoutFailure } from '../utils/federationOutbox.js';
 import { mapCallReasonToEventReason } from '../utils/federationOutbox.js';
-import { ACTIVITY_LIMITS } from '@backspace/shared/src/activities.js';
 import { sanitizeUser } from '../utils/sanitize.js';
 import { collectProfileBroadcastTargetIds } from '../utils/userDeletion.js';
 import { applyChosenStatus } from './presence.js';
+import { presenceUpdateFor, validateActivities } from './presenceEvent.js';
 import { deleteAttachmentFiles } from '../utils/fileCleanup.js';
 import { resolveEmbeds, reResolveEmbeds, embedRowToEmbed } from '../utils/embedResolver.js';
-import { appendMutationLog, dmMessageFederationRef, dmMessageMutationTarget, queueOutboxEvent, queueDmRelay, queueDmMessageDeleteRelay, getGroupDmTargetOrigins, sendCallRelay, computeFederatedId, sendTypingRelay, queueReadStateRelay } from '../utils/federationOutbox.js';
+import { appendMutationLog, dmMessageFederationRef, dmMessageMutationTarget, queueOutboxEvent, queueDmRelay, queueDmMessageDeleteRelay, getGroupDmTargetOrigins, sendCallRelay, sendTypingRelay, queueReadStateRelay } from '../utils/federationOutbox.js';
 import { canonicalizeHomeInstance, getOurOrigin, normalizeOriginForCompare } from '../utils/federationAuth.js';
 import { generateFederatedCallToken } from '../routes/livekit.js';
 import { config } from '../config.js';
-import crypto from 'node:crypto';
+import { canActOnMemberInSpace } from '../utils/roleHierarchy.js';
+import { ERROR_MESSAGES } from '../utils/httpErrors.js';
 
 /**
  * Re-evaluate SPEAK permission for all participants in voice channels
@@ -446,54 +447,6 @@ function handleTypingStart(event: Record<string, unknown>, userId: string, usern
   typingTimeouts.set(key, timeout);
 }
 
-// ─── Activity Validation ──────────────────────────────────────────────────
-
-const VALID_ACTIVITY_TYPES = new Set<string>(['custom', 'playing', 'listening', 'watching', 'streaming']);
-const MAX_TIMESTAMP = 4102444800000;
-
-function validateActivities(raw: unknown): Activity[] | null {
-  if (!Array.isArray(raw)) return null;
-  if (raw.length > ACTIVITY_LIMITS.MAX_ACTIVITIES_PER_USER) return null;
-
-  const validated: Activity[] = [];
-  for (const item of raw) {
-    if (!item || typeof item !== 'object') return null;
-    const obj = item as Record<string, unknown>;
-    if (!VALID_ACTIVITY_TYPES.has(obj.type as string)) return null;
-    if (typeof obj.name !== 'string') return null;
-    if (obj.name.length === 0 || obj.name.length > ACTIVITY_LIMITS.MAX_NAME_LENGTH) return null;
-
-    const activity: Activity = { type: obj.type as ActivityType, name: (obj.name as string).trim() };
-
-    if (typeof obj.details === 'string' && obj.details.length <= ACTIVITY_LIMITS.MAX_DETAILS_LENGTH) activity.details = obj.details.trim();
-    if (typeof obj.state === 'string' && obj.state.length <= ACTIVITY_LIMITS.MAX_STATE_LENGTH) activity.state = obj.state.trim();
-    if (typeof obj.url === 'string' && obj.url.length <= ACTIVITY_LIMITS.MAX_URL_LENGTH) {
-      if (obj.url.startsWith('https://') || obj.url.startsWith('http://')) activity.url = obj.url;
-    }
-
-    if (obj.timestamps && typeof obj.timestamps === 'object') {
-      const tsObj = obj.timestamps as Record<string, unknown>;
-      const ts: ActivityTimestamps = {};
-      if (typeof tsObj.start === 'number' && tsObj.start >= 0 && tsObj.start <= MAX_TIMESTAMP) ts.start = tsObj.start;
-      if (typeof tsObj.end === 'number' && tsObj.end >= 0 && tsObj.end <= MAX_TIMESTAMP) ts.end = tsObj.end;
-      if (ts.start !== undefined || ts.end !== undefined) activity.timestamps = ts;
-    }
-
-    if (obj.assets && typeof obj.assets === 'object') {
-      const aObj = obj.assets as Record<string, unknown>;
-      const assets: ActivityAssets = {};
-      if (typeof aObj.largeImage === 'string' && aObj.largeImage.length <= ACTIVITY_LIMITS.MAX_URL_LENGTH) assets.largeImage = aObj.largeImage;
-      if (typeof aObj.largeText === 'string' && aObj.largeText.length <= ACTIVITY_LIMITS.MAX_ASSET_TEXT_LENGTH) assets.largeText = aObj.largeText;
-      if (typeof aObj.smallImage === 'string' && aObj.smallImage.length <= ACTIVITY_LIMITS.MAX_URL_LENGTH) assets.smallImage = aObj.smallImage;
-      if (typeof aObj.smallText === 'string' && aObj.smallText.length <= ACTIVITY_LIMITS.MAX_ASSET_TEXT_LENGTH) assets.smallText = aObj.smallText;
-      if (Object.keys(assets).length > 0) activity.assets = assets;
-    }
-
-    validated.push(activity);
-  }
-  return validated;
-}
-
 function handlePresenceUpdate(event: Record<string, unknown>, userId: string): void {
   if (!isChosenUserStatus(event.status)) {
     connectionManager.sendToUser(userId, { type: 'error', message: 'Status must be "online", "idle", or "dnd"' });
@@ -518,7 +471,7 @@ function handleActivityUpdate(event: Record<string, unknown>, userId: string): v
   connectionManager.setUserActivities(userId, activities);
   const status = connectionManager.getUserStatus(userId);
 
-  const payload = { type: 'presence_update' as const, userId, status, activities };
+  const payload = presenceUpdateFor(userId, status, activities);
   const targets = collectProfileBroadcastTargetIds(userId);
   for (const uid of targets) connectionManager.sendToUser(uid, payload);
   connectionManager.sendToUser(userId, payload);
@@ -1469,6 +1422,11 @@ function handleDmCallStart(event: Record<string, unknown>, userId: string, usern
   // if the caller closes the tab while the call is ringing
   connectionManager.setVoiceWs(userId, ws);
 
+  // A member who has the conversation closed (a new 1-on-1's recipient before
+  // its first message, #360) gets it back first, so the call has a
+  // conversation to open in and survives a reconnect.
+  reopenForClosedMembers(dmChannelId);
+
   // Ring other members
   connectionManager.sendToDmMembers(dmChannelId, {
     type: 'dm_call_incoming',
@@ -1817,16 +1775,17 @@ async function sendFederatedCallStart(
   const db = getDb();
   const ourOrigin = getOurOrigin();
 
-  // Look up DM channel for federatedId
-  const channel = db.select({
-    federatedId: schema.dmChannels.federatedId,
-    ownerId: schema.dmChannels.ownerId,
-  })
+  // The conversation key names the call on every instance. Call start reads
+  // it and never computes or mints one (ADR 0002): every 1-on-1 is keyed at
+  // insert, and a group without a key has no copy on any peer, so a row
+  // without one is not announced.
+  const channel = db.select({ federatedId: schema.dmChannels.federatedId })
     .from(schema.dmChannels)
     .where(eq(schema.dmChannels.id, dmChannelId))
     .get();
 
-  if (!channel) return;
+  if (!channel?.federatedId) return;
+  const federatedId = channel.federatedId;
 
   // Get all DM members with their user records
   const members = db.select({
@@ -1840,26 +1799,6 @@ async function sendFederatedCallStart(
     .innerJoin(schema.users, eq(schema.dmMembers.userId, schema.users.id))
     .where(eq(schema.dmMembers.dmChannelId, dmChannelId))
     .all();
-
-  // Compute or reuse federatedId
-  let federatedId = channel.federatedId;
-  if (!federatedId) {
-    if (!channel.ownerId) {
-      const callerMember = members.find(m => m.userId === callerId);
-      const otherMember = members.find(m => m.userId !== callerId);
-      if (!callerMember || !otherMember) return;
-      federatedId = computeFederatedId(
-        callerMember.homeUserId || callerMember.userId,
-        otherMember.homeUserId || otherMember.userId,
-      );
-    } else {
-      federatedId = crypto.randomUUID();
-    }
-    db.update(schema.dmChannels)
-      .set({ federatedId })
-      .where(eq(schema.dmChannels.id, dmChannelId))
-      .run();
-  }
 
   // Classify members relative to this instance. `homeInstance` is stored in two
   // shapes (bare host and full URL), so every comparison goes through
@@ -2258,6 +2197,19 @@ async function sendFederatedCallEnd(
 
 // ─── Voice Moderation Handlers ──────────────────────────────────────────────
 
+/**
+ * Voice moderation of another member follows the role hierarchy, like kick and
+ * ban (permissions.md, "Role hierarchy"). Sends the refusal and returns true
+ * when `actorId` does not outrank `targetId`; acting on oneself is not
+ * moderation and is left to each handler's own rules.
+ */
+function refusedByRoleHierarchy(spaceId: string, actorId: string, targetId: string): boolean {
+  if (actorId === targetId) return false;
+  if (canActOnMemberInSpace(spaceId, actorId, targetId)) return false;
+  connectionManager.sendToUser(actorId, { type: 'error', message: ERROR_MESSAGES.role_hierarchy, code: 'role_hierarchy' });
+  return true;
+}
+
 function handleVoiceSpaceMute(event: Record<string, unknown>, userId: string): void {
   const targetUserId = event.userId as string;
   const muted = event.muted === true;
@@ -2285,6 +2237,8 @@ function handleVoiceSpaceMute(event: Record<string, unknown>, userId: string): v
     connectionManager.sendToUser(userId, { type: 'error', message: 'Cannot space-mute yourself' });
     return;
   }
+
+  if (refusedByRoleHierarchy(meta.spaceId, userId, targetUserId)) return;
 
   connectionManager.setSpaceMuted(meta.spaceId, targetUserId, muted);
 
@@ -2344,6 +2298,8 @@ function handleVoiceSpaceDeafen(event: Record<string, unknown>, userId: string):
     return;
   }
 
+  if (refusedByRoleHierarchy(meta.spaceId, userId, targetUserId)) return;
+
   connectionManager.setSpaceDeafened(meta.spaceId, targetUserId, deafened);
 
   // Persist to DB
@@ -2400,6 +2356,8 @@ function handleVoiceMove(event: Record<string, unknown>, userId: string): void {
     connectionManager.sendToUser(userId, { type: 'error', message: 'Missing MOVE_MEMBERS permission' });
     return;
   }
+
+  if (refusedByRoleHierarchy(meta.spaceId, userId, targetUserId)) return;
 
   // Verify target channel exists and is a voice/video channel in the same space
   const db = getDb();
@@ -2497,6 +2455,8 @@ function handleVoiceDisconnect(event: Record<string, unknown>, userId: string): 
     connectionManager.sendToUser(userId, { type: 'error', message: 'Missing DISCONNECT_MEMBERS permission' });
     return;
   }
+
+  if (refusedByRoleHierarchy(meta.spaceId, userId, targetUserId)) return;
 
   const channelId = currentRoom.roomId;
 

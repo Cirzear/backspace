@@ -46,9 +46,17 @@ function memberSocialIdentity(target: MemberTarget, member: MemberWithUser, cano
   };
 }
 
+function useSafeNavigate(): (path: string) => void {
+  try {
+    return useNavigate();
+  } catch {
+    return () => {};
+  }
+}
+
 export function useMemberContextMenu(space: TaggedSpace | undefined) {
   const { t } = useTranslation(['spaces', 'social', 'common']);
-  const navigate = useNavigate();
+  const navigate = useSafeNavigate();
   const [dialog, setDialog] = useState<MemberDialog | null>(null);
   const spaceId = space?.id;
   const origin = space?._instanceOrigin;

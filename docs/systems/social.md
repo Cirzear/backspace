@@ -59,14 +59,13 @@ See `docs/systems/api.md` for full endpoint signatures.
 
 ### Send Friend Request (`POST /api/social/requests`)
 
-**Input:** `{ username: string }`
+**Input:** `SendFriendRequest`: `{ username }` for a typed handle, or `{ homeUserId, homeInstance, username? }` for a user the client already holds. The identity wins when present (both fields required together, else 400 `validation_failed`); the username is sent alongside only so that a server predating the identity fields can still serve the request. See "Addressing the target" below.
 
-**Validation chain:**
-1. Username must be non-empty
-2. Lookup target user by exact username match: `users.username = body.username`
-3. **Self-friendship prevention:** `targetUser.id === request.userId` returns 400
-4. **Already friends check:** Checks `friends` table in both directions (userId/friendId and friendId/userId)
-5. **Duplicate request check:** Checks `friend_requests` for any pending request between the two users in either direction
+**Routing:** a target on another instance goes to the federated flow in Section 6. A local target is found by lowercased username (`bare` or `bare@<own host>`), or, for an identity whose `homeInstance` is this instance, as the native user whose `id` (or native `homeUserId`) is `homeUserId`. Then:
+1. Not found → 404 `user_not_found`
+2. **Self-friendship prevention:** `targetUser.id === request.userId` returns 400 `cannot_friend_self`
+3. **Already friends check:** Checks `friends` table in both directions (userId/friendId and friendId/userId)
+4. **Duplicate request check:** Checks `friend_requests` for any pending request between the two users in either direction
 
 **On success:**
 1. Generates snowflake ID, inserts into `friend_requests` with `status='pending'`
@@ -289,10 +288,23 @@ The sorted join ensures the same pair always produces the same prefix regardless
 
 **Outbound (sender's home instance -- `social.ts:POST /api/social/requests`):**
 
-As of 2026-04-25, the sender's home server owns the entire federated friend-add flow. The client sends `{ username }` verbatim; all parsing, peering, remote lookup, and queueing happen server-side in this strict order:
+As of 2026-04-25, the sender's home server owns the entire federated friend-add flow. The client names the target and never routes it; all parsing, peering, remote lookup, and queueing happen server-side in this strict order.
 
-1. **Parse target.** If `body.username` contains no `@`, or the domain after `@` normalizes to this server's own host, fall through to the local-only path (unchanged).
-2. **resolveOriginFromHostname(targetDomain)** — resolves the target peer's full origin URL. Prefers a stored `federation_peers` row matching the typed host; falls back to mirroring `getOurOrigin()`'s scheme. Returns null → 400 `invalid_target_domain`.
+#### Addressing the target
+
+A request names its target by **identity** (`homeUserId` + `homeInstance`) or by **username**:
+
+- **Identity** is what the web client sends for every user it already holds: the profile modal's Add Friend and the discover/search cards on the Friends page (`friendRequestTarget` in `packages/web/src/utils/friendRequestTarget.ts`). A replicated row carries its home identity; a user native to the remote instance it was loaded from is that instance's user by its id there. A user native to the home instance is sent by username, which is their handle.
+- **Username** is for a handle the user typed (Add Friend input, and the Connections panel's Retry prefill).
+
+A user object's `username` is not a reliable name for the person: for a replicated stub it is only this instance's label, and a stub minted without a name hint is called `<homeUserId>@<domain>`. Sending that label made the peer's by-name lookup answer 404 `user_not_found`, so a removed federated friend could not be re-added from their profile (issue #339). The identity resolves whatever the stub is called.
+
+The client sends `username` alongside the identity (`name@host` for a federated target). A server that predates the identity fields has no body schema on the route, ignores the unknown fields and serves the username as before.
+
+#### Steps
+
+1. **Parse target.** An identity whose `homeInstance` normalizes to this server's own host (port included) or to one of its bare domain names (`isOwnDomain`), or a `username` with no `@` or whose domain after `@` normalizes to this server's own host, goes to the local-only path. Otherwise the target domain is the identity's `homeInstance` or the typed domain.
+2. **resolveOriginFromHostname(targetDomain)** — resolves the target peer's full origin URL. Prefers a stored `federation_peers` row matching the typed host; for a host without a port, then the one `active` peer row on that hostname (an identity's `homeInstance` is a bare hostname while the peer's origin may carry a port; a dead row from a former ported setup does not count); falls back to mirroring `getOurOrigin()`'s scheme. Returns null → 400 `invalid_target_domain`.
 2a. **Limbo-window guard → 409 `peer_reset_pending`.** O(1) point lookup on the `federation_reset_events` origin PRIMARY KEY: if an **unresolved** row exists for `peerOrigin` (`origin = peerOrigin AND resolved_at IS NULL`), the peer was reset-detected (wipe-and-reinstall) but the admin has not yet re-peered — the local friendship/stub graph is still bound to the dead incarnation. Return 409 `peer_reset_pending` instead of the confusing `already_friends` (stale friendship) or `peer_rejected` (the `needs_attention` peer would otherwise trip `ensurePeered`). `peerOrigin` is the exact string `markPeerReset` journals (the peer's `federation_peers.origin`), so the match is a single indexed lookup; no reset in progress → one indexed miss → the normal path proceeds unchanged. See `docs/systems/federation.md` (instance-epoch self-healing) and the design spec §5.3. The equivalent guard runs on federated DM-create (`POST /api/dm`, `dm.ts`).
 3. **Authority defense.** If the calling user's `homeInstance` is set and does not normalize to this server's own host (checked via `normalizeOriginForCompare`), return 403 `not_authoritative_for_sender`. Prevents replicated/federated users from queueing relay events the home server isn't authoritative for. Runs before peering to fail fast.
 4. **ensurePeered(peerOrigin)** — blocks on the result. Status → HTTP mapping:
@@ -302,10 +314,12 @@ As of 2026-04-25, the sender's home server owns the entire federated friend-add 
    - `'rejected'` → 403 `peer_rejected`
    - `'failed'` → 503 `peer_unreachable`
    - `'admin_required'` (gate fired locally) → 409 `peer_pending_local_admin` — your own admin must approve before we reach out
-5. **lookupRemoteUser(peerOrigin, baseName)** — POSTs HMAC-signed `{ username }` to `peerOrigin/api/federation/users/lookup`. Result mapping:
+5. **Lookup.** For a username, **lookupRemoteUser(peerOrigin, baseName)** POSTs HMAC-signed `{ username }` to `peerOrigin/api/federation/users/lookup`. For an identity, **lookupRemoteUserByHomeId(peerOrigin, homeUserId)** POSTs `{ homeUserId }` to `peerOrigin/api/federation/users/by-home-id`. Both peer endpoints share the S2S auth preamble and the 60/min per-peer lookup rate limit, and answer only for a live native user. Result mapping:
    - `not_found` → 404 `user_not_found`
-   - `unreachable` → 503 `peer_unreachable`
+   - `unreachable` (any peer failure other than 429, for both lookups), or a thrown lookup (only a missing peer row) → 503 `peer_unreachable`
    - `rate_limited` → 429 `lookup_rate_limited` (with `Retry-After` header)
+
+   The peering trigger target recorded in step 4 is `name@domain`. For an identity it is the local part of the `username` sent alongside when that username is on the same domain, else the `homeUserId`.
 6. **Self-friend pre-check.** If the looked-up `(homeUserId, peerOrigin)` matches the sender's canonical identity (using `normalizeOriginForCompare` for host comparison) → 400 `cannot_friend_self`.
 7. **resolveOrCreateReplicatedUser + hydrateReplicatedUserProfile** — creates or refreshes the local stub for the remote user. Tombstoned identities (resolveOrCreateReplicatedUser returns null) → 404 `user_not_found`.
 8. **Direction-aware idempotency:**
@@ -343,7 +357,7 @@ The wire format of the queued event is identical to the pre-2026-04-25 flow; onl
 
 ### Failure Handling: Async Rollback
 
-When the outbox worker receives a relay response from the remote instance, it classifies each rejected entry. A configurable set of **terminal rejection reasons** (`TERMINAL_REJECTION_REASONS` in `federationWorker.ts`) causes an outbox entry to be deleted with no retry: `duplicate`, `recipient_not_found`, `attribution_mismatch`, `unknown_event_type`, `self_target_invalid`. Any other reason (for example `attribution_unproven`, see [federation.md §3](federation.md#3-identity-resolution)) keeps the request pending while the outbox retries it on backoff.
+When the outbox worker receives a relay response from the remote instance, it classifies each rejected entry. A configurable set of **terminal rejection reasons** (`TERMINAL_REJECTION_REASONS` in `federationWorker.ts`) causes an outbox entry to be deleted with no retry: `duplicate`, `recipient_not_found`, `attribution_mismatch`, `unknown_event_type`, `self_target_invalid`, `not_message_author`, `invalid_target` (a `friend_add` answering no pending request is `invalid_target`). Any other reason (for example `attribution_unproven`, see [federation.md §3](federation.md#3-identity-resolution)) keeps the request pending while the outbox retries it on backoff.
 
 For non-`duplicate` terminals, the worker invokes the registered permanent-failure callback via `invokePermanentFailureCallback(eventType, messageId, reason)` from `utils/federationRollback.ts`. For `friend_request_create`, this is **`rollbackFriendRequestCreate`**:
 
@@ -366,11 +380,11 @@ The client handler in `useWebSocket.ts` removes the row from `socialStore` and s
 
 **Inbound (`federation.ts:processFriendRequestUpdateEvent`):**
 1. **Authority:** `to.homeInstance === sourceInstance` -- the recipient's instance sends the update
-2. **Resolve sender:** `resolveLocalUser(from.homeUserId)` -- must be local (they sent the original request from this instance)
-3. **Resolve recipient:** `resolveOrCreateReplicatedUser(to.homeUserId, to.homeInstance)` -- create stub if needed
+2. **Resolve sender:** `resolveRelayActor(from)`, by `homeUserId` + `homeInstance` -- the user that IS that identity here (they sent the original request from this instance), never a row that only shares the `homeUserId`. Not found (or a `mismatch`) -> reject `sender_not_found`
+3. **Resolve recipient:** `resolveRelayActor(to)`, by pair; nothing is created. Not found -> accept without effect (no pending request can exist for a user this instance does not hold)
 4. **Find pending request:** Matches `fromId = fromUser.id`, `toId = toUser.id`, `status = 'pending'`
-5. If no pending request found -> accept idempotently (friend_add may have arrived first)
-6. Update request status
+5. If no pending request found -> accept idempotently (friend_add may have arrived first, or the request was cancelled); nothing changes
+6. Update request status. If `accepted`, insert the `friends` row in the same transaction (unless one exists): the acceptance answers the local sender's pending request, so the friendship forms here whether `friend_request_update` or `friend_add` arrives first
 7. **WS broadcast:** `friend_request_accepted` (with Friend payload) or `friend_request_declined` sent to local sender
 
 ### End-to-End Relay Flow: Friend Request Cancel
@@ -390,13 +404,17 @@ The client handler in `useWebSocket.ts` removes the row from `socialStore` and s
 **Outbound:** Queued alongside `friend_request_update` (accepted) from `social.ts:PATCH`.
 
 **Inbound (`federation.ts:processFriendAddEvent`):**
+
+**Rule:** a `friend_add` is the acceptor's answer to a request, so it forms a friendship only for a pair this instance holds a pending request for, from `from` (the requester) to `to` (the acceptor). The requester's home writes that row when the request is made, in the same transaction that queues `friend_request_create` (Section 6, step 9), so it exists before any answer can arrive, including when the peer was unreachable and the create waited in the outbox. The recipient's `PATCH` queues `friend_request_update` before `friend_add`, and the outbox delivers in that order; the update then forms the friendship (see above) and the `friend_add` is the idempotent case. When the `friend_add` arrives first it finds the pending row and forms it. A request in the other direction (`to` -> `from`), an answered request after the friendship was removed, or no request at all never satisfies the rule.
+
 1. **Authority:** `to.homeInstance === sourceInstance` -- the accepting side creates the friendship
-2. **Resolve both users:** `resolveOrCreateReplicatedUser()` for both, hydrate profiles from snapshots
+2. **Resolve both users:** `resolveRelayActor()` for both, by `homeUserId` + `homeInstance`. Nothing is created: a pair with a pending request already exists here
 3. **Idempotency:** If friendship row already exists, accept as no-op
-4. Insert `friends` row
-5. **Auto-resolve pending requests:** Updates any pending request between these users to `'accepted'` (handles friend_add arriving before friend_request_update due to delivery ordering)
-6. **Determine local user:** Compare `from.homeInstance` against `getOurOrigin()` to find who is local
-7. **WS broadcast:** `friend_request_accepted` sent to local user with remote user's profile (uses empty string for `requestId` since the original request may not exist locally yet)
+4. **Pending request:** a `friend_requests` row `fromId = fromUser.id`, `toId = toUser.id`, `status = 'pending'` must exist, else reject `invalid_target` (terminal; nothing changes, no stub is created)
+5. Hydrate both profiles from the snapshots
+6. **One transaction:** insert the `friends` row and set any pending request between the pair (either direction) to `'accepted'`
+7. **Determine local user:** `from` is local when its home domain is one of ours (`isOwnDomain`, which a bare domain and a full origin both match), else `to`
+8. **WS broadcast:** `friend_request_accepted` sent to local user with remote user's profile and the answered request's id as `requestId`
 
 ### End-to-End Relay Flow: Friend Remove
 
@@ -408,7 +426,7 @@ The client handler in `useWebSocket.ts` removes the row from `socialStore` and s
 1. **Authority:** Either `from.homeInstance === sourceInstance` OR `to.homeInstance === sourceInstance` (either side can unfriend)
 2. **Resolve both users:** `resolveRelayActor()` for both, by `homeUserId` + `homeInstance` -- if either doesn't exist, accept idempotently
 3. Delete friendship row in both directions
-4. **Determine who was removed:** The removing user is on `sourceInstance`; broadcast `friend_removed` to the **other** (local) user
+4. **Determine who was removed:** the side whose home domain is ours (`isOwnDomain`) is the local user and gets `friend_removed`; the other side is the one who removed
 
 ---
 

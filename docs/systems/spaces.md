@@ -412,6 +412,8 @@ All paths: insert `space_members`, register in `connectionManager`, broadcast `m
 **Owner restriction:** Owner cannot leave. Must transfer ownership or delete the space.
 **Owner protection:** Cannot kick the owner.
 
+**Role hierarchy:** kicking someone else needs a higher top role than theirs (`403 role_hierarchy`, permissions.md).
+
 **Cleanup on removal:**
 1. Delete `space_members` row
 2. Delete `voice_restrictions` for the member in this space
@@ -424,7 +426,7 @@ All paths: insert `space_members`, register in `connectionManager`, broadcast `m
 **Permission:** `BAN_MEMBERS`
 **Body:** `{ userId: string, reason?: string }`
 
-**Protections:** Cannot ban owner, cannot ban self, 409 if already banned.
+**Protections:** Cannot ban owner, cannot ban self, 409 if already banned, `403 role_hierarchy` unless the actor outranks the target.
 
 **Atomic transaction:**
 1. Insert `bans` row (with `reason`, `bannedBy`, `createdAt`)
@@ -460,6 +462,7 @@ Updates `spaces.ownerId`, broadcasts `space_updated` WS event.
 - Cannot change own roles
 - Cannot modify owner's roles (unless you are the owner)
 - @everyone role (id=spaceId) cannot be assigned
+- Role hierarchy: the member must rank below the actor, and every role added or removed must sit below the actor's top role (`403 role_hierarchy`, permissions.md)
 - Atomically deletes all existing `member_roles` then inserts new ones
 - Triggers `connectionManager.pushReadyPayload(uid)` to force re-sync
 - Triggers `checkVoicePermissions(spaceId)` to enforce voice changes
@@ -467,6 +470,8 @@ Updates `spaces.ownerId`, broadcasts `space_updated` WS event.
 **Add single role:** `POST /api/spaces/:id/members/:uid/roles` — body `{ roleId }`, requires `MANAGE_ROLES`
 
 **Remove single role:** `DELETE /api/spaces/:id/members/:uid/roles/:roleId` — requires `MANAGE_ROLES`
+
+Both single-role routes apply the same checks as the replace route (not own roles, not the owner's, member of the space, role of this space other than @everyone, role hierarchy) and push the target a ready payload.
 
 ---
 
@@ -480,8 +485,8 @@ Updates `spaces.ownerId`, broadcasts `space_updated` WS event.
 
 - Name defaults to `'new role'` if empty
 - Duplicate name check (case-insensitive, raw SQL COLLATE NOCASE)
-- Permissions default to `DEFAULT_EVERYONE_PERMISSIONS` if not provided
-- Position defaults to 0
+- Permissions default to `DEFAULT_EVERYONE_PERMISSIONS` limited to the bits the actor holds; given permissions must all be held (`403 cannot_grant_unowned_permissions`, permissions.md "Held-bits rule")
+- Created at the bottom: position 1, the other roles move up one (`normalizeRolePositions`); refused with `403 role_hierarchy` unless the actor ranks above 1
 - Color defaults to `'#b9bbbe'`
 - After creation: pushes ready payload to all space members, checks voice permissions
 
@@ -492,7 +497,10 @@ Updates `spaces.ownerId`, broadcasts `space_updated` WS event.
 **Body:** `{ name?, color?, position?, permissions? }`
 
 - Name: trimmed, non-empty, duplicate check (case-insensitive, excludes self)
-- Permissions: validated as valid bigint string
+- Permissions: a non-negative integer string (`400 permissions_invalid`); only bits the actor holds may be switched (`403 cannot_grant_unowned_permissions` on, `403 cannot_change_unowned_permissions` off; permissions.md "Held-bits rule")
+- `404 role_not_in_space` for a role of another space; `403 role_hierarchy` for a role at or above the actor's top role
+- Position: an integer from 1 (not for @everyone, `400 validation_failed`) below the actor's top role; the role moves there and the others are renumbered so positions stay distinct
+- Client: the role list in Space Settings > Roles sends `{ position }` alone to reorder (drag handle, arrow keys, up and down buttons; permissions.md, "Setting the order")
 - After update: pushes ready payload to all members, checks voice permissions
 
 ### Delete Role
@@ -501,7 +509,8 @@ Updates `spaces.ownerId`, broadcasts `space_updated` WS event.
 **Permission:** `MANAGE_ROLES`
 
 - Cannot delete @everyone role (roleId === spaceId)
-- Deletes channel overrides referencing this role
+- `404 role_not_in_space` for a role of another space; `403 role_hierarchy` for a role at or above the actor's top role; `403 cannot_change_unowned_permissions` for a role carrying a bit the actor does not hold (permissions.md "Held-bits rule")
+- Deletes channel and category overrides referencing this role, then renumbers the remaining roles
 - After delete: pushes ready payload to all members, checks voice permissions
 
 ---
@@ -604,11 +613,11 @@ Override endpoints documented here for API completeness:
 | Endpoint | Permission | Notes |
 |----------|------------|-------|
 | `GET /api/channels/:id/overrides` | `MANAGE_ROLES` | List channel overrides |
-| `PUT /api/channels/:id/overrides` | `MANAGE_ROLES` | Upsert (delete+insert in tx). Privilege escalation guard. |
-| `DELETE /api/channels/:id/overrides/:targetType/:targetId` | `MANAGE_ROLES` | Remove override |
+| `PUT /api/channels/:id/overrides` | `MANAGE_ROLES` | Upsert (delete+insert in tx). Role hierarchy on the target, held-bits rule against the stored row. |
+| `DELETE /api/channels/:id/overrides/:targetType/:targetId` | `MANAGE_ROLES` | Remove override; refused for a target at or above the actor, or when it sets a bit the actor does not hold |
 | `GET /api/categories/:id/overrides` | `MANAGE_ROLES` | List category overrides |
-| `PUT /api/categories/:id/overrides` | `MANAGE_ROLES` | Upsert with escalation guard |
-| `DELETE /api/categories/:id/overrides/:targetType/:targetId` | `MANAGE_ROLES` | Remove override |
+| `PUT /api/categories/:id/overrides` | `MANAGE_ROLES` | Upsert; role hierarchy on the target, held-bits rule against the stored row |
+| `DELETE /api/categories/:id/overrides/:targetType/:targetId` | `MANAGE_ROLES` | Remove override; refused for a target at or above the actor, or when it sets a bit the actor does not hold |
 
 All override mutations call `broadcastOverrideChange` (channel) or `broadcastCategoryOverrideChange` (category) which re-evaluates VIEW_CHANNEL per-user and sends `channel_updated` (gained access) or `channel_deleted` (lost access). Voice permission enforcement via `checkVoicePermissions` runs after every override change.
 

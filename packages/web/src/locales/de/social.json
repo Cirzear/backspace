@@ -23,6 +23,9 @@
     "message": "Nachricht",
     "remove": "Freund entfernen"
   },
+  "sendMessage": {
+    "failed": "Die Unterhaltung konnte nicht geöffnet werden: {{reason}}"
+  },
   "request": {
     "incoming": "Eingehende Freundschaftsanfrage",
     "outgoing": "Ausgehende Freundschaftsanfrage",
@@ -67,6 +70,7 @@
     "roles": "Rollen",
     "memberSince": "Mitglied seit",
     "sendMessage": "Nachricht senden",
+    "editRoles": "Rollen bearbeiten",
     "viewFull": "Ganzes Profil ansehen",
     "addFriend": "Freund hinzufügen"
   },

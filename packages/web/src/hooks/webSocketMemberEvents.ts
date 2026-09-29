@@ -6,8 +6,15 @@ import { useSocialStore } from '../stores/socialStore';
 import { applySpaceMemberUpdate } from '../stores/spaceMemberUpdates';
 import { getMyUserIdForOrigin, useSpaceStore } from '../stores/spaceStore';
 import { normalizeUserAssets } from '../utils/assetUrls';
+import { presenceSubjectOf } from '../utils/presenceSubject';
 import { ownStatusReport } from '../utils/selfStatus';
 import type { WebSocketEventHandlers } from './webSocketEvents';
+
+function isLoadedRosterSpace(spaceId: string, origin: string): boolean {
+  const { currentSpaceId, spaces } = useSpaceStore.getState();
+  if (spaceId !== currentSpaceId) return false;
+  return (spaces.find(s => s.id === spaceId)?._instanceOrigin ?? '') === origin;
+}
 
 export const memberEvents = {
   presence_update: (origin, event) => {
@@ -17,10 +24,15 @@ export const memberEvents = {
     // another device (utils/selfStatus.ts); feeds the alert gate.
     const report = ownStatusReport(useAuthStore.getState().user, { origin, isHome }, event);
     if (report) useAuthStore.getState().applyOwnStatus(report);
-    updateMemberPresence(event.userId, event.status);
-    useSocialStore.getState().updateFriendPresence(event.userId, event.status);
+    // Members, friends and activities are keyed by the subject's home
+    // identity, so a replicated row's delivery and the home's native
+    // delivery agree (#340), and a same-id row of another instance is not
+    // mistaken for them.
+    const subject = presenceSubjectOf(event, origin);
+    updateMemberPresence(subject, origin, event.status);
+    useSocialStore.getState().updateFriendPresence(subject, origin, event.status);
     if (event.activities) {
-      useActivityStore.getState().setUserActivities(event.userId, event.activities);
+      useActivityStore.getState().setUserActivities(subject, origin, event.activities);
     }
   },
   user_updated: (origin, event) => {
@@ -54,7 +66,7 @@ export const memberEvents = {
     if (event.user.isDeleted) {
       useSocialStore.getState().removeFriendLocally(event.user.id, origin);
       useSocialStore.getState().removeRequestsForUser(event.user.id);
-      useActivityStore.getState().clearUserActivities(event.user.id);
+      useActivityStore.getState().clearUserActivities(event.user, origin);
       useDiscoverStore.getState().removeUser(event.user.id);
       useChatStore.getState().clearTypingForUser(event.user.id);
     }
@@ -64,11 +76,11 @@ export const memberEvents = {
     const { addMember, upsertUserView } = useSpaceStore.getState();
     if (!isHome) normalizeUserAssets(event.member.user, origin);
     upsertUserView(event.member.user, origin);
-    addMember(event.member);
+    if (isLoadedRosterSpace(event.spaceId, origin)) addMember(event.spaceId, event.member);
   },
   member_left: (origin, event) => {
     const { removeMember } = useSpaceStore.getState();
-    removeMember(event.userId);
+    if (isLoadedRosterSpace(event.spaceId, origin)) removeMember(event.spaceId, event.userId);
   },
   member_banned: (origin, event) => {
     // The current user has been banned from a space — remove it from the sidebar

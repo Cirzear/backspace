@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { eq, and, or, desc, lt, inArray, isNull, sql } from 'drizzle-orm';
+import { eq, and, or, desc, lt, inArray, isNull } from 'drizzle-orm';
 import { getDb, schema } from '../db/index.js';
 import { authenticate } from '../utils/auth.js';
 import { generateSnowflake } from '../utils/snowflake.js';
@@ -7,7 +7,6 @@ import { isDmMember, isDeadOneOnOne } from '../utils/permissions.js';
 import { connectionManager } from '../ws/handler.js';
 import {
   MAX_MESSAGE_LENGTH,
-  type DmChannel,
   type DmMessage,
   type DmMessageWithUser,
   type CreateDmRequest,
@@ -24,6 +23,8 @@ import {
 } from '@backspace/shared';
 import { fetchSpaceInviteSnapshot, getLocalInviteSnapshot } from '../utils/spaceInviteSnapshot.js';
 import { sanitizeUser } from '../utils/sanitize.js';
+import { loadDmChannelWire, loadOpenDmChannels } from '../utils/dmChannelWire.js';
+import { findOrCreateOneOnOne, mintGroupKey, type OneOnOneResult } from '../utils/dmConversation.js';
 import { sendError } from '../utils/httpErrors.js';
 
 /** Members a group DM can hold, the owner included. */
@@ -48,14 +49,14 @@ import {
   getDmParticipants,
   getGroupDmTargetOrigins,
   isFederationRelayEnabled,
-  computeFederatedId,
   sendTypingRelay,
   normalizeIconForWire,
 } from '../utils/federationOutbox.js';
 import { getOurOrigin, canonicalizeHomeInstance } from '../utils/federationAuth.js';
 import { resolveOriginFromHostname } from '../utils/federationOriginResolve.js';
 import type { FederationRelayEvent } from '@backspace/shared';
-import { resolveLocalUser, resolveOrCreateReplicatedUser } from './federation.js';
+import { resolveLocalUser } from './federation.js';
+import { resolveRemoteIdentityForClient } from '../utils/federationClientIdentity.js';
 
 /**
  * Batch-fetch reactions for a set of DM message IDs.
@@ -251,10 +252,40 @@ export function getDmMessageWithUser(dmMessageId: string): DmMessageWithUser | n
 }
 
 /**
- * Broadcasts a DM message to all members of a DM channel.
- * For members who have closed the channel (closed=1), also sends a
- * dm_channel_created event to resurface the channel in their sidebar,
- * and flips their closed flag back to 0.
+ * Reopen a conversation for every member who has it closed, and send each of
+ * them `dm_channel_created` so it appears in their list. `lastMessage` is the
+ * message being delivered with it; without one, the newest stored message is
+ * the preview. Run before anything that needs the conversation in a member's
+ * list: a new message (`broadcastDmMessage`) and a call (call start), which is
+ * how a new 1-on-1 reaches its recipient (#360).
+ */
+export function reopenForClosedMembers(dmChannelId: string, lastMessage?: DmMessageWithUser): void {
+  const db = getDb();
+  const closedMembers = db.select()
+    .from(schema.dmMembers)
+    .where(and(eq(schema.dmMembers.dmChannelId, dmChannelId), eq(schema.dmMembers.closed, 1)))
+    .all();
+  if (closedMembers.length === 0) return;
+
+  db.update(schema.dmMembers)
+    .set({ closed: 0 })
+    .where(and(eq(schema.dmMembers.dmChannelId, dmChannelId), eq(schema.dmMembers.closed, 1)))
+    .run();
+
+  const dmChannel = loadDmChannelWire(db, dmChannelId, lastMessage);
+  if (!dmChannel) return;
+  for (const member of closedMembers) {
+    connectionManager.sendToUser(member.userId, {
+      type: 'dm_channel_created',
+      dmChannel,
+    });
+  }
+}
+
+/**
+ * Broadcasts a DM message to all members of a DM channel. Members who have
+ * closed the channel get it back first (`reopenForClosedMembers`), with this
+ * message as its last message.
  */
 export function broadcastDmMessage(dmChannelId: string, message: DmMessageWithUser): void {
   const db = getDb();
@@ -277,47 +308,9 @@ export function broadcastDmMessage(dmChannelId: string, message: DmMessageWithUs
   // Relay typing stop to remote peers (fire-and-forget)
   sendTypingRelay(dmChannelId, 'dm_typing_stop', message.userId);
 
+  reopenForClosedMembers(dmChannelId, message);
+
   for (const member of dmMembers) {
-    // If this member had closed the DM, resurface it first
-    if (member.closed === 1) {
-      db.update(schema.dmMembers)
-        .set({ closed: 0 })
-        .where(and(
-          eq(schema.dmMembers.dmChannelId, dmChannelId),
-          eq(schema.dmMembers.userId, member.userId),
-        ))
-        .run();
-
-      // Build and send dm_channel_created so their sidebar picks it up
-      const allMemberRows = db.select()
-        .from(schema.dmMembers)
-        .where(eq(schema.dmMembers.dmChannelId, dmChannelId))
-        .all();
-      const memberUserIds = allMemberRows.map(m => m.userId);
-      const users = memberUserIds.length > 0
-        ? db.select().from(schema.users).where(inArray(schema.users.id, memberUserIds)).all()
-        : [];
-
-      const dmChannel = db.select()
-        .from(schema.dmChannels)
-        .where(and(eq(schema.dmChannels.id, dmChannelId), isNull(schema.dmChannels.deletedAt)))
-        .get();
-
-      if (dmChannel) {
-        connectionManager.sendToUser(member.userId, {
-          type: 'dm_channel_created',
-          dmChannel: {
-            id: dmChannel.id,
-            ownerId: dmChannel.ownerId ?? null,
-            federatedId: dmChannel.federatedId ?? null,
-            createdAt: dmChannel.createdAt,
-            members: users.map(u => sanitizeUser(u)),
-            lastMessage: message,
-          },
-        });
-      }
-    }
-
     connectionManager.sendToUser(member.userId, {
       type: 'dm_message_created',
       message,
@@ -326,140 +319,57 @@ export function broadcastDmMessage(dmChannelId: string, message: DmMessageWithUs
 }
 
 /**
- * Find the existing 1-on-1 DM channel between two users, reopening it if
- * the caller had it soft-closed. Creates a new channel atomically when none
- * exists. Returns the channel id.
+ * Open the 1-on-1 between the caller and `targetUser` for the caller: the
+ * conversation `findOrCreateOneOnOne` finds or creates, reopened on the
+ * caller's side (with a `dm_reopen` relay) when they had closed it.
  *
- * Mirrors the dedup-or-create behavior of the existing `POST /api/dm`
- * handler, including:
- *  - skipping group DMs (ownerId !== null) and channels with !== 2 members
- *  - excluding soft-deleted channels
- *  - reopening on the caller side and queueing a `dm_reopen` relay
- *  - computing a deterministic `federatedId` when either party is federated
- *  - notifying the target on a fresh create with the same `dm_channel_created`
- *    payload shape (`id`, `ownerId`, `federatedId`, `createdAt`, `members`,
- *    `lastMessage: null`).
- *
- * NOTE: This helper is intentionally duplicated from `POST /api/dm` rather
- * than refactored out of it — mixing a behavior-preserving rewrite of a
- * heavily-used path with new feature work is the regression pattern this
- * codebase avoids.
+ * Nothing reaches the target (#360). A new conversation gets the target's
+ * membership closed, and an existing one the target closed stays closed: the
+ * next message sent in it reopens it for them and delivers it with that
+ * message (`broadcastDmMessage`), the way a conversation reaches a recipient
+ * on another instance. `POST /api/dm` and `ensureOneOnOneDmChannel` both open
+ * conversations through it.
+ */
+function openOneOnOne(
+  callerId: string,
+  targetUser: typeof schema.users.$inferSelect,
+  db: ReturnType<typeof getDb>,
+): OneOnOneResult {
+  const callerRow = db.select().from(schema.users).where(eq(schema.users.id, callerId)).get();
+  const opened = findOrCreateOneOnOne(
+    db,
+    { id: callerId, homeUserId: callerRow?.homeUserId ?? null },
+    targetUser,
+    { open: 'first' },
+  );
+  if (opened.created) return opened;
+
+  const reopened = db.update(schema.dmMembers)
+    .set({ closed: 0 })
+    .where(and(
+      eq(schema.dmMembers.dmChannelId, opened.channelId),
+      eq(schema.dmMembers.userId, callerId),
+      eq(schema.dmMembers.closed, 1),
+    ))
+    .run();
+  if (reopened.changes > 0) {
+    // Relay reopen to federated peers
+    queueDmCloseRelay(opened.channelId, callerId, 'dm_reopen');
+  }
+  return opened;
+}
+
+/**
+ * The 1-on-1 between `callerId` and `targetUser`, opened for the caller
+ * (`openOneOnOne`). Returns the channel id. Used where a feature needs the
+ * conversation to post into, such as a space invite.
  */
 export function ensureOneOnOneDmChannel(
   callerId: string,
   targetUser: typeof schema.users.$inferSelect,
   db: ReturnType<typeof getDb>,
 ): string {
-  // 1. Look for an existing 1-on-1 channel between caller and target.
-  const callerMemberships = db.select()
-    .from(schema.dmMembers)
-    .where(eq(schema.dmMembers.userId, callerId))
-    .all();
-
-  for (const membership of callerMemberships) {
-    const otherMember = db.select()
-      .from(schema.dmMembers)
-      .where(and(
-        eq(schema.dmMembers.dmChannelId, membership.dmChannelId),
-        eq(schema.dmMembers.userId, targetUser.id),
-      ))
-      .get();
-    if (!otherMember) continue;
-
-    // Only match 1-on-1 DMs (exactly 2 members). Skip group DMs that
-    // happen to include the target user.
-    const memberCount = db.select()
-      .from(schema.dmMembers)
-      .where(eq(schema.dmMembers.dmChannelId, membership.dmChannelId))
-      .all()
-      .length;
-    if (memberCount !== 2) continue;
-
-    const dmChannel = db.select()
-      .from(schema.dmChannels)
-      .where(and(
-        eq(schema.dmChannels.id, membership.dmChannelId),
-        isNull(schema.dmChannels.deletedAt),
-      ))
-      .get();
-    if (!dmChannel) continue;
-    if (dmChannel.ownerId !== null) continue; // belt-and-braces: skip group DMs
-
-    // Reopen if caller had it closed
-    if (membership.closed === 1) {
-      db.update(schema.dmMembers)
-        .set({ closed: 0 })
-        .where(and(
-          eq(schema.dmMembers.dmChannelId, membership.dmChannelId),
-          eq(schema.dmMembers.userId, callerId),
-        ))
-        .run();
-
-      // Relay reopen to federated peers
-      queueDmCloseRelay(membership.dmChannelId, callerId, 'dm_reopen');
-    }
-    return dmChannel.id;
-  }
-
-  // 2. Create new channel atomically.
-  const dmChannelId = generateSnowflake();
-  const now = Date.now();
-
-  // Compute deterministic federatedId for federated 1-on-1 DMs so that the
-  // S2S relay can find this channel when the reply arrives, preventing duplicates.
-  let federatedId: string | null = null;
-  if (isFederationRelayEnabled()) {
-    const callerUser = db.select().from(schema.users).where(eq(schema.users.id, callerId)).get();
-    const callerHomeUserId = callerUser?.homeUserId || callerId;
-    const targetHomeUserId = targetUser.homeUserId || targetUser.id;
-    const callerHomeInstance = callerUser?.homeInstance || null;
-    const targetHomeInstance = targetUser.homeInstance || null;
-
-    if (callerHomeInstance || targetHomeInstance) {
-      federatedId = computeFederatedId(callerHomeUserId, targetHomeUserId);
-    }
-  }
-
-  db.transaction((tx) => {
-    tx.insert(schema.dmChannels).values({
-      id: dmChannelId,
-      ownerId: null,
-      federatedId,
-      createdAt: now,
-    }).run();
-
-    tx.insert(schema.dmMembers).values({
-      dmChannelId,
-      userId: callerId,
-    }).run();
-
-    tx.insert(schema.dmMembers).values({
-      dmChannelId,
-      userId: targetUser.id,
-    }).run();
-  });
-
-  // Notify the target so their sidebar updates — same payload shape as POST /api/dm.
-  const callerUser = db.select().from(schema.users).where(eq(schema.users.id, callerId)).get();
-  const members = [callerUser, targetUser]
-    .filter((u): u is NonNullable<typeof u> => u !== undefined)
-    .map(u => sanitizeUser(u));
-
-  const payload: DmChannel = {
-    id: dmChannelId,
-    ownerId: null,
-    federatedId: federatedId ?? null,
-    createdAt: now,
-    members,
-    lastMessage: null,
-  };
-
-  connectionManager.sendToUser(targetUser.id, {
-    type: 'dm_channel_created',
-    dmChannel: payload,
-  });
-
-  return dmChannelId;
+  return openOneOnOne(callerId, targetUser, db).channelId;
 }
 
 /**
@@ -857,125 +767,9 @@ export async function dmRoutes(app: FastifyInstance): Promise<void> {
   // Centralized auth for all DM routes
   app.addHook('preHandler', authenticate);
 
-  // GET /api/dm - List user's DM channels
+  // GET /api/dm - List user's DM channels, in the same shape as the ready payload
   app.get('/api/dm', async (request, reply) => {
-    const db = getDb();
-
-    const memberships = db.select()
-      .from(schema.dmMembers)
-      .where(and(
-        eq(schema.dmMembers.userId, request.userId),
-        eq(schema.dmMembers.closed, 0),
-      ))
-      .all();
-
-    if (memberships.length === 0) {
-      return reply.code(200).send([]);
-    }
-
-    const dmChannelIds = memberships.map(m => m.dmChannelId);
-
-    // Batch fetch all DM channels (exclude soft-deleted)
-    const channelRows = db.select().from(schema.dmChannels)
-      .where(and(inArray(schema.dmChannels.id, dmChannelIds), isNull(schema.dmChannels.deletedAt))).all();
-    const channelMap = new Map(channelRows.map(c => [c.id, c]));
-
-    // Batch fetch all DM members
-    const allMemberRows = db.select().from(schema.dmMembers)
-      .where(inArray(schema.dmMembers.dmChannelId, dmChannelIds)).all();
-    const membersByChannel = new Map<string, string[]>();
-    for (const m of allMemberRows) {
-      if (!membersByChannel.has(m.dmChannelId)) membersByChannel.set(m.dmChannelId, []);
-      membersByChannel.get(m.dmChannelId)!.push(m.userId);
-    }
-
-    // Batch fetch all unique users
-    const allUserIds = [...new Set(allMemberRows.map(m => m.userId))];
-    const userRows = allUserIds.length > 0
-      ? db.select().from(schema.users).where(inArray(schema.users.id, allUserIds)).all()
-      : [];
-    const userMap = new Map(userRows.map(u => [u.id, u]));
-
-    // Batch fetch last message per DM channel:
-    // Get the max created_at per channel, then fetch matching messages
-    const maxTimestamps = db.select({
-      dmChannelId: schema.dmMessages.dmChannelId,
-      maxCreatedAt: sql<number>`MAX(${schema.dmMessages.createdAt})`.as('max_created_at'),
-    })
-      .from(schema.dmMessages)
-      .where(inArray(schema.dmMessages.dmChannelId, dmChannelIds))
-      .groupBy(schema.dmMessages.dmChannelId)
-      .all();
-
-    const lastMessageMap = new Map<string, { id: string; dmChannelId: string; userId: string; content: string | null; createdAt: number; type: 'user' | 'system' }>();
-    if (maxTimestamps.length > 0) {
-      // Build conditions to fetch the actual message rows matching max timestamps
-      const conditions = maxTimestamps.map(t =>
-        and(eq(schema.dmMessages.dmChannelId, t.dmChannelId), eq(schema.dmMessages.createdAt, t.maxCreatedAt!))
-      );
-      const lastMessages = db.select()
-        .from(schema.dmMessages)
-        .where(or(...conditions))
-        .all();
-      for (const m of lastMessages) {
-        // In case of ties, keep the first one per channel
-        if (!lastMessageMap.has(m.dmChannelId)) {
-          lastMessageMap.set(m.dmChannelId, {
-            id: m.id, dmChannelId: m.dmChannelId, userId: m.userId,
-            content: m.content, createdAt: m.createdAt,
-            type: m.type === 'system' ? 'system' : 'user',
-          });
-        }
-      }
-    }
-
-    // Batch fetch attachments for last messages
-    const lastMsgIds = [...lastMessageMap.values()].map(m => m.id);
-    const lastMsgAttachments = lastMsgIds.length > 0
-      ? db.select({
-          dmMessageId: schema.attachments.dmMessageId,
-          type: schema.attachments.mimetype,
-          filename: schema.attachments.originalName,
-        }).from(schema.attachments).where(inArray(schema.attachments.dmMessageId, lastMsgIds)).all()
-      : [];
-    const lastMsgAttachmentMap = new Map<string, Array<{ type: string; filename: string }>>();
-    for (const a of lastMsgAttachments) {
-      if (!a.dmMessageId) continue;
-      const arr = lastMsgAttachmentMap.get(a.dmMessageId) ?? [];
-      arr.push({ type: a.type, filename: a.filename });
-      lastMsgAttachmentMap.set(a.dmMessageId, arr);
-    }
-
-    // Assemble results
-    const dmChannels: DmChannel[] = [];
-    for (const channelId of dmChannelIds) {
-      const channel = channelMap.get(channelId);
-      if (!channel) continue;
-
-      const memberIds = membersByChannel.get(channelId) ?? [];
-      const members = memberIds
-        .map(id => userMap.get(id))
-        .filter((u): u is NonNullable<typeof u> => u !== undefined)
-        .map(u => sanitizeUser(u));
-
-      const lastMsg = lastMessageMap.get(channelId) ?? null;
-
-      dmChannels.push({
-        id: channel.id,
-        ownerId: channel.ownerId ?? null,
-        createdAt: channel.createdAt,
-        members,
-        lastMessage: lastMsg ? {
-          id: lastMsg.id,
-          dmChannelId: lastMsg.dmChannelId,
-          userId: lastMsg.userId,
-          content: lastMsg.content,
-          createdAt: lastMsg.createdAt,
-          type: lastMsg.type,
-          attachments: lastMsgAttachmentMap.get(lastMsg.id) ?? [],
-        } : null,
-      });
-    }
+    const dmChannels = loadOpenDmChannels(getDb(), request.userId);
 
     // Sort by last message timestamp (newest first)
     dmChannels.sort((a, b) => {
@@ -1029,8 +823,8 @@ export async function dmRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
-      // Federated identity: resolve or create a replicated user stub
-      targetUser = resolveOrCreateReplicatedUser(homeUserId, homeInstance, db) ?? undefined;
+      // Federated identity: resolve it, named from its home on first contact
+      targetUser = (await resolveRemoteIdentityForClient(homeUserId, homeInstance, db)) ?? undefined;
     } else if (userId && typeof userId === 'string') {
       // Local ID: direct lookup (existing behavior)
       targetUser = db.select().from(schema.users).where(eq(schema.users.id, userId)).get();
@@ -1048,151 +842,12 @@ export async function dmRoutes(app: FastifyInstance): Promise<void> {
       return sendError(reply, 400, 'cannot_dm_self');
     }
 
-    // Check if DM channel already exists between these two users
-    // (both have membership rows, regardless of closed state)
-    const myDms = db.select()
-      .from(schema.dmMembers)
-      .where(eq(schema.dmMembers.userId, request.userId))
-      .all();
-
-    for (const myDm of myDms) {
-      const otherMember = db.select()
-        .from(schema.dmMembers)
-        .where(and(
-          eq(schema.dmMembers.dmChannelId, myDm.dmChannelId),
-          eq(schema.dmMembers.userId, targetUserId),
-        ))
-        .get();
-
-      if (otherMember) {
-        // Only match 1-on-1 DMs (exactly 2 members). Skip group DMs that
-        // happen to include the target user to avoid returning the wrong channel.
-        const memberCount = db.select()
-          .from(schema.dmMembers)
-          .where(eq(schema.dmMembers.dmChannelId, myDm.dmChannelId))
-          .all()
-          .length;
-        if (memberCount !== 2) continue;
-
-        // DM channel already exists between these users (exclude soft-deleted)
-        const dmChannel = db.select()
-          .from(schema.dmChannels)
-          .where(and(eq(schema.dmChannels.id, myDm.dmChannelId), isNull(schema.dmChannels.deletedAt)))
-          .get();
-
-        if (!dmChannel) continue;
-
-        // Reopen if the requesting user had closed it
-        if (myDm.closed === 1) {
-          db.update(schema.dmMembers)
-            .set({ closed: 0 })
-            .where(and(
-              eq(schema.dmMembers.dmChannelId, myDm.dmChannelId),
-              eq(schema.dmMembers.userId, request.userId),
-            ))
-            .run();
-
-          // Relay reopen to federated peers
-          queueDmCloseRelay(myDm.dmChannelId, request.userId, 'dm_reopen');
-        }
-
-        const dmMemberRows = db.select()
-          .from(schema.dmMembers)
-          .where(eq(schema.dmMembers.dmChannelId, myDm.dmChannelId))
-          .all();
-
-        const memberUserIds = dmMemberRows.map(m => m.userId);
-        const users = db.select().from(schema.users).where(inArray(schema.users.id, memberUserIds)).all();
-
-        // Fetch actual last message
-        const lastMsgRows = db.select()
-          .from(schema.dmMessages)
-          .where(eq(schema.dmMessages.dmChannelId, myDm.dmChannelId))
-          .orderBy(desc(schema.dmMessages.createdAt))
-          .limit(1)
-          .all();
-        const lastMsg = lastMsgRows[0] ?? null;
-
-        const result: DmChannel = {
-          id: dmChannel.id,
-          ownerId: dmChannel.ownerId ?? null,
-          federatedId: dmChannel.federatedId ?? null,
-          createdAt: dmChannel.createdAt,
-          members: users.map(u => sanitizeUser(u)),
-          lastMessage: lastMsg ? {
-            id: lastMsg.id,
-            dmChannelId: lastMsg.dmChannelId,
-            userId: lastMsg.userId,
-            content: lastMsg.content,
-            createdAt: lastMsg.createdAt,
-            type: lastMsg.type === 'system' ? 'system' : 'user',
-          } : null,
-        };
-
-        return reply.code(200).send(result);
-      }
+    const opened = openOneOnOne(request.userId, targetUser, db);
+    const result = loadDmChannelWire(db, opened.channelId);
+    if (!result) {
+      return sendError(reply, 500, 'internal_error');
     }
-
-    // Create new DM channel with both members atomically
-    const dmChannelId = generateSnowflake();
-    const now = Date.now();
-
-    // Compute deterministic federatedId for federated 1-on-1 DMs so that the
-    // S2S relay can find this channel when the reply arrives, preventing duplicates.
-    let federatedId: string | null = null;
-    if (isFederationRelayEnabled()) {
-      const callerUser = db.select().from(schema.users).where(eq(schema.users.id, request.userId)).get();
-      const callerHomeUserId = callerUser?.homeUserId || request.userId;
-      const targetHomeUserId = targetUser.homeUserId || targetUser.id;
-      const callerHomeInstance = callerUser?.homeInstance || null;
-      const targetHomeInstance = targetUser.homeInstance || null;
-
-      // If either user is federated, this DM needs a federatedId for S2S relay matching
-      if (callerHomeInstance || targetHomeInstance) {
-        federatedId = computeFederatedId(callerHomeUserId, targetHomeUserId);
-      }
-    }
-
-    db.transaction((tx) => {
-      tx.insert(schema.dmChannels).values({
-        id: dmChannelId,
-        ownerId: null,
-        federatedId,
-        createdAt: now,
-      }).run();
-
-      tx.insert(schema.dmMembers).values({
-        dmChannelId,
-        userId: request.userId,
-      }).run();
-
-      tx.insert(schema.dmMembers).values({
-        dmChannelId,
-        userId: targetUserId,
-      }).run();
-    });
-
-    const currentUserRow = db.select().from(schema.users).where(eq(schema.users.id, request.userId)).get();
-    const members = [currentUserRow, targetUser]
-      .filter((u): u is NonNullable<typeof u> => u !== undefined)
-      .map(u => sanitizeUser(u));
-
-    const result: DmChannel = {
-      id: dmChannelId,
-      ownerId: null,
-      federatedId: federatedId ?? null,
-      createdAt: now,
-      members,
-      lastMessage: null,
-    };
-
-    // Broadcast dm_channel_created to the other user so their sidebar updates
-    connectionManager.sendToUser(targetUserId, {
-      type: 'dm_channel_created',
-      dmChannel: result,
-    });
-
-    return reply.code(201).send(result);
+    return reply.code(opened.created ? 201 : 200).send(result);
   });
 
   // POST /api/dm/group - Create a new group DM with multiple members
@@ -1215,14 +870,22 @@ export async function dmRoutes(app: FastifyInstance): Promise<void> {
 
     const db = getDb();
 
+    // Federated users are resolved first, all at once: each may wait for its
+    // home to report the name (first contact), and those waits must not add up.
+    const federatedRows = await Promise.all(userIdentities.map((identity) =>
+      identity.homeUserId && identity.homeInstance
+        ? resolveRemoteIdentityForClient(identity.homeUserId, identity.homeInstance, db)
+        : Promise.resolve(null),
+    ));
+
     // Resolve each identity to a local user row
     const targetUsers: Array<typeof schema.users.$inferSelect> = [];
-    for (const identity of userIdentities) {
+    for (const [index, identity] of userIdentities.entries()) {
       let localUser: typeof schema.users.$inferSelect | undefined;
 
       if (identity.homeUserId && identity.homeInstance) {
-        // Federated user — resolve via homeUserId, creating a replicated stub if needed
-        localUser = resolveOrCreateReplicatedUser(identity.homeUserId, identity.homeInstance, db) ?? undefined;
+        // Federated user — resolved above, named from its home on first contact
+        localUser = federatedRows[index] ?? undefined;
       } else {
         // Local user — direct ID lookup
         localUser = db.select().from(schema.users).where(
@@ -1327,7 +990,7 @@ export async function dmRoutes(app: FastifyInstance): Promise<void> {
       const hasRemote = allUsers.some(u => u.homeInstance && u.homeInstance !== domainOrigin);
 
       if (hasRemote) {
-        federatedId = computeFederatedId();
+        federatedId = mintGroupKey();
         db.update(schema.dmChannels)
           .set({
             federatedId,
@@ -1346,14 +1009,10 @@ export async function dmRoutes(app: FastifyInstance): Promise<void> {
       .filter((u): u is NonNullable<typeof u> => u !== undefined)
       .map(u => sanitizeUser(u));
 
-    const result: DmChannel = {
-      id: dmChannelId,
-      ownerId: request.userId,
-      federatedId: federatedId ?? null,
-      createdAt: now,
-      members: allMembers,
-      lastMessage: null,
-    };
+    const result = loadDmChannelWire(db, dmChannelId);
+    if (!result) {
+      return sendError(reply, 500, 'internal_error');
+    }
 
     // Broadcast dm_channel_created only to LOCAL members.
     // Remote members will receive the channel via federation relay → bootstrap
@@ -1786,8 +1445,8 @@ export async function dmRoutes(app: FastifyInstance): Promise<void> {
     let targetUser: typeof schema.users.$inferSelect | undefined;
 
     if (homeUserId && homeInstance) {
-      // Federated identity: resolve or create a replicated user stub
-      targetUser = resolveOrCreateReplicatedUser(homeUserId, homeInstance, db) ?? undefined;
+      // Federated identity: resolve it, named from its home on first contact
+      targetUser = (await resolveRemoteIdentityForClient(homeUserId, homeInstance, db)) ?? undefined;
     } else if (targetUserIdRaw && typeof targetUserIdRaw === 'string') {
       // Local ID: direct lookup (existing behavior)
       targetUser = db.select().from(schema.users).where(eq(schema.users.id, targetUserIdRaw)).get();
@@ -1865,7 +1524,7 @@ export async function dmRoutes(app: FastifyInstance): Promise<void> {
       const hasRemote = participants.some(p => p.homeInstance !== domainOrigin);
 
       if (hasRemote) {
-        const newFederatedId = computeFederatedId();
+        const newFederatedId = mintGroupKey();
         const ownerUser = db.select().from(schema.users).where(eq(schema.users.id, dmChannel.ownerId!)).get();
         db.update(schema.dmChannels)
           .set({
@@ -1887,40 +1546,11 @@ export async function dmRoutes(app: FastifyInstance): Promise<void> {
       }
     }
 
-    // Build full DmChannel response with all members
-    const allMemberRows = db.select()
-      .from(schema.dmMembers)
-      .where(eq(schema.dmMembers.dmChannelId, id))
-      .all();
-    const memberUserIds = allMemberRows.map(m => m.userId);
-    const users = memberUserIds.length > 0
-      ? db.select().from(schema.users).where(inArray(schema.users.id, memberUserIds)).all()
-      : [];
-
-    // Fetch last message
-    const lastMsgRows = db.select()
-      .from(schema.dmMessages)
-      .where(eq(schema.dmMessages.dmChannelId, id))
-      .orderBy(desc(schema.dmMessages.createdAt))
-      .limit(1)
-      .all();
-    const lastMsg = lastMsgRows[0] ?? null;
-
-    const result: DmChannel = {
-      id: dmChannel.id,
-      ownerId: dmChannel.ownerId ?? null,
-      federatedId: dmChannel.federatedId ?? null,
-      createdAt: dmChannel.createdAt,
-      members: users.map(u => sanitizeUser(u)),
-      lastMessage: lastMsg ? {
-        id: lastMsg.id,
-        dmChannelId: lastMsg.dmChannelId,
-        userId: lastMsg.userId,
-        content: lastMsg.content,
-        createdAt: lastMsg.createdAt,
-        type: lastMsg.type === 'system' ? 'system' : 'user',
-      } : null,
-    };
+    // The channel as the new member's sidebar gets it
+    const result = loadDmChannelWire(db, id);
+    if (!result) {
+      return sendError(reply, 404, 'dm_not_found');
+    }
 
     const newUser = sanitizeUser(targetUser);
 
@@ -2100,7 +1730,7 @@ export async function dmRoutes(app: FastifyInstance): Promise<void> {
   // The `:targetUserId` URL segment carries either a local user id OR a
   // federated home user id. When the optional `homeInstance` query string is
   // present, the segment is interpreted as a home id and resolved via
-  // `resolveOrCreateReplicatedUser(targetUserId, homeInstance)` — same pattern
+  // `resolveRemoteIdentityForClient(targetUserId, homeInstance)` — same pattern
   // as POST /api/dm/:id/transfer and POST /api/dm/:id/members. This is
   // necessary when the client only knows the target's home identity (the
   // common case for federated members rendered through `useCanonicalUserView`,
@@ -2121,7 +1751,7 @@ export async function dmRoutes(app: FastifyInstance): Promise<void> {
     // user id and look it up directly.
     let targetUserRow: typeof schema.users.$inferSelect | undefined;
     if (typeof homeInstanceQuery === 'string' && homeInstanceQuery.length > 0) {
-      targetUserRow = resolveOrCreateReplicatedUser(rawTargetSegment, homeInstanceQuery, db) ?? undefined;
+      targetUserRow = (await resolveRemoteIdentityForClient(rawTargetSegment, homeInstanceQuery, db)) ?? undefined;
     } else {
       targetUserRow = db.select().from(schema.users).where(eq(schema.users.id, rawTargetSegment)).get();
     }
@@ -2220,11 +1850,11 @@ export async function dmRoutes(app: FastifyInstance): Promise<void> {
     // so the explicit federated args wins over a possibly-stale local id.
     let newOwnerRow: typeof schema.users.$inferSelect | undefined;
     if (hasFederatedArgs) {
-      newOwnerRow = resolveOrCreateReplicatedUser(
+      newOwnerRow = (await resolveRemoteIdentityForClient(
         rawHomeUserId as string,
         rawHomeInstance as string,
         db,
-      ) ?? undefined;
+      )) ?? undefined;
     } else {
       newOwnerRow = db.select().from(schema.users).where(eq(schema.users.id, rawNewOwnerId as string)).get();
     }
@@ -2376,7 +2006,7 @@ export async function dmRoutes(app: FastifyInstance): Promise<void> {
       targetUser = db.select().from(schema.users)
         .where(eq(schema.users.id, body.target.userId)).get() ?? null;
     } else if ('homeUserId' in body.target && 'homeInstance' in body.target) {
-      targetUser = resolveOrCreateReplicatedUser(
+      targetUser = await resolveRemoteIdentityForClient(
         body.target.homeUserId,
         body.target.homeInstance,
         db,

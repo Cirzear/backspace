@@ -4,6 +4,7 @@ import { getDb, schema } from '../db/index.js';
 import { authenticate } from '../utils/auth.js';
 import { sendError } from '../utils/httpErrors';
 import { hasPermission, isBanned, isSpaceOwner, PermissionBits } from '../utils/permissions.js';
+import { canActOnMemberInSpace } from '../utils/roleHierarchy.js';
 import { sanitizeUser } from '../utils/sanitize.js';
 import { connectionManager } from '../ws/handler.js';
 
@@ -74,6 +75,11 @@ export function spaceBanRoutes(app: FastifyInstance): void {
     // Cannot ban yourself
     if (targetId === request.userId) {
       return sendError(reply, 400, 'cannot_target_self');
+    }
+
+    // Banning needs a higher top role than the target's
+    if (!canActOnMemberInSpace(id, request.userId, targetId)) {
+      return sendError(reply, 403, 'role_hierarchy');
     }
 
     // Check if already banned

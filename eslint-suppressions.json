@@ -90,7 +90,7 @@
   },
   "packages/server/src/routes/federation/events/friends.ts": {
     "prefer-const": {
-      "count": 3
+      "count": 1
     }
   },
   "packages/server/src/routes/federation/events/membership.ts": {
@@ -302,9 +302,6 @@
   "packages/web/src/components/layout/ChannelSidebar.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 2
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
     }
   },
   "packages/web/src/components/layout/DmListItem.tsx": {
@@ -609,11 +606,6 @@
   "packages/web/src/utils/dmFormatters.test.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 5
-    }
-  },
-  "packages/web/src/utils/dmOriginFailover.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
     }
   },
   "packages/web/src/utils/livekitInternals.ts": {

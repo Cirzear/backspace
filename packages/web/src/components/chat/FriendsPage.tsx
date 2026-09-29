@@ -17,13 +17,13 @@ import { LoadingSpinner } from '../ui/LoadingSpinner';
 import { getAvatarGradient } from '../../utils/gradients';
 import { api } from '../../api/client';
 import { Mascot } from '../ui/Mascot';
-import { useActivityStore } from '../../stores/activityStore';
+import { useActivityStore, activitiesFor } from '../../stores/activityStore';
 import { ActivityCard, hasRichActivity, getActivityAccentClass } from '../ui/ActivityCard';
 import { getPrimaryActivity } from '@backspace/shared/src/activities.js';
-import { parseFederatedUsername, isFederationGlobeApplicable } from '../../utils/identity';
+import { parseFederatedUsername, isFederationGlobeApplicable, userDisplayName } from '../../utils/identity';
 import { useCanonicalUserView } from '../../utils/userViewLookup';
+import { friendRequestTarget } from '../../utils/friendRequestTarget';
 import { replaceEmojiShortcodes } from '../../utils/emojiShortcodes';
-import { Username } from '../ui/Username';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { presenceLabel } from '../../i18n/presence';
 
@@ -49,8 +49,7 @@ function ActivityFriendItem({
   onDmClick: (id: string, homeUserId?: string, homeInstance?: string | null) => void;
 }) {
   const canonical = useCanonicalUserView(friend as unknown as User);
-  const { baseName } = parseFederatedUsername(canonical.username);
-  const friendDisplayName = canonical.displayName ?? baseName;
+  const friendDisplayName = userDisplayName(canonical);
 
   const rowClass = isRichActivity
     ? `flex items-center gap-3 px-4 py-2.5 rounded-[10px] mb-1 cursor-pointer transition-colors glass-pill border-l-2 ${accentClass}`
@@ -77,10 +76,7 @@ function ActivityFriendItem({
         avatarColor={canonical.avatarColor}
       />
       <div className="flex-1 min-w-0">
-        <Username
-          username={friendDisplayName}
-          className={`text-sm leading-[1.2] font-medium truncate ${isOffline ? 'text-txt-tertiary' : 'text-txt-primary'}`}
-        />
+        <span className={`text-sm leading-[1.2] font-medium truncate ${isOffline ? 'text-txt-tertiary' : 'text-txt-primary'}`}>{friendDisplayName}</span>
         {!isOffline && isFederationGlobeApplicable(canonical) && (
           <div className="text-[10px] leading-[1.3] text-txt-tertiary truncate opacity-60">@{parseFederatedUsername(canonical.username).domain}</div>
         )}
@@ -116,7 +112,8 @@ export function FriendsPage({ mobile }: FriendsPageProps) {
   const [activeTab, setActiveTab] = useState<Tab>('online');
   const [pendingUnfriend, setPendingUnfriend] = useState<{ id: string; name: string } | null>(null);
   const navigate = useNavigate();
-  const addDmChannel = useSpaceStore((s) => s.addDmChannel);
+  const upsertDmCopy = useSpaceStore((s) => s.upsertDmCopy);
+  const addToast = useUIStore((s) => s.addToast);
 
   // If the user clicked "Retry your friend request" in the Connections panel
   // and we just navigated here, the federation store carries the original
@@ -166,10 +163,11 @@ export function FriendsPage({ mobile }: FriendsPageProps) {
         homeUserId: homeUserId ?? undefined,
         homeInstance: homeInstance ?? undefined,
       });
-      addDmChannel(dmChannel);
-      navigate(`/channels/@me/${dmChannel.id}`);
+      // The answer joins its conversation; open the conversation's row.
+      const rowId = upsertDmCopy('', dmChannel, 'stated');
+      navigate(`/channels/@me/${rowId}`);
     } catch (err) {
-      console.error('Failed to open DM:', err);
+      addToast(t('social:sendMessage.failed', { reason: describeError(err) }), 'warning');
     }
   };
 
@@ -197,7 +195,7 @@ export function FriendsPage({ mobile }: FriendsPageProps) {
             ) : (
               <>
                 {onlineFriends.map(friend => (
-                  <FriendItem key={`${friend.id}:${friend._instanceOrigin}`} friend={friend} onRemove={() => setPendingUnfriend({ id: friend.id, name: friend.displayName ?? parseFederatedUsername(friend.username).baseName })} onDm={() => handleOpenDm(friend.id, friend.homeUserId ?? undefined, friend.homeInstance)} />
+                  <FriendItem key={`${friend.id}:${friend._instanceOrigin}`} friend={friend} onRemove={() => setPendingUnfriend({ id: friend.id, name: userDisplayName(friend) })} onDm={() => handleOpenDm(friend.id, friend.homeUserId ?? undefined, friend.homeInstance)} />
                 ))}
               </>
             )}
@@ -217,7 +215,7 @@ export function FriendsPage({ mobile }: FriendsPageProps) {
             ) : (
               <>
                 {friends.map(friend => (
-                  <FriendItem key={`${friend.id}:${friend._instanceOrigin}`} friend={friend} onRemove={() => setPendingUnfriend({ id: friend.id, name: friend.displayName ?? parseFederatedUsername(friend.username).baseName })} onDm={() => handleOpenDm(friend.id, friend.homeUserId ?? undefined, friend.homeInstance)} />
+                  <FriendItem key={`${friend.id}:${friend._instanceOrigin}`} friend={friend} onRemove={() => setPendingUnfriend({ id: friend.id, name: userDisplayName(friend) })} onDm={() => handleOpenDm(friend.id, friend.homeUserId ?? undefined, friend.homeInstance)} />
                 ))}
               </>
             )}
@@ -272,7 +270,7 @@ export function FriendsPage({ mobile }: FriendsPageProps) {
             offlineActivityFriends.push(f);
             continue;
           }
-          const acts = userActivities.get(f.homeUserId ?? f.id) ?? [];
+          const acts = activitiesFor(userActivities, f, f._instanceOrigin);
           const primary = getPrimaryActivity(acts);
           if (primary && primary.type !== 'custom') {
             activeFriends.push(f);
@@ -282,7 +280,7 @@ export function FriendsPage({ mobile }: FriendsPageProps) {
         }
 
         const renderActivityFriend = (friend: TaggedFriend, isOffline = false) => {
-          const activities = userActivities.get(friend.homeUserId ?? friend.id) ?? [];
+          const activities = activitiesFor(userActivities, friend, friend._instanceOrigin);
           const isRichActivity = !isOffline && hasRichActivity(activities);
           const primary = getPrimaryActivity(activities);
           const accentClass = primary ? getActivityAccentClass(primary.type) : '';
@@ -542,7 +540,7 @@ function AddFriendTab({
   const handleDirectAdd = async () => {
     setDirectAddLoading(true);
     try {
-      await sendFriendRequest(query.trim());
+      await sendFriendRequest({ username: query.trim() });
       addToast(t('social:request.sent'), 'success');
       setQuery('');
     } catch (err) {
@@ -694,8 +692,7 @@ function UserDiscoverCard({
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const baseName = user.username.includes('@') ? user.username.split('@')[0]! : user.username;
-  const displayName = user.displayName ?? baseName;
+  const displayName = userDisplayName(user);
   const gradient = getAvatarGradient(user.homeUserId ?? user.id, displayName, user.avatarColor);
   const originLabel = user._instanceOrigin
     ? (() => { try { return new URL(user._instanceOrigin).host; } catch { return user._instanceOrigin; } })()
@@ -711,9 +708,8 @@ function UserDiscoverCard({
   const handleSendRequest = async () => {
     setActionLoading(true);
     setError('');
-    const username = user._instanceOrigin ? baseName + '@' + (originLabel ?? '') : baseName;
     try {
-      const requestId = await sendFriendRequest(username);
+      const requestId = await sendFriendRequest(friendRequestTarget(user, user._instanceOrigin));
       onRelationshipChange(user.id, user._instanceOrigin, 'outbound_pending', requestId);
     } catch (err) {
       setError(describeError(err));
@@ -923,8 +919,7 @@ function FriendItem({ friend, onRemove, onDm }: { friend: TaggedFriend, onRemove
   const { t } = useTranslation(['social', 'common']);
   const canonical = useCanonicalUserView(friend as unknown as User);
   const instanceLabel = friend._instanceOrigin ? (() => { try { return new URL(friend._instanceOrigin).host; } catch { return friend._instanceOrigin; } })() : '';
-  const { baseName: friendBaseName } = parseFederatedUsername(canonical.username);
-  const friendDisplayName = canonical.displayName ?? friendBaseName;
+  const friendDisplayName = userDisplayName(canonical);
   return (
     <div className="flex items-center justify-between px-3 h-[62px] rounded-[8px] hover:bg-interactive-hover group transition-colors border-t border-interactive-muted mx-2">
       <div className="flex items-center gap-3">
@@ -980,8 +975,7 @@ function RequestItem({ request, type, onAccept, onDecline, onCancel }: {
   const user = rawUser ? canonicalUser : null;
   if (!user) return null;
   const instanceLabel = request._instanceOrigin ? (() => { try { return new URL(request._instanceOrigin).host; } catch { return request._instanceOrigin; } })() : '';
-  const { baseName: reqBaseName } = parseFederatedUsername(user.username);
-  const reqDisplayName = user.displayName ?? reqBaseName;
+  const reqDisplayName = userDisplayName(user);
 
   return (
     <div className="flex items-center justify-between px-3 py-2.5 rounded-lg hover:bg-interactive-hover group transition-colors border-t border-interactive-muted mx-2">

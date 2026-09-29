@@ -1,12 +1,22 @@
 import { getDb, schema } from '../../../db/index.js';
-import { getOurOrigin, normalizeOriginForCompare } from '../../../utils/federationAuth.js';
+import { normalizeOriginForCompare } from '../../../utils/federationAuth.js';
 import { sanitizeUser } from '../../../utils/sanitize.js';
 import { generateSnowflake } from '../../../utils/snowflake.js';
 import { connectionManager } from '../../../ws/handler.js';
+import { exchangeFriendPresence } from '../../../ws/presence.js';
 import { and, eq, or } from 'drizzle-orm';
 import type { FederationRelayEvent } from '@backspace/shared';
-import { extractDomain, resolveLocalUser, resolveOrCreateReplicatedUser, resolveRelayActor, attributionRefusal } from '../identity.js';
+import { extractDomain, isOwnDomain, resolveOrCreateReplicatedUser, resolveRelayActor, attributionRefusal, type RelayActor } from '../identity.js';
 import { hydrateReplicatedUserProfile } from '../profile.js';
+
+/**
+ * Whether a friendship side names a user homed on this instance. Compared by
+ * domain (`isOwnDomain`), because a peer may send our origin as a full URL or
+ * as the bare domain it stores for our users.
+ */
+function isHomedHere(actor: RelayActor): boolean {
+  return isOwnDomain(extractDomain(actor.homeInstance).toLowerCase());
+}
 
 export async function processFriendRequestCreateEvent(
   event: FederationRelayEvent,
@@ -156,20 +166,27 @@ export function processFriendRequestUpdateEvent(
     return;
   }
 
-  // Resolve the sender — must be a local user (the one who sent the original request)
-  const fromUser = resolveLocalUser(from.homeUserId, db);
-  if (!fromUser) {
+  // Both sides are the users that ARE the event's identities here, found by
+  // pair (homeUserId + homeInstance), never by homeUserId alone: an acceptance
+  // forms a friendship, so it must land on the requester the pending request
+  // belongs to, judged the same way friend_add judges it. Nothing is created.
+  //
+  // The sender sent the original request from here, so it must exist.
+  const fromResolved = resolveRelayActor(from, db);
+  if (fromResolved.kind !== 'found') {
     rejected.push({ messageId: event.messageId, reason: 'sender_not_found' });
     return;
   }
+  const fromUser = fromResolved.user;
 
-  // Resolve the recipient (create stub if needed — they're on the remote instance)
-  const toUser = resolveOrCreateReplicatedUser(to.homeUserId, to.homeInstance, db, { username: event.friendship.toProfile?.username, status: event.friendship.toProfile?.status, deleted: event.friendship.toProfile?.deleted });
-  if (!toUser) {
-    // Recipient's identity has been deleted — accept idempotently to drop the event
+  // A recipient this instance does not hold has no pending request here to
+  // answer: accept without effect.
+  const toResolved = resolveRelayActor(to, db);
+  if (toResolved.kind !== 'found') {
     accepted.push(event.messageId);
     return;
   }
+  const toUser = toResolved.user;
 
   // Find the pending request
   const pendingRequest = db
@@ -190,14 +207,36 @@ export function processFriendRequestUpdateEvent(
     return;
   }
 
-  // Update request status
-  db.update(schema.friendRequests)
-    .set({ status: status as string })
-    .where(eq(schema.friendRequests.id, pendingRequest.id))
-    .run();
+  // Update request status. An acceptance answers our user's pending request,
+  // so it also forms the friendship here, in the same transaction: the
+  // friend_add that follows it then finds the friendship and is a no-op (it
+  // finds no pending request to answer any more).
+  const now = event.friendship.createdAt || Date.now();
+  const formed = db.transaction((tx) => {
+    tx.update(schema.friendRequests)
+      .set({ status: status as string })
+      .where(eq(schema.friendRequests.id, pendingRequest.id))
+      .run();
+    if (status === 'accepted') {
+      const existingFriend = tx
+        .select({ userId: schema.friends.userId })
+        .from(schema.friends)
+        .where(
+          or(
+            and(eq(schema.friends.userId, fromUser.id), eq(schema.friends.friendId, toUser.id)),
+            and(eq(schema.friends.userId, toUser.id), eq(schema.friends.friendId, fromUser.id)),
+          ),
+        )
+        .get();
+      if (!existingFriend) {
+        tx.insert(schema.friends).values({ userId: fromUser.id, friendId: toUser.id, createdAt: now }).run();
+        return true;
+      }
+    }
+    return false;
+  });
 
   if (status === 'accepted') {
-    const now = event.friendship.createdAt || Date.now();
     connectionManager.sendToUser(fromUser.id, {
       type: 'friend_request_accepted',
       friend: {
@@ -206,6 +245,9 @@ export function processFriendRequestUpdateEvent(
       },
       requestId: pendingRequest.id,
     });
+    // Each side sees the other's current status and activity now (#340),
+    // once per friendship: only when this update is what formed it.
+    if (formed) exchangeFriendPresence(fromUser.id, toUser.id);
   } else if (status === 'declined') {
     connectionManager.sendToUser(fromUser.id, {
       type: 'friend_request_declined',
@@ -316,29 +358,27 @@ export async function processFriendAddEvent(
     return;
   }
 
-  // Resolve both users (create stubs if needed) and hydrate with profile data
-  const fromUserResolved = resolveOrCreateReplicatedUser(from.homeUserId, from.homeInstance, db, { username: event.friendship.fromProfile?.username, status: event.friendship.fromProfile?.status, deleted: event.friendship.fromProfile?.deleted });
-  if (!fromUserResolved) {
-    // One party's identity is deleted — accept idempotently to drop the event
-    accepted.push(event.messageId);
-    return;
-  }
-  let fromUser = await hydrateReplicatedUserProfile(fromUserResolved, event.friendship.fromProfile, db);
-  const toUserResolved = resolveOrCreateReplicatedUser(to.homeUserId, to.homeInstance, db, { username: event.friendship.toProfile?.username, status: event.friendship.toProfile?.status, deleted: event.friendship.toProfile?.deleted });
-  if (!toUserResolved) {
-    accepted.push(event.messageId);
-    return;
-  }
-  let toUser = await hydrateReplicatedUserProfile(toUserResolved, event.friendship.toProfile, db);
+  // A friend_add is the recipient's answer to a request: it forms a friendship
+  // only for a pair this instance holds a pending request for, from `from` (the
+  // requester) to `to` (the acceptor), or for one that already exists. The
+  // requester's home created that row when the request was made, in the same
+  // transaction that queued friend_request_create, so it is there before any
+  // answer can arrive. Both users therefore already exist here, and nothing is
+  // created for a pair that never had a request.
+  const fromResolved = resolveRelayActor(from, db);
+  const toResolved = resolveRelayActor(to, db);
+  const pair = fromResolved.kind === 'found' && toResolved.kind === 'found'
+    ? { fromUser: fromResolved.user, toUser: toResolved.user }
+    : null;
 
   // Idempotency: if friendship already exists, accept as no-op
-  const existingFriend = db
+  const existingFriend = pair && db
     .select()
     .from(schema.friends)
     .where(
       or(
-        and(eq(schema.friends.userId, fromUser.id), eq(schema.friends.friendId, toUser.id)),
-        and(eq(schema.friends.userId, toUser.id), eq(schema.friends.friendId, fromUser.id)),
+        and(eq(schema.friends.userId, pair.fromUser.id), eq(schema.friends.friendId, pair.toUser.id)),
+        and(eq(schema.friends.userId, pair.toUser.id), eq(schema.friends.friendId, pair.fromUser.id)),
       ),
     )
     .get();
@@ -348,35 +388,57 @@ export async function processFriendAddEvent(
     return;
   }
 
-  // Insert friendship row
-  const now = event.friendship.createdAt || Date.now();
-  db.insert(schema.friends)
-    .values({
-      userId: fromUser.id,
-      friendId: toUser.id,
-      createdAt: now,
-    })
-    .run();
-
-  // Auto-resolve any pending friend request between these users to 'accepted'
-  // (handles friend_add arriving before friend_request_update)
-  db.update(schema.friendRequests)
-    .set({ status: 'accepted' })
+  const pendingRequest = pair && db
+    .select({ id: schema.friendRequests.id })
+    .from(schema.friendRequests)
     .where(
       and(
-        or(
-          and(eq(schema.friendRequests.fromId, fromUser.id), eq(schema.friendRequests.toId, toUser.id)),
-          and(eq(schema.friendRequests.fromId, toUser.id), eq(schema.friendRequests.toId, fromUser.id)),
-        ),
+        eq(schema.friendRequests.fromId, pair.fromUser.id),
+        eq(schema.friendRequests.toId, pair.toUser.id),
         eq(schema.friendRequests.status, 'pending'),
       ),
     )
-    .run();
+    .get();
 
-  // Determine which user is local and broadcast to them
-  const ourOrigin = getOurOrigin();
-  const localUser = from.homeInstance === ourOrigin ? fromUser : toUser;
-  const remoteUser = from.homeInstance === ourOrigin ? toUser : fromUser;
+  if (!pair || !pendingRequest) {
+    console.warn(`[federation] Refused friend_add from ${extractDomain(sourceInstance)}: no pending request from the requester to the acceptor here`);
+    rejected.push({ messageId: event.messageId, reason: 'invalid_target' });
+    return;
+  }
+
+  const fromUser = await hydrateReplicatedUserProfile(pair.fromUser, event.friendship.fromProfile, db);
+  const toUser = await hydrateReplicatedUserProfile(pair.toUser, event.friendship.toProfile, db);
+
+  // Insert the friendship and resolve the request it answers (and a crossed
+  // one the other way, if any) to 'accepted', together. The friend_request_update
+  // that may still follow then finds no pending request and is a no-op.
+  const now = event.friendship.createdAt || Date.now();
+  db.transaction((tx) => {
+    tx.insert(schema.friends)
+      .values({
+        userId: fromUser.id,
+        friendId: toUser.id,
+        createdAt: now,
+      })
+      .run();
+    tx.update(schema.friendRequests)
+      .set({ status: 'accepted' })
+      .where(
+        and(
+          or(
+            and(eq(schema.friendRequests.fromId, fromUser.id), eq(schema.friendRequests.toId, toUser.id)),
+            and(eq(schema.friendRequests.fromId, toUser.id), eq(schema.friendRequests.toId, fromUser.id)),
+          ),
+          eq(schema.friendRequests.status, 'pending'),
+        ),
+      )
+      .run();
+  });
+
+  // The requester or the acceptor, whichever is homed here, is told
+  const fromIsOurs = isHomedHere(from);
+  const localUser = fromIsOurs ? fromUser : toUser;
+  const remoteUser = fromIsOurs ? toUser : fromUser;
 
   connectionManager.sendToUser(localUser.id, {
     type: 'friend_request_accepted',
@@ -384,9 +446,11 @@ export async function processFriendAddEvent(
       ...sanitizeUser(remoteUser),
       addedAt: now,
     },
-    // Use empty string for requestId since the request may not exist locally yet
-    requestId: '',
+    // The pending request this friend_add answered (the acceptance check above)
+    requestId: pendingRequest.id,
   });
+  // Each side sees the other's current status and activity now (#340).
+  exchangeFriendPresence(fromUser.id, toUser.id);
 
   accepted.push(event.messageId);
 }
@@ -451,11 +515,10 @@ export function processFriendRemoveEvent(
     )
     .run();
 
-  // Determine which user is local (the one whose home instance is NOT the source)
-  // The removing user is on the source instance; broadcast to the other user
-  const ourOrigin = getOurOrigin();
-  const localUser = from.homeInstance === ourOrigin ? fromUser : toUser;
-  const removingUser = from.homeInstance === ourOrigin ? toUser : fromUser;
+  // The side homed here is told; the other side is the one who removed
+  const fromIsOurs = isHomedHere(from);
+  const localUser = fromIsOurs ? fromUser : toUser;
+  const removingUser = fromIsOurs ? toUser : fromUser;
 
   connectionManager.sendToUser(localUser.id, {
     type: 'friend_removed',

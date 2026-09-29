@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "c91e7200-22bf-4629-af58-8e481eac2011",
-  "prevId": "6aedf949-0ab0-4475-be7a-69084a9c3567",
+  "id": "6aedf949-0ab0-4475-be7a-69084a9c3567",
+  "prevId": "a4f1a71b-1012-4e56-8613-5a809bf8812b",
   "tables": {
     "attachments": {
       "name": "attachments",
@@ -2612,14 +2612,6 @@
     "messages": {
       "name": "messages",
       "columns": {
-        "type": {
-          "name": "type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'user'"
-        },
         "id": {
           "name": "id",
           "type": "text",
@@ -2728,105 +2720,6 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "notification_settings": {
-      "name": "notification_settings",
-      "columns": {
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "target_type": {
-          "name": "target_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "target_id": {
-          "name": "target_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "level": {
-          "name": "level",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "muted_until": {
-          "name": "muted_until",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "suppress_everyone": {
-          "name": "suppress_everyone",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "suppress_roles": {
-          "name": "suppress_roles",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_notification_settings_target": {
-          "name": "idx_notification_settings_target",
-          "columns": [
-            "target_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "notification_settings_user_id_users_id_fk": {
-          "name": "notification_settings_user_id_users_id_fk",
-          "tableFrom": "notification_settings",
-          "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "notification_settings_user_id_target_type_target_id_pk": {
-          "columns": [
-            "user_id",
-            "target_type",
-            "target_id"
-          ],
-          "name": "notification_settings_user_id_target_type_target_id_pk"
-        }
-      },
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
@@ -4064,6 +3957,13 @@
             "username"
           ],
           "isUnique": true
+        },
+        "idx_users_home_user_id": {
+          "name": "idx_users_home_user_id",
+          "columns": [
+            "home_user_id"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {},
@@ -4168,6 +4068,105 @@
             "restriction_type"
           ],
           "name": "voice_restrictions_space_id_user_id_restriction_type_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "notification_settings": {
+      "name": "notification_settings",
+      "columns": {
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "target_type": {
+          "name": "target_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "target_id": {
+          "name": "target_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "level": {
+          "name": "level",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "muted_until": {
+          "name": "muted_until",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "suppress_everyone": {
+          "name": "suppress_everyone",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "suppress_roles": {
+          "name": "suppress_roles",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_notification_settings_target": {
+          "name": "idx_notification_settings_target",
+          "columns": [
+            "target_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "notification_settings_user_id_users_id_fk": {
+          "name": "notification_settings_user_id_users_id_fk",
+          "tableFrom": "notification_settings",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "notification_settings_user_id_target_type_target_id_pk": {
+          "columns": [
+            "user_id",
+            "target_type",
+            "target_id"
+          ],
+          "name": "notification_settings_user_id_target_type_target_id_pk"
         }
       },
       "uniqueConstraints": {},

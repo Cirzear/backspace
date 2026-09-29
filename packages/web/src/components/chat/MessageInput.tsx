@@ -1,8 +1,7 @@
 import { useComposerMention } from './useComposerMention';
 import { MentionTextarea } from './MentionTextarea';
 import { composerMentions } from './composerMentions';
-import { mentionOptions, type MentionOption } from './mentionOptions';
-import { layoutRect } from '../../platform/interfaceScale';
+import { useComposerClearance } from './useComposerClearance';
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useChatStore } from '../../stores/chatStore';
@@ -11,7 +10,7 @@ import { wsSend } from '../../hooks/useWebSocket';
 import { MentionPopover } from './MentionPopover';
 import { TypingIndicator } from './TypingIndicator';
 import { InputPopover, type InputPopoverTab } from './InputPopover';
-import { AttachmentProgress } from './AttachmentProgress';
+import { StagedTransferTiles } from './StagedTransferTiles';
 import { hasPermissionBit, PermissionBits } from '../../utils/permissions';
 import { MAX_MESSAGE_LENGTH } from '@backspace/shared';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -23,6 +22,11 @@ import { putHandle, supportsFsHandles, supportsDnDHandles } from '../../utils/id
 import { useVisualViewportInset } from '../../hooks/useVisualViewportInset';
 import { useAuthStore } from '../../stores/authStore';
 import { findLastOwnEditableMessage } from './messageEditing';
+import {
+  filterMentionCandidates,
+  useChannelMentionCandidates,
+  type ChannelUser,
+} from '../../utils/channelUser';
 
 interface MessageInputProps {
   channelId: string;
@@ -81,13 +85,6 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   useComposerMention(channelId, textareaRef);
   const mentionAnchorRef = useRef<HTMLSpanElement>(null);
   const inputContainerRef = useRef<HTMLDivElement>(null);
-  // Note: this ref is intentionally typed `HTMLDivElement | null` (mutable
-  // ref shape) rather than the more restrictive `RefObject<HTMLDivElement>`
-  // because we assign to `.current` from a callback ref below — the
-  // callback ref bridges the imperative `popoverAnchorRef` consumers
-  // (InputPopover / mention-popover anchoring) and the state-backed
-  // `composerEl` slot used by the clearance-measuring effect.
-  const popoverAnchorRef = useRef<HTMLDivElement | null>(null);
 
   // Object URLs for current-session image previews. transferStore doesn't hold
   // the raw File, so previews only exist for files picked in this session
@@ -100,7 +97,8 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   const editingMessageId = useChatStore((s) => s.editingMessageId);
   const setEditingMessage = useChatStore((s) => s.setEditingMessage);
   const currentUser = useAuthStore((s) => s.user);
-  const members = useSpaceStore((s) => s.members);
+  // Who can be mentioned here: this channel's people, with ids on its origin.
+  const mentionCandidates = useChannelMentionCandidates(channelId);
 
   const addToast = useUIStore((s) => s.addToast);
   const appendBubble = usePendingMessageStore((s) => s.append);
@@ -201,11 +199,18 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     }
   }, [stagedTransfers, addToast, t]);
 
-  const roles = useSpaceStore(s => s.roles);
-  const mentionUsers = useSpaceStore(s => s.dmChannels.find(dm => dm.id === channelId)?.members);
-  const mentionModel = useMemo(() => composerMentions({ value: draftText, members, roles, users: mentionUsers }), [draftText, members, roles, mentionUsers]);
-  const canMentionMass = !isDm && hasPermissionBit(channelPerms, PermissionBits.MENTION_EVERYONE);
-  const filteredMembers = useMemo(() => mentionState ? mentionOptions({ query: mentionState.query, members, roles, canMentionMass }) : [], [members, roles, mentionState, canMentionMass]);
+  const members = useSpaceStore((s) => s.members);
+  const roles = useSpaceStore((s) => s.roles);
+  const mentionUsers = useSpaceStore((s) => s.dmChannels.find((dm) => dm.id === channelId)?.members);
+  const mentionModel = useMemo(
+    () => composerMentions({ value: draftText, members, roles, users: mentionUsers }),
+    [draftText, members, roles, mentionUsers],
+  );
+  // The popover's rows; keyboard navigation indexes the same list.
+  const mentionMatches = useMemo(
+    () => (mentionState ? filterMentionCandidates(mentionCandidates, mentionState.query) : []),
+    [mentionCandidates, mentionState],
+  );
 
   const handleTyping = useCallback(() => {
     if (typingTimeoutRef.current) return;
@@ -391,13 +396,13 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   };
 
   const selectMention = useCallback(
-    (option: MentionOption) => {
+    (candidate: ChannelUser) => {
       if (!mentionState) return;
       const textarea = textareaRef.current;
       const cursorPos = textarea ? mentionModel.toWire(textarea.selectionStart, true) : draftText.length;
       const before = draftText.slice(0, mentionState.startIndex);
       const after = draftText.slice(cursorPos);
-      const insertion = option.token + ' ';
+      const insertion = `<@${candidate.userId}> `;
       const newContent = before + insertion + after;
       setDraft(channelId, newContent);
       setMentionState(null);
@@ -419,11 +424,11 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     // IME confirmation must not select a candidate or send the message.
     if (e.nativeEvent.isComposing) return;
     // Mention popover keyboard navigation
-    if (mentionState && filteredMembers.length > 0) {
+    if (mentionState && mentionMatches.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         setMentionState((prev) =>
-          prev ? { ...prev, selectedIndex: Math.min(prev.selectedIndex + 1, filteredMembers.length - 1) } : null,
+          prev ? { ...prev, selectedIndex: Math.min(prev.selectedIndex + 1, mentionMatches.length - 1) } : null,
         );
         return;
       }
@@ -436,7 +441,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
-        const selected = filteredMembers[mentionState.selectedIndex];
+        const selected = mentionMatches[mentionState.selectedIndex];
         if (selected) selectMention(selected);
         return;
       }
@@ -707,87 +712,13 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   // composer-bottom-offset change. `MessageList` reads that variable as
   // its content's `paddingBottom`, falling back to a static 80 px when
   // unset (e.g. when no composer is mounted, or before the first measure).
-  // The 12 px constant below is the desired breathing-room gap between the
-  // last message's bottom edge and the composer's top edge.
-  //
-  // Why a CSS variable on the parent rather than a global:
-  //   - One MessageInput per chat region; the variable scopes to that
-  //     region so multi-pane layouts (DM list + chat in a future split
-  //     view, voice channel side-panel, etc.) don't cross-talk.
-  //   - The MessageList content already lives inside the same parent
-  //     subtree, so a CSS variable inheritance just works.
-  // We track the live composer DOM element via a state-backed ref. A plain
-  // ref isn't enough because the component renders different JSX when
-  // `canSendMessages` flips (the early-return permission-denied path doesn't
-  // attach the ref), and a useEffect on the ref's value would not re-fire on
-  // those re-renders. Channel permissions arrive asynchronously, so the
-  // initial mount renders the no-permission JSX first, then re-renders with
-  // the full composer once permissions resolve — we need to (re-)attach the
-  // ResizeObserver at that moment.
-  const [composerEl, setComposerEl] = useState<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!composerEl) return;
-    const target = composerEl.parentElement;
-    if (!target) return;
-    const el = composerEl;
-
-    const sync = () => {
-      // Total clearance = composer height + bottom offset + 12 px gap.
-      // We measure the bubble's visual height (including replyTo banner +
-      // staged-attachment tiles + textarea autosize) plus the distance from
-      // the parent's bottom edge to the bubble's bottom edge (which folds
-      // in `var(--safe-bottom) + 6` on mobile or `12 px` on
-      // desktop, whichever the composer's `bottom` resolves to).
-      const composerRect = layoutRect(el.getBoundingClientRect());
-      const parentRect = layoutRect(target.getBoundingClientRect());
-      const bottomOffset = Math.max(0, parentRect.bottom - composerRect.bottom);
-      const clearance = Math.round(composerRect.height + bottomOffset + 12);
-      target.style.setProperty('--composer-clearance', `${clearance}px`);
-    };
-
-    sync();
-    const ro = new ResizeObserver(sync);
-    ro.observe(el);
-    // Also re-sync when the parent itself resizes (keyboard open/close
-    // collapses the chat region's height; MobileShell drives this via
-    // visualViewport.height).
-    ro.observe(target);
-
-    // Re-sync on visual viewport changes — the parent's `getBoundingClientRect`
-    // updates with the layout, but if `MobileShell`'s height attribute
-    // updates between paints, we want a same-frame re-measure.
-    const vv = window.visualViewport;
-    const onVv = () => sync();
-    if (vv) {
-      vv.addEventListener('resize', onVv);
-      vv.addEventListener('scroll', onVv);
-    }
-
-    return () => {
-      ro.disconnect();
-      if (vv) {
-        vv.removeEventListener('resize', onVv);
-        vv.removeEventListener('scroll', onVv);
-      }
-      target.style.removeProperty('--composer-clearance');
-    };
-    // Re-arm the observer / listeners when keyboard transitions or the
-    // composer's content materially changes — the dependency list is the
-    // set of inputs that can change the bubble's height or its bottom
-    // offset between renders. The ResizeObserver itself is what catches
-    // continuous textarea-autosize growth; these deps just ensure we're
-    // attached to the live element after a remount.
-  }, [composerEl, isMobile, keyboardOpen, textInputFocused, chatReplyTo, stagedTransfers.length]);
-
-  // Combined ref: keep `popoverAnchorRef` populated (InputPopover / mention
-  // popover anchor + scroll-into-view targets) AND notify the
-  // `composerEl` state slot so the clearance-measuring effect can re-run
-  // when the element materializes / changes between conditional render
-  // branches.
-  const setComposerRef = useCallback((node: HTMLDivElement | null) => {
-    popoverAnchorRef.current = node;
-    setComposerEl(node);
-  }, []);
+  const { setComposerRef, popoverAnchorRef } = useComposerClearance({
+    isMobile,
+    keyboardOpen,
+    textInputFocused,
+    chatReplyTo,
+    stagedCount: stagedTransfers.length,
+  });
 
   if (!canSendMessages) {
     return (
@@ -849,9 +780,9 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
         onDragOver={canAttachFiles ? handleDragOver : undefined}
       >
         {/* Mention autocomplete popover */}
-        {mentionState && filteredMembers.length > 0 && (
+        {mentionState && mentionMatches.length > 0 && (
           <MentionPopover
-            options={filteredMembers}
+            candidates={mentionMatches}
             selectedIndex={mentionState.selectedIndex}
             onSelect={selectMention}
             key={draftText}
@@ -860,77 +791,13 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
         )}
 
         {/* Staged transfer tiles */}
-        {stagedTransfers.length > 0 && (
-          <div className="p-4 flex flex-wrap gap-4 bg-surface-channel/30">
-            {stagedTransfers.map((transfer) => {
-              const isImage = transfer.file.mimetype.startsWith('image/');
-              const isFinal = transfer.state === 'completed';
-              const showOverlay = transfer.state !== 'completed';
-              const previewUrl = previewUrlsRef.current.get(transfer.id);
-              return (
-                <div
-                  key={transfer.id}
-                  className="relative group bg-surface-channel rounded-lg p-2 max-w-[200px] shadow-elevation-low border border-border-hard overflow-hidden"
-                >
-                  {isImage ? (
-                    <div className="w-[150px] h-[150px] bg-surface-input/40 rounded flex items-center justify-center text-txt-tertiary overflow-hidden">
-                      {previewUrl ? (
-                        <img
-                          src={previewUrl}
-                          alt={transfer.file.name}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <svg className="w-10 h-10 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                        </svg>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2 text-sm text-txt-secondary py-4 px-2">
-                      <svg className="w-8 h-8 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                        />
-                      </svg>
-                      <span className="truncate max-w-[120px] font-medium">{transfer.file.name}</span>
-                    </div>
-                  )}
-
-                  {/* Overlay: progress / paused / failed indicator (driven by AttachmentProgress) */}
-                  {showOverlay && (
-                    <AttachmentProgress
-                      loaded={transfer.progress.loaded}
-                      total={transfer.progress.total}
-                      state={transfer.state}
-                      filename={transfer.file.name}
-                      size="tile"
-                      onPause={transfer.state === 'active' ? () => pauseUpload(transfer.id) : undefined}
-                      onResume={transfer.state === 'paused' ? () => void resumeUpload(transfer.id) : undefined}
-                      onAbort={() => removeStagedTransfer(transfer.id)}
-                    />
-                  )}
-
-                  {/* Final-state remove button (top-right rose chip) — only when completed */}
-                  {isFinal && (
-                    <button
-                      onClick={() => removeStagedTransfer(transfer.id)}
-                      className="absolute -top-2 -right-2 w-7 h-7 bg-accent-rose hover:bg-accent-rose/80 shadow-elevation-high rounded-lg flex items-center justify-center text-white transition-colors z-10"
-                      aria-label={t('chat:composer.removeAttachment')}
-                    >
-                      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-                        <path d="M5 2a1 1 0 011-1h4a1 1 0 011 1v1h3a1 1 0 110 2h-.08L13 14a2 2 0 01-2 2H5a2 2 0 01-2-2L2.08 5H2a1 1 0 110-2h3V2zm2 0v1h2V2H7z" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+        <StagedTransferTiles
+          stagedTransfers={stagedTransfers}
+          previewUrls={previewUrlsRef.current}
+          onPause={pauseUpload}
+          onResume={resumeUpload}
+          onRemove={removeStagedTransfer}
+        />
 
         <div className="flex items-center gap-1 desktop:gap-0 pl-2 desktop:pl-[10px] pr-2 desktop:pr-1">
           {/* File attach button */}

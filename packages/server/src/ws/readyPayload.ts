@@ -1,11 +1,12 @@
-import type { ActiveCallInfo, Activity, Channel, ChannelCategory, DmChannel, MemberWithUser, ReadState, Space, SpaceFolder, SpaceLayoutItem, SpaceWithChannelsAndMembers, User } from '@backspace/shared';
+import type { ActiveCallInfo, Activity, Channel, ChannelCategory, DmChannel, MemberWithUser, PresenceIdentity, ReadState, Space, SpaceFolder, SpaceLayoutItem, SpaceWithChannelsAndMembers, User } from '@backspace/shared';
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { getDb, schema } from '../db/index.js';
 import { listNotificationSettings } from '../routes/notificationSettings.js';
 import { computePermissions, PermissionBits, permissionsToString } from '../utils/permissions.js';
 import { sanitizeUser } from '../utils/sanitize.js';
 import { channelUnreadCounts, dmUnreadCounts } from './channelUnreadCounts.js';
-
+import { loadOpenDmChannels } from '../utils/dmChannelWire.js';
+import { presenceIdentityOf, snapshotActivities } from './presenceEvent.js';
 import { connectionManager } from './handler.js';
 import { type DmRoomMeta } from './voiceRoomTypes.js';
 
@@ -226,148 +227,14 @@ function buildReadySpaces(userId: string) {
   return { spaces, visibleChannelIdSet };
 }
 
-function buildReadyDmChannels(userId: string, isFederated: boolean) {
+function buildReadyDmChannels(userId: string) {
   const db = getDb();
-  // Get DM channels
   const dmMemberships = db.select()
     .from(schema.dmMembers)
-    .where(and(
-      eq(schema.dmMembers.userId, userId),
-      eq(schema.dmMembers.closed, 0),
-    ))
+    .where(and(eq(schema.dmMembers.userId, userId), eq(schema.dmMembers.closed, 0)))
     .all();
 
-  const dmChannelIds = dmMemberships.map(dm => dm.dmChannelId);
-  const dmChannels: DmChannel[] = [];
-
-  if (dmChannelIds.length > 0) {
-    // Batch: all DM channels (1 query, exclude soft-deleted)
-    const allDmChannelRows = batchInArray(
-      dmChannelIds,
-      ids => db.select().from(schema.dmChannels).where(and(inArray(schema.dmChannels.id, ids), isNull(schema.dmChannels.deletedAt))).all(),
-    );
-    const dmChannelMap = new Map(allDmChannelRows.map(c => [c.id, c]));
-
-    // Batch: all DM members across all channels (1 query)
-    const allDmMemberRows = batchInArray(
-      dmChannelIds,
-      ids => db.select().from(schema.dmMembers).where(inArray(schema.dmMembers.dmChannelId, ids)).all(),
-    );
-
-    // Batch: all unique users from DM members (1 query)
-    const allDmUserIds = [...new Set(allDmMemberRows.map(m => m.userId))];
-    const allDmUsers = allDmUserIds.length > 0
-      ? batchInArray(allDmUserIds, ids => db.select().from(schema.users).where(inArray(schema.users.id, ids)).all())
-      : [];
-    const dmUserMap = new Map(allDmUsers.map(u => [u.id, u]));
-
-    // Batch: last message per DM channel.
-    // Two-step approach (same as GET /api/dm): get MAX(created_at) per channel,
-    // then fetch the actual message rows matching those timestamps.
-    const dmMaxTimestamps = batchInArray(
-      dmChannelIds,
-      ids => db.select({
-        dmChannelId: schema.dmMessages.dmChannelId,
-        maxCreatedAt: sql<number>`MAX(${schema.dmMessages.createdAt})`.as('max_created_at'),
-      }).from(schema.dmMessages).where(inArray(schema.dmMessages.dmChannelId, ids)).groupBy(schema.dmMessages.dmChannelId).all(),
-    );
-    const dmLastMsgMap = new Map<string, typeof schema.dmMessages.$inferSelect>();
-    if (dmMaxTimestamps.length > 0) {
-      const conditions = dmMaxTimestamps.map(t =>
-        and(eq(schema.dmMessages.dmChannelId, t.dmChannelId), eq(schema.dmMessages.createdAt, t.maxCreatedAt!))
-      );
-      const dmLastMessages = db.select().from(schema.dmMessages).where(or(...conditions)).all();
-      for (const m of dmLastMessages) {
-        if (!dmLastMsgMap.has(m.dmChannelId)) {
-          dmLastMsgMap.set(m.dmChannelId, m);
-        }
-      }
-    }
-    const dmLastMsgIds = [...dmLastMsgMap.values()].map(m => m.id);
-
-    // Batch: attachments for last messages (1 query)
-    const dmLastMsgAttachments = dmLastMsgIds.length > 0
-      ? batchInArray(dmLastMsgIds, ids =>
-          db.select({
-            dmMessageId: schema.attachments.dmMessageId,
-            type: schema.attachments.mimetype,
-            filename: schema.attachments.originalName,
-          }).from(schema.attachments).where(inArray(schema.attachments.dmMessageId, ids)).all()
-        )
-      : [];
-    const dmLastMsgAttachmentMap = new Map<string, Array<{ type: string; filename: string }>>();
-    for (const a of dmLastMsgAttachments) {
-      if (!a.dmMessageId) continue;
-      const arr = dmLastMsgAttachmentMap.get(a.dmMessageId) ?? [];
-      arr.push({ type: a.type, filename: a.filename });
-      dmLastMsgAttachmentMap.set(a.dmMessageId, arr);
-    }
-
-    // Assemble DM channels with zero additional queries
-    for (const dm of dmMemberships) {
-      const dmChannel = dmChannelMap.get(dm.dmChannelId);
-      if (!dmChannel) continue;
-
-      const memberRows = allDmMemberRows.filter(m => m.dmChannelId === dm.dmChannelId);
-      const members = memberRows
-        .map(m => dmUserMap.get(m.userId))
-        .filter((u): u is NonNullable<typeof u> => u != null)
-        .map(u => sanitizeUser(u));
-
-      const last = dmLastMsgMap.get(dm.dmChannelId) ?? null;
-
-      dmChannels.push({
-        id: dmChannel.id,
-        federatedId: dmChannel.federatedId ?? null,
-        ownerId: dmChannel.ownerId ?? null,
-        ownerHomeUserId: dmChannel.ownerHomeUserId ?? null,
-        ownerHomeInstance: dmChannel.ownerHomeInstance ?? null,
-        createdAt: dmChannel.createdAt,
-        name: dmChannel.name ?? null,
-        icon: dmChannel.icon ?? null,
-        metadataUpdatedAt: dmChannel.metadataUpdatedAt ?? 0,
-        members,
-        lastMessage: last ? {
-          id: last.id,
-          dmChannelId: last.dmChannelId,
-          userId: last.userId,
-          content: last.content,
-          createdAt: last.createdAt,
-          type: last.type === 'system' ? 'system' : 'user',
-          attachments: dmLastMsgAttachmentMap.get(last.id) ?? [],
-        } : null,
-      });
-    }
-
-  }
-
-  // Seed read states for federated users' DM channels that have no existing read state.
-  // This handles the bootstrap: DMs existed before cross-instance access was enabled,
-  // so the remote instance has no read state history. Mark as read (latest message).
-  // Going forward, the S2S read_state_update relay keeps things in sync.
-  if (isFederated && dmChannels.length > 0) {
-    const dmIds = dmChannels.map(dm => dm.id);
-    const existingDmReadStates = batchInArray(
-      dmIds,
-      ids => db.select({ channelId: schema.readStates.channelId })
-        .from(schema.readStates)
-        .where(and(eq(schema.readStates.userId, userId), inArray(schema.readStates.channelId, ids)))
-        .all(),
-    );
-    const hasReadState = new Set(existingDmReadStates.map(rs => rs.channelId));
-    const now = Date.now();
-    for (const dm of dmChannels) {
-      if (!hasReadState.has(dm.id) && dm.lastMessage) {
-        db.insert(schema.readStates).values({
-          userId,
-          channelId: dm.id,
-          lastReadMessageId: dm.lastMessage.id,
-          updatedAt: now,
-        }).run();
-      }
-    }
-  }
-
+  const dmChannels = loadOpenDmChannels(db, userId, dmMemberships);
   return { dmChannels, dmMemberships };
 }
 
@@ -388,6 +255,7 @@ export function buildReadyPayload(userId: string): {
   readStates: ReadState[];
   activeCalls: ActiveCallInfo[];
   userActivities: Record<string, Activity[]>;
+  userActivityIdentities?: Record<string, PresenceIdentity>;
   rejectedPeerOrigins: string[];
   awaitingApprovalPeerOrigins: string[];
   activePeerOrigins: string[];
@@ -409,7 +277,7 @@ export function buildReadyPayload(userId: string): {
 
   const { spaces, visibleChannelIdSet } = buildReadySpaces(userId);
 
-  const { dmChannels, dmMemberships } = buildReadyDmChannels(userId, isFederated);
+  const { dmChannels, dmMemberships } = buildReadyDmChannels(userId);
   // Include DM channel IDs in the visible set for read state filtering
   for (const dm of dmChannels) {
     visibleChannelIdSet.add(dm.id);
@@ -536,32 +404,63 @@ export function buildReadyPayload(userId: string): {
       lastReadMessageId: rs.lastReadMessageId,
     }));
 
-  // Build user activities snapshot for all visible users
+  // Build user activities snapshot for all visible users: space members, DM
+  // members and friends (a friend may share neither with the user). Keys are
+  // this instance's row ids; userActivityIdentities names each key's federated
+  // identity so the client can key it like every other view of that person.
   // Auto-inject customStatus as a 'custom' activity for users with no ephemeral activities
   const userActivities: Record<string, Activity[]> = {};
+  const userActivityIdentities: Record<string, PresenceIdentity> = {};
   const seenUserIds = new Set<string>();
 
-  function collectUserActivities(uid: string, customStatus: string | null) {
-    if (seenUserIds.has(uid)) return;
-    seenUserIds.add(uid);
-    let acts = connectionManager.getUserActivities(uid);
-    if (acts.length === 0 && customStatus) {
-      acts = [{ type: 'custom', name: customStatus }];
-    }
+  function collectUserActivities(
+    subject: { id: string; homeUserId: string | null; homeInstance: string | null; customStatus: string | null },
+  ) {
+    if (seenUserIds.has(subject.id)) return;
+    seenUserIds.add(subject.id);
+    const acts = snapshotActivities(connectionManager.getUserActivities(subject.id), subject.customStatus);
     if (acts.length > 0) {
-      userActivities[uid] = acts;
+      userActivities[subject.id] = acts;
+      userActivityIdentities[subject.id] = presenceIdentityOf(subject);
     }
   }
 
   for (const space of spaces) {
     for (const member of space.members) {
-      collectUserActivities(member.userId, member.user?.customStatus ?? null);
+      collectUserActivities({
+        id: member.userId,
+        homeUserId: member.user?.homeUserId ?? null,
+        homeInstance: member.user?.homeInstance ?? null,
+        customStatus: member.user?.customStatus ?? null,
+      });
     }
   }
   for (const dm of dmChannels) {
     for (const member of dm.members) {
-      collectUserActivities(member.id, member.customStatus ?? null);
+      collectUserActivities({
+        id: member.id,
+        homeUserId: member.homeUserId ?? null,
+        homeInstance: member.homeInstance ?? null,
+        customStatus: member.customStatus ?? null,
+      });
     }
+  }
+  const friendIds = db.select({ userId: schema.friends.userId, friendId: schema.friends.friendId })
+    .from(schema.friends)
+    .where(or(eq(schema.friends.userId, userId), eq(schema.friends.friendId, userId)))
+    .all()
+    .map(f => (f.userId === userId ? f.friendId : f.userId));
+  if (friendIds.length > 0) {
+    const friendRows = db.select({
+      id: schema.users.id,
+      homeUserId: schema.users.homeUserId,
+      homeInstance: schema.users.homeInstance,
+      customStatus: schema.users.customStatus,
+    })
+      .from(schema.users)
+      .where(inArray(schema.users.id, friendIds))
+      .all();
+    for (const friend of friendRows) collectUserActivities(friend);
   }
 
   // Rejected peer origins for unreachable member indicators
@@ -598,5 +497,30 @@ export function buildReadyPayload(userId: string): {
     pendingApprovalCount = countResult?.count ?? 0;
   }
 
-  return { user, spaces, dmChannels, folders, spaceLayout, layoutUpdatedAt, voiceStates, voiceChannelElapsedSeconds, voiceUserStates, spaceVoiceStates, supportsPoke: true, unreadCounts: { ...channelUnreadCounts(userId, spaces.flatMap(space => space.channels.map(channel => channel.id))), ...dmUnreadCounts(userId, dmChannels.map(dm => dm.id)) }, readStates, notificationSettings: listNotificationSettings(userId), activeCalls, userActivities, rejectedPeerOrigins, awaitingApprovalPeerOrigins, activePeerOrigins, pendingApprovalCount };
+  return {
+    user,
+    spaces,
+    dmChannels,
+    folders,
+    spaceLayout,
+    layoutUpdatedAt,
+    voiceStates,
+    voiceChannelElapsedSeconds,
+    voiceUserStates,
+    spaceVoiceStates,
+    supportsPoke: true,
+    unreadCounts: {
+      ...channelUnreadCounts(userId, spaces.flatMap(space => space.channels.map(channel => channel.id))),
+      ...dmUnreadCounts(userId, dmChannels.map(dm => dm.id)),
+    },
+    readStates,
+    notificationSettings: listNotificationSettings(userId),
+    activeCalls,
+    userActivities,
+    userActivityIdentities,
+    rejectedPeerOrigins,
+    awaitingApprovalPeerOrigins,
+    activePeerOrigins,
+    pendingApprovalCount,
+  };
 }

@@ -11,13 +11,12 @@ import { and, eq, isNull, or } from 'drizzle-orm';
 import { randomBytes } from 'node:crypto';
 import type { DmChannel } from '@backspace/shared';
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import { buildDmChannelPayload } from '../dmChannels.js';
+import { loadDmChannelWire } from '../../../utils/dmChannelWire.js';
 import { extractDomain } from '../identity.js';
 import { downloadProfileAsset } from '../profile.js';
 import { isLookupRateLimited } from '../rateLimits.js';
 import { authenticateS2SPeer } from './s2sAuth.js';
-import { reconcileDmChannelFederatedId } from '../reconciliation.js';
-import type { DmReconcileResult } from '../reconciliation.js';
+import { reconcileDmChannelFederatedId, type DmReconcileResult } from '../../../utils/dmConversation.js';
 
 export function registerAttachRoutes(app: FastifyInstance): void {
   // ─── POST /api/federation/verify-attach-proof ───────────────────────────────
@@ -295,11 +294,11 @@ export function registerAttachRoutes(app: FastifyInstance): void {
     //  - merged: dm_channel_closed removes the stale source entry; dm_channel_created
     //    (full DmChannel payload — the client handler reads dmChannel.members) resurfaces
     //    the surviving target with its merged history.
-    //  - rekeyed: dm_channel_created upserts the channel by id (spaceStore.addDmChannel
-    //    replaces by id), refreshing the now-stale federatedId in place. dm_channel_updated
+    //  - rekeyed: dm_channel_created upserts the channel's copy (the client's DM merge
+    //    module, web/src/stores/dmConversations.ts), refreshing the now-stale federatedId in place. dm_channel_updated
     //    would only patch name/icon, not federatedId, so it cannot heal the client here.
     for (const r of dmReconcileResults) {
-      const targetPayload = buildDmChannelPayload(r.targetChannelId, db);
+      const targetPayload = loadDmChannelWire(db, r.targetChannelId);
       for (const uid of r.affectedUserIds) {
         if (r.action === 'merged') {
           connectionManager.sendToUser(uid, { type: 'dm_channel_closed' as const, dmChannelId: r.channelId });

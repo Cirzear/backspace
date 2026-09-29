@@ -11,6 +11,16 @@ export function parseFederatedUsername(username: string): { baseName: string; do
   return { baseName: username.slice(0, atIndex), domain: username.slice(atIndex + 1) };
 }
 
+/**
+ * The name a user is shown by: their display name, else the base of their
+ * username ("erin@nova.ddns.net" is shown as "erin"). One rule for every
+ * place a person is named, so a row, its header and a mention of it agree.
+ * Callers that need a placeholder for an empty result add their own.
+ */
+export function userDisplayName(user: { displayName?: string | null; username: string }): string {
+  return user.displayName || parseFederatedUsername(user.username).baseName;
+}
+
 // ─── Cross-instance self-ID registry ─────────────────────────────────────────
 // Tracks all Snowflake IDs that belong to the current user across connected
 // instances (home + remotes). Populated from WS `ready` events.
@@ -148,6 +158,35 @@ export function canonicalUserKey(
   const host = normalizeOriginToHost(user.homeInstance);
   const ident = user.homeUserId ?? user.id;
   return `${host}:${ident}`;
+}
+
+/**
+ * The fields a presence or activity entry is about: the delivering instance's
+ * row id and, when that row is replicated, its federated identity.
+ */
+export interface PresenceSubject {
+  id: string;
+  homeUserId?: string | null;
+  homeInstance?: string | null;
+}
+
+/**
+ * The one key for a user's presence and activities (#340), whatever instance
+ * delivered them: {@link canonicalUserKey} of the person's home identity.
+ *
+ * A row with a `homeInstance` is replicated and names its home itself. A row
+ * without one is native to the delivering instance, so its home host is the
+ * delivering origin's (`''` = the page's own instance) and its id is its home
+ * id. So Bob's replicated row on the viewer's home, Bob's replicated row on a
+ * third instance and Bob's native row on his home all key as
+ * `orbit.example:<bob's id>`.
+ *
+ * Writers (the WS presence handler) and readers (friends views, member lists)
+ * both go through this; nothing looks activities up by a raw id.
+ */
+export function activityKey(subject: PresenceSubject, deliveringOrigin: string): string {
+  if (subject.homeInstance) return canonicalUserKey(subject);
+  return canonicalUserKey({ id: subject.id, homeUserId: subject.id, homeInstance: deliveringHost(deliveringOrigin) });
 }
 
 /**

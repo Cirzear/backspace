@@ -18,10 +18,10 @@ describe('space owner title migration', () => {
   it('upgrades existing spaces without changing ownership or inventing a title', () => {
     const db = new Database(':memory:');
     try {
-      const files = fs.readdirSync(migrationsFolder).filter((f) => f.endsWith('.sql') && f < '0022').sort();
+      const files = fs.readdirSync(migrationsFolder).filter((f) => f.endsWith('.sql') && f < '0023').sort();
       for (const file of files) db.exec(fs.readFileSync(path.join(migrationsFolder, file), 'utf8'));
       seedLegacySpace(db);
-      db.exec(fs.readFileSync(path.join(migrationsFolder, '0022_space_owner_title.sql'), 'utf8'));
+      db.exec(fs.readFileSync(path.join(migrationsFolder, '0023_space_owner_title.sql'), 'utf8'));
       expect(db.prepare('SELECT owner_id, owner_title FROM spaces').get()).toEqual({ owner_id: 'owner', owner_title: null });
     } finally {
       db.close();

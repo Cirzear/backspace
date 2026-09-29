@@ -1,5 +1,20 @@
-import type { Channel, CreateSpaceRequest, DmChannel, MemberWithUser, Space, SpaceFolder, SpaceLayoutItem, UpdateChannelRequest, UpdateSpaceRequest, User } from '@backspace/shared';
-import { create, type StateCreator } from 'zustand';
+import type {
+  Channel,
+  ChannelCategory,
+  CreateSpaceRequest,
+  DmChannel,
+  DmMessageWithUser,
+  MemberWithUser,
+  Role,
+  Space,
+  SpaceFolder,
+  SpaceLayoutItem,
+  SpaceWithChannelsAndMembers,
+  UpdateChannelRequest,
+  UpdateSpaceRequest,
+  User,
+} from '@backspace/shared';
+import { create } from 'zustand';
 import { api, BackspaceApiClient } from '../api/client';
 import { normalizeUserAssets, resolveAssetUrl } from '../utils/assetUrls';
 import {
@@ -10,11 +25,40 @@ import {
   resolveUserIdFromInstances,
   setOwnerInstanceForDmResolver,
 } from '../utils/crossStoreResolvers';
+import { locateDmChannel } from '../utils/dmChannelLookup';
+import { deriveMissingOneOnOneKeys, type PeerDmChannel } from '../utils/dmConversationKey';
+import { applyDmPinMoves } from '../utils/dmOriginFailover';
 import { sortDmChannels } from '../utils/dmSorting';
-import { canonicalUserKey, isDeliveryFromHome, isSelf } from '../utils/identity';
+import {
+  activityKey,
+  canonicalUserKey,
+  isDeliveryFromHome,
+  isSelf,
+  type PresenceSubject,
+} from '../utils/identity';
 import { useAuthStore } from './authStore';
 import { useChatStore } from './chatStore';
+import {
+  conversationCopyIndex,
+  copyIdOnOrigin,
+  copyOnOrigin,
+  dropOrigin,
+  EMPTY_DM_CONVERSATIONS,
+  mergeOriginListing,
+  patchCopy,
+  patchEveryCopy,
+  pinnedDmChannels,
+  pinnedOriginByChannelId,
+  removeCopy,
+  setOriginAvailable,
+  upsertCopy,
+  upsertUnplacedCopy,
+  type DmConversations,
+  type DmOperation,
+  type DmPinContext,
+} from './dmConversations';
 import { createAddSpaceFromReadySlice } from './spaceAddSpaceFromReadySlice';
+import { createSpaceLayoutSlice, pushLayoutToOrigin } from './spaceLayoutSlice';
 import { createPopulateFromReadySlice } from './spacePopulateFromReadySlice';
 import { createRemoveInstanceSpacesSlice } from './spaceRemoveInstanceSpacesSlice';
 import type { SpaceState } from './spaceStoreTypes';
@@ -22,7 +66,7 @@ import type { SpaceState } from './spaceStoreTypes';
 // ─── Instance-aware types ─────────────────────────────────────────────────────
 
 /** Server augmented with instance origin tracking (client-only, not in shared types). */
-export type TaggedSpace = Space & { _instanceOrigin: string };
+export type TaggedSpace = Space & { _instanceOrigin: string; ownerTitle?: string | null };
 
 // ─── Error types ─────────────────────────────────────────────────────────────
 
@@ -43,14 +87,6 @@ export class NotConnectedError extends Error {
  * across every connected instance, regardless of whether the carrying channel
  * survived dedup. Mirrors `dmAlternatives` philosophy: information from
  * skipped ready payloads is still load-bearing for rendering.
- *
- * - `deliveredBy`: the origin string used at insert time. Required for
- *   lifecycle pruning (drop entries whose delivering origin is removed from
- *   Connections) — the user's declared `homeInstance` is NOT a substitute,
- *   because a stub view delivered by orbit has homeInstance=nova.
- * - `isHome`: cached at insert time so the preference rule does not need to
- *   re-normalize on every write.
- * - `updatedAt`: same-tier freshness tiebreaker.
  */
 export interface UserViewEntry {
   user: User;
@@ -59,40 +95,95 @@ export interface UserViewEntry {
   updatedAt: number;
 }
 
-// ─── Store interface ──────────────────────────────────────────────────────────
+// ─── Roster changes during a detail fetch ────────────────────────────────────
 
-export async function pushLayoutToOrigin(
-  origin: string,
-  layout: SpaceLayoutItem[] | null,
-  folders: SpaceFolder[],
-  updatedAt: number,
-): Promise<void> {
-  try {
-    const targetApi = getApiForOrigin(origin);
-    // Build folder map from SpaceFolder[]
-    const folderMap: Record<string, { name: string | null; color: string | null; spaceIds: string[] }> = {};
-    for (const f of folders) {
-      folderMap[f.id] = { name: f.name, color: f.color, spaceIds: f.spaceIds };
-    }
-    await targetApi.spaceLayout.update({
-      items: layout ?? [],
-      folders: folderMap,
-      updatedAt,
-    });
-  } catch (err) {
-    console.warn(`[SpaceStore] Failed to push layout to ${origin || 'home'}:`, err);
-  }
+type RosterChange =
+  | { kind: 'join'; member: MemberWithUser }
+  | { kind: 'leave'; userId: string };
+
+/** spaceId → the change logs of the loads in flight for it (one per load). */
+const inFlightRosterLogs = new Map<string, Set<RosterChange[]>>();
+
+function recordRosterChange(spaceId: string, change: RosterChange): void {
+  const logs = inFlightRosterLogs.get(spaceId);
+  if (!logs) return;
+  for (const log of logs) log.push(change);
 }
 
-const createInitialSpaceState: StateCreator<SpaceState, [], [], Pick<SpaceState,
-  | 'spaces' | 'currentSpaceId' | 'lastSelectedSpaceId' | 'channels' | 'categories'
-  | 'members' | 'roles' | 'folders' | 'spaceLayout' | 'dmChannels' | 'channelToSpaceMap'
-  | 'channelLastMessageIds' | 'spacePermissions' | 'channelPermissions' | 'channelOriginMap'
-  | 'voiceChannelIds' | 'categoryOriginMap' | 'dmAlternatives' | 'userViews'
-  | 'loadingSpaceId' | 'loadedSpaceIds' | '_layoutUpdatedAt' | 'reset' | 'setSpaces'
-  | 'setCurrentSpace' | 'setChannels' | 'setCategories' | 'setMembers' | 'setRoles'
-  | 'setDmChannels' | 'addDmChannel' | 'recordDmAlternative'
->> = (set, get) => ({
+/** A change replayed onto a fetched roster: a join never replaces a fetched row. */
+function replayRosterChange(members: MemberWithUser[], change: RosterChange): MemberWithUser[] {
+  if (change.kind === 'join' && members.some(m => m.userId === change.member.userId)) return members;
+  return applyRosterChange(members, change);
+}
+
+function applyRosterChange(members: MemberWithUser[], change: RosterChange): MemberWithUser[] {
+  if (change.kind === 'join') {
+    return [...members.filter(m => m.userId !== change.member.userId), change.member];
+  }
+  return members.filter(m => m.userId !== change.userId);
+}
+
+// ─── DM conversations: the derived view ──────────────────────────────────────
+
+export type DmView = Pick<SpaceState, 'dmConversations' | 'dmChannels' | 'dmAlternatives' | 'channelOriginMap' | 'channelLastMessageIds'>;
+
+/**
+ * The store fields derived from `conversations`. `previousRows` are the DM
+ * rows the maps held entries for until now; those entries are replaced, the
+ * space-channel entries are kept.
+ */
+export function deriveDmView(
+  conversations: DmConversations,
+  previousRows: readonly DmChannel[],
+  channelOriginMap: ReadonlyMap<string, string>,
+  channelLastMessageIds: ReadonlyMap<string, string>,
+): DmView {
+  const origins = new Map(channelOriginMap);
+  const lastMessageIds = new Map(channelLastMessageIds);
+  for (const dm of previousRows) {
+    origins.delete(dm.id);
+    lastMessageIds.delete(dm.id);
+  }
+  const rows = pinnedDmChannels(conversations);
+  for (const [channelId, origin] of pinnedOriginByChannelId(conversations)) origins.set(channelId, origin);
+  for (const dm of rows) {
+    if (dm.lastMessage?.id) lastMessageIds.set(dm.id, dm.lastMessage.id);
+  }
+  const { unreadChannels, currentChannelId } = useChatStore.getState();
+  return {
+    dmConversations: conversations,
+    dmChannels: sortDmChannels(rows, unreadChannels, currentChannelId),
+    dmAlternatives: conversationCopyIndex(conversations),
+    channelOriginMap: origins,
+    channelLastMessageIds: lastMessageIds,
+  };
+}
+
+/** The pin rule's view of the session: the user's home is `getLayoutHomeOrigin()`. */
+export function dmPinContext(): DmPinContext {
+  return { home: getLayoutHomeOrigin() };
+}
+
+/**
+ * Store the result of a DM operation, derive the view from it, and apply its
+ * pin moves: the chat state and URL of a row follow it to its new channel id
+ * (`applyDmPinMoves`), after which the list is re-sorted, since the moves
+ * carried unread state to the new ids.
+ */
+export function commitDmOperation(op: DmOperation): void {
+  if (op.next !== useSpaceStore.getState().dmConversations) {
+    useSpaceStore.setState((state) =>
+      deriveDmView(op.next, state.dmChannels, state.channelOriginMap, state.channelLastMessageIds),
+    );
+  }
+  if (op.pinMoves.length === 0) return;
+  applyDmPinMoves(op.pinMoves);
+  useSpaceStore.getState().resortDmChannels();
+}
+
+// ─── Store implementation ───────────────────────────────────────────────────
+
+export const useSpaceStore = create<SpaceState>((set, get, apiStore) => ({
   spaces: [],
   currentSpaceId: null,
   lastSelectedSpaceId: null,
@@ -102,6 +193,7 @@ const createInitialSpaceState: StateCreator<SpaceState, [], [], Pick<SpaceState,
   roles: [],
   folders: [],
   spaceLayout: null,
+  dmConversations: EMPTY_DM_CONVERSATIONS,
   dmChannels: [],
   channelToSpaceMap: new Map(),
   channelLastMessageIds: new Map(),
@@ -116,160 +208,64 @@ const createInitialSpaceState: StateCreator<SpaceState, [], [], Pick<SpaceState,
   loadedSpaceIds: new Set(),
   _layoutUpdatedAt: 0,
 
-  reset: () => {
-    clearMyUserIdCache();
-    set({
-      spaces: [],
-      currentSpaceId: null,
-      lastSelectedSpaceId: null,
-      channels: [],
-      categories: [],
-      members: [],
-      roles: [],
-      folders: [],
-      spaceLayout: null,
-      dmChannels: [],
-      channelToSpaceMap: new Map(),
-      channelLastMessageIds: new Map(),
-      spacePermissions: new Map(),
-      channelPermissions: new Map(),
-      channelOriginMap: new Map(),
-      voiceChannelIds: new Set(),
-      categoryOriginMap: new Map(),
-      dmAlternatives: new Map(),
-      userViews: new Map(),
-      loadingSpaceId: null,
-      loadedSpaceIds: new Set(),
-      _layoutUpdatedAt: 0,
-    });
-  },
-
   setSpaces: (spaces) => set({ spaces }),
   setCurrentSpace: (spaceId) =>
     set((state) => ({
       currentSpaceId: spaceId,
-      // Only update sticky memory when actually selecting a space. Clearing
-      // currentSpaceId (e.g. on @me navigation) must NOT wipe the memory —
-      // that's the whole point of this slot.
       lastSelectedSpaceId: spaceId !== null ? spaceId : state.lastSelectedSpaceId,
     })),
   setChannels: (channels) => set({ channels }),
   setCategories: (categories) => set({ categories }),
   setMembers: (members) => set({ members }),
   setRoles: (roles) => set({ roles }),
-  setDmChannels: (dmChannels) => set({ dmChannels }),
 
-  addDmChannel: (channel, origin?: string) => set((state) => {
-    const channelOriginMap = new Map(state.channelOriginMap);
-    if (origin !== undefined) {
-      channelOriginMap.set(channel.id, origin);
-    }
-    return {
-      dmChannels: [channel, ...state.dmChannels.filter(c => c.id !== channel.id)],
-      channelOriginMap,
-    };
+  // DM Actions
+  upsertDmCopy: (origin, channel, keySource) => {
+    const op = upsertCopy(get().dmConversations, origin, channel, keySource, dmPinContext());
+    commitDmOperation(op);
+    return op.pinnedChannelId;
+  },
+
+  placeUnplacedDmMessage: (origin, message) => {
+    commitDmOperation(upsertUnplacedCopy(get().dmConversations, origin, message, dmPinContext()));
+  },
+
+  patchDmCopy: (channelId, patch) => {
+    commitDmOperation(patchCopy(get().dmConversations, channelId, patch));
+  },
+
+  resortDmChannels: (currentChannelId) => set((state) => {
+    if (state.dmChannels.length === 0) return state;
+    const chat = useChatStore.getState();
+    const current = currentChannelId !== undefined ? currentChannelId : chat.currentChannelId;
+    return { dmChannels: sortDmChannels(state.dmChannels, chat.unreadChannels, current) };
   }),
 
-  recordDmAlternative: (federatedId, origin, channelId) => set((state) => {
-    if (state.dmAlternatives.get(federatedId)?.get(origin) === channelId) return state;
-    const dmAlternatives = new Map(state.dmAlternatives);
-    const byOrigin = new Map(dmAlternatives.get(federatedId) ?? []);
-    byOrigin.set(origin, channelId);
-    dmAlternatives.set(federatedId, byOrigin);
-    return { dmAlternatives };
-  }),
+  setDmOriginAvailable: (origin, available) => {
+    commitDmOperation(setOriginAvailable(get().dmConversations, origin, available, dmPinContext()));
+  },
 
-  // Refetch and replace the DM list for a single origin, mirroring the DM
-  // portion of populateFromReady (dedup vs other origins by federatedId, origin
-  // map, last-message map, failover alternatives, userViews). Used after a
-  // re-attach reconciles this connection's 1-on-1 federatedIds (merge/re-key)
-  // so the split conversation collapses without a full WS reconnect, and by
-  // `utils/dmMessageRouting` to learn which conversation an unknown channel id
-  // belongs to. Origin '' is the home instance. Throws on a failed fetch; both
-  // callers catch.
-});
-
-const createDmActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
-  | 'reloadDmsForOrigin' | 'upsertUserView' | 'removeDmChannel' | 'addDmMember'
-  | 'removeDmMember' | 'updateDmOwner' | 'updateDmMetadata' | 'closeDm' | 'leaveDm'
->> = (set, get) => ({
   reloadDmsForOrigin: async (origin: string) => {
     const client = getApiForOrigin(origin);
-    const incomingDms = await client.dm.list();
+    const listed: PeerDmChannel[] = await client.dm.list();
+    const derivedKeys = await deriveMissingOneOnOneKeys(listed);
 
-    // Normalize remote-origin DM member asset URLs (home origin serves clean paths).
     if (origin !== '') {
-      for (const dm of incomingDms) {
+      for (const dm of listed) {
         for (const member of dm.members) {
           normalizeUserAssets(member, origin);
         }
       }
     }
 
-    set((state) => {
-      // Upsert every DM member into the userViews cache (home + remote).
-      const { upsertUserView } = get();
-      for (const dm of incomingDms) {
-        for (const member of dm.members) {
-          upsertUserView(member, origin);
-        }
+    const { upsertUserView } = get();
+    for (const dm of listed) {
+      for (const member of dm.members) {
+        upsertUserView(member, origin);
       }
+    }
 
-      // Dedup vs DMs already loaded from OTHER origins (same federatedId).
-      const existingFederatedIds = new Map<string, string>();
-      for (const dm of state.dmChannels) {
-        if (dm.federatedId && (state.channelOriginMap.get(dm.id) ?? '') !== origin) {
-          existingFederatedIds.set(dm.federatedId, dm.id);
-        }
-      }
-
-      const channelOriginMap = new Map(state.channelOriginMap);
-      const channelLastMessageIds = new Map(state.channelLastMessageIds);
-      // Drop this origin's stale channel-map entries before repopulating.
-      for (const dm of state.dmChannels) {
-        if ((state.channelOriginMap.get(dm.id) ?? '') === origin) {
-          channelOriginMap.delete(dm.id);
-          channelLastMessageIds.delete(dm.id);
-        }
-      }
-
-      const dmAlternatives = new Map<string, Map<string, string>>();
-      for (const [fid, byOrigin] of state.dmAlternatives) {
-        dmAlternatives.set(fid, new Map(byOrigin));
-      }
-
-      const filteredDms: DmChannel[] = [];
-      for (const dm of incomingDms) {
-        if (dm.federatedId && existingFederatedIds.has(dm.federatedId)) {
-          continue; // duplicate cross-instance DM — keep the copy from the other origin
-        }
-        filteredDms.push(dm);
-        if (dm.federatedId) existingFederatedIds.set(dm.federatedId, dm.id);
-      }
-      for (const dm of filteredDms) {
-        channelOriginMap.set(dm.id, origin);
-        if (dm.lastMessage?.id) channelLastMessageIds.set(dm.id, dm.lastMessage.id);
-      }
-      // Record every DM's (origin → localChannelId) for failover lookup.
-      for (const dm of incomingDms) {
-        if (!dm.federatedId) continue;
-        let byOrigin = dmAlternatives.get(dm.federatedId);
-        if (!byOrigin) {
-          byOrigin = new Map();
-          dmAlternatives.set(dm.federatedId, byOrigin);
-        }
-        byOrigin.set(origin, dm.id);
-      }
-
-      const existingDmsFromOtherOrigins = state.dmChannels.filter(
-        dm => (state.channelOriginMap.get(dm.id) ?? '') !== origin,
-      );
-      const mergedDms = [...existingDmsFromOtherOrigins, ...filteredDms];
-      const { unreadChannels, currentChannelId } = useChatStore.getState();
-      const sortedDms = sortDmChannels(mergedDms, unreadChannels, currentChannelId);
-
-      return { dmChannels: sortedDms, channelOriginMap, channelLastMessageIds, dmAlternatives };
-    });
+    commitDmOperation(mergeOriginListing(get().dmConversations, origin, listed, derivedKeys, dmPinContext()));
   },
 
   upsertUserView: (user, deliveringOrigin) => set((state) => {
@@ -277,7 +273,6 @@ const createDmActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
     const incomingIsHome = isDeliveryFromHome(user, deliveringOrigin);
     const existing = state.userViews.get(key);
 
-    // Stub view never overwrites a home view.
     if (existing && existing.isHome && !incomingIsHome) return state;
 
     const next = new Map(state.userViews);
@@ -291,84 +286,63 @@ const createDmActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
   }),
 
   removeDmChannel: (id) => {
-    set((state) => ({
-      dmChannels: state.dmChannels.filter(c => c.id !== id)
-    }));
-    // Clean up unread/read state for the closed DM
+    commitDmOperation(removeCopy(get().dmConversations, id, dmPinContext()));
     useChatStore.getState().removeChannelStates(new Set([id]));
   },
 
-  addDmMember: (dmChannelId, user) => set((state) => ({
-    dmChannels: state.dmChannels.map(dm =>
-      dm.id === dmChannelId
-        ? { ...dm, members: dm.members.some(m => m.id === user.id) ? dm.members : [...dm.members, user] }
-        : dm
-    ),
-  })),
+  addDmMember: (dmChannelId, user) => {
+    commitDmOperation(patchCopy(get().dmConversations, dmChannelId, (dm) =>
+      dm.members.some(m => m.id === user.id) ? dm : { ...dm, members: [...dm.members, user] },
+    ));
+  },
 
-  removeDmMember: (dmChannelId, userId) => set((state) => ({
-    dmChannels: state.dmChannels.map(dm =>
-      dm.id === dmChannelId
-        ? { ...dm, members: dm.members.filter(m => m.id !== userId) }
-        : dm
-    ),
-  })),
+  removeDmMember: (dmChannelId, userId) => {
+    commitDmOperation(patchCopy(get().dmConversations, dmChannelId, (dm) =>
+      ({ ...dm, members: dm.members.filter(m => m.id !== userId) }),
+    ));
+  },
 
-  updateDmOwner: (dmChannelId, newOwnerId, newOwnerHomeUserId, newOwnerHomeInstance) => set((state) => ({
-    dmChannels: state.dmChannels.map(dm => {
-      if (dm.id !== dmChannelId) return dm;
+  updateDmOwner: (dmChannelId, newOwnerId, newOwnerHomeUserId, newOwnerHomeInstance) => {
+    commitDmOperation(patchCopy(get().dmConversations, dmChannelId, (dm) => {
       const next = { ...dm, ownerId: newOwnerId };
-      // Only overwrite the federation routing fields when the caller supplies
-      // them. Older servers that omit these fields must not blank out the
-      // existing values — the DM would otherwise lose its owner-routing data
-      // and `getOwnerInstanceForDm` would silently fall back to '' (home),
-      // re-introducing the bug this WS extension fixes.
       if (newOwnerHomeUserId !== undefined) next.ownerHomeUserId = newOwnerHomeUserId;
       if (newOwnerHomeInstance !== undefined) next.ownerHomeInstance = newOwnerHomeInstance;
       return next;
-    }),
-  })),
+    }));
+  },
 
-  // Patches the group DM's display metadata (name + icon). Idempotent: a
-  // payload with only one of `name`/`icon` leaves the other field untouched.
-  // Mirrors `updateDmOwner` shape; called by the `dm_channel_updated` WS
-  // handler after a remote rename / icon change.
-  updateDmMetadata: (dmChannelId, patch) => set((state) => ({
-    dmChannels: state.dmChannels.map(dm => {
-      if (dm.id !== dmChannelId) return dm;
+  updateDmMetadata: (dmChannelId, patch) => {
+    commitDmOperation(patchCopy(get().dmConversations, dmChannelId, (dm) => {
       const next = { ...dm };
       if ('name' in patch) next.name = patch.name ?? null;
       if ('icon' in patch) next.icon = patch.icon ?? null;
       return next;
-    }),
-  })),
+    }));
+  },
 
   closeDm: async (id) => {
     const origin = get().channelOriginMap.get(id) || '';
     const targetApi = getApiForOrigin(origin);
     await targetApi.dm.close(id);
-    set((state) => ({
-      dmChannels: state.dmChannels.filter(c => c.id !== id)
-    }));
+    commitDmOperation(removeCopy(get().dmConversations, id, dmPinContext()));
   },
 
   leaveDm: async (id) => {
     const origin = get().channelOriginMap.get(id) || '';
     const targetApi = getApiForOrigin(origin);
     await targetApi.dm.leave(id);
-    set((state) => ({
-      dmChannels: state.dmChannels.filter(c => c.id !== id)
-    }));
+    commitDmOperation(removeCopy(get().dmConversations, id, dmPinContext()));
   },
-});
 
-const createSpaceActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
-  | 'loadSpaces' | 'loadSpaceDetail' | 'createSpace' | 'updateSpace' | 'deleteSpace'
-  | 'leaveSpace' | 'joinSpace' | 'joinByCode' | 'generateInvite'
->> = (set, get) => ({
+  setDmChannels: (channels) => set({ dmChannels: channels }),
+  addDmChannel: (channel, origin = '') => {
+    get().upsertDmCopy(origin, channel, 'stated');
+  },
+
+  // Space Actions
   loadSpaces: async () => {
     try {
-      const spaces =await api.spaces.list();
+      const spaces = await api.spaces.list();
       set((state) => ({
         spaces: spaces.map(s => ({ ...s, _instanceOrigin: '' })) as TaggedSpace[],
       }));
@@ -378,29 +352,29 @@ const createSpaceActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
   },
 
   loadSpaceDetail: async (spaceId: string) => {
+    const rosterChanges: RosterChange[] = [];
     try {
-      // Resolve the correct API client based on the server's instance origin
-      const space =get().spaces.find(s => s.id === spaceId);
-      if (!space) return; // Not populated yet — remote WS ready will trigger reload
+      const space = get().spaces.find(s => s.id === spaceId);
+      if (!space) return;
       set({ loadingSpaceId: spaceId });
       const origin = space._instanceOrigin ?? '';
       const client = getApiForOrigin(origin);
 
+      const logs = inFlightRosterLogs.get(spaceId) ?? new Set<RosterChange[]>();
+      logs.add(rosterChanges);
+      inFlightRosterLogs.set(spaceId, logs);
+
       const detail = await client.spaces.get(spaceId);
-      // Normalize remote asset URLs (avatars, server icon)
       if (origin) {
         if (detail.icon) detail.icon = resolveAssetUrl(detail.icon, origin) ?? detail.icon;
         for (const member of detail.members) {
           normalizeUserAssets(member.user, origin);
         }
       }
-      // Upsert every member into the userViews cache (home or remote).
-      // Assets are already normalized above for the remote case.
       for (const member of detail.members) {
         get().upsertUserView(member.user, origin);
       }
 
-      // Populate permission maps from REST response
       const spacePermissions = new Map(get().spacePermissions);
       const channelPermissions = new Map(get().channelPermissions);
       if (detail.myPermissions) {
@@ -421,7 +395,7 @@ const createSpaceActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
           lastSelectedSpaceId: spaceId,
           channels: detail.channels.sort((a, b) => a.position - b.position),
           categories: (detail.categories || []).sort((a, b) => a.position - b.position),
-          members: detail.members,
+          members: rosterChanges.reduce(replayRosterChange, detail.members),
           roles: detail.roles.sort((a, b) => b.position - a.position),
           spacePermissions,
           channelPermissions,
@@ -430,6 +404,10 @@ const createSpaceActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
       });
     } catch {
       set({ loadingSpaceId: null });
+    } finally {
+      const logs = inFlightRosterLogs.get(spaceId);
+      logs?.delete(rosterChanges);
+      if (logs?.size === 0) inFlightRosterLogs.delete(spaceId);
     }
   },
 
@@ -445,7 +423,6 @@ const createSpaceActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
     const origin = space?._instanceOrigin ?? '';
     const client = getApiForOrigin(origin);
     const updated = await client.spaces.update(spaceId, data);
-    // Normalize remote asset URLs so the icon/banner display correctly in-app
     if (origin && updated.icon) {
       updated.icon = resolveAssetUrl(updated.icon, origin) ?? updated.icon;
     }
@@ -493,7 +470,7 @@ const createSpaceActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
   },
 
   joinSpace: async (spaceId: string, inviteCode: string) => {
-    const space =await api.spaces.join(spaceId, { inviteCode });
+    const space = await api.spaces.join(spaceId, { inviteCode });
     set((state) => {
       if (state.spaces.find(s => s.id === space.id)) return state;
       return { spaces: [...state.spaces, { ...space, _instanceOrigin: '' } as TaggedSpace] };
@@ -501,13 +478,10 @@ const createSpaceActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
   },
 
   joinByCode: async (inviteCode: string, origin?: string) => {
-    // Normalize: an explicit home origin is equivalent to undefined (local).
-    // Mirrors inviteParser's same normalization at the URL boundary.
     if (origin && typeof window !== 'undefined' && origin === window.location.origin) {
       origin = undefined;
     }
     if (origin) {
-      // Remote instance — verify connectivity via dynamic import (avoids circular dep)
       const { useInstanceStore } = await import('./instanceStore');
       const connected = useInstanceStore.getState().instances.some(
         (i) => i.origin === origin && i.status === 'connected',
@@ -515,7 +489,7 @@ const createSpaceActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
       if (!connected) throw new NotConnectedError(origin);
 
       const remoteApi = getApiForOrigin(origin);
-      const space =await remoteApi.spaces.joinByCode(inviteCode);
+      const space = await remoteApi.spaces.joinByCode(inviteCode);
       if (space.icon) space.icon = resolveAssetUrl(space.icon, origin) ?? space.icon;
       if (space.banner) space.banner = resolveAssetUrl(space.banner, origin) ?? space.banner;
       set((state) => {
@@ -525,8 +499,7 @@ const createSpaceActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
       return space;
     }
 
-    // Home instance
-    const space =await api.spaces.joinByCode(inviteCode);
+    const space = await api.spaces.joinByCode(inviteCode);
     set((state) => {
       if (state.spaces.find(s => s.id === space.id)) return state;
       return { spaces: [...state.spaces, { ...space, _instanceOrigin: '' } as TaggedSpace] };
@@ -535,41 +508,25 @@ const createSpaceActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
   },
 
   generateInvite: async (spaceId: string) => {
-    const space =get().spaces.find(s => s.id === spaceId);
+    const space = get().spaces.find(s => s.id === spaceId);
     const origin = space?._instanceOrigin ?? '';
     const client = getApiForOrigin(origin);
     const result = await client.spaces.invite(spaceId);
     return result.inviteCode;
   },
-});
 
-const createChannelActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
-  | 'createChannel' | 'upsertChannel' | 'updateChannel' | 'deleteChannel' | 'createCategory'
-  | 'updateCategory' | 'deleteCategory' | 'updateChannelLayout'
->> = (set, get) => ({
+  // Channel & Category Actions
   createChannel: async (spaceId: string, name: string, type: 'text' | 'voice', topic?: string, categoryId?: string) => {
     const space = get().spaces.find(s => s.id === spaceId);
     const origin = space?._instanceOrigin ?? '';
     const client = getApiForOrigin(origin);
     const channel = await client.channels.create(spaceId, { name, type, topic, categoryId });
-    // Reconcile through upsertChannel so the new channel's permission entry is
-    // written with a fresh map reference (see upsertChannel). The create
-    // response carries the creator's myPermissions, so the channel renders
-    // immediately without waiting for the channel_created WS event.
     get().upsertChannel(channel, spaceId, origin);
     return channel;
   },
 
-  // Add or replace a channel and its derived lookup state. channels and
-  // channelPermissions are render inputs for the sidebar's visibleChannels memo,
-  // so they MUST be replaced with fresh references — mutating the existing
-  // channelPermissions Map in place sets the value but never triggers a
-  // re-render, which is why a freshly created channel could stay hidden until
-  // the space was reloaded.
   upsertChannel: (channel: Channel, spaceId: string, origin: string) => {
     set((state) => {
-      // Lookup maps are read imperatively (routing/voice), not render inputs —
-      // in-place mutation matches their usage everywhere else.
       state.channelToSpaceMap.set(channel.id, spaceId);
       state.channelOriginMap.set(channel.id, origin);
       if (channel.type === 'voice') state.voiceChannelIds.add(channel.id);
@@ -579,7 +536,6 @@ const createChannelActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
         channelPermissions.set(channel.id, channel.myPermissions);
       }
 
-      // channels only holds the currently-open space's list.
       if (state.currentSpaceId !== spaceId) {
         return { channelPermissions };
       }
@@ -595,8 +551,6 @@ const createChannelActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
   updateChannel: async (channelId: string, data: UpdateChannelRequest) => {
     const origin = get().channelOriginMap.get(channelId) ?? '';
     const channel = await getApiForOrigin(origin).channels.update(channelId, data);
-    // The channel_updated WS event carries the same row; applying the
-    // response too means the caller sees the stored value without waiting.
     get().upsertChannel(channel, channel.spaceId, origin);
     return channel;
   },
@@ -615,7 +569,6 @@ const createChannelActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
     const origin = space?._instanceOrigin ?? '';
     const client = getApiForOrigin(origin);
     const category = await client.categories.create(spaceId, name);
-    // Will be added via WS event, but add optimistically
     set((state) => {
       if (state.categories.some(c => c.id === category.id)) return state;
       return { categories: [...state.categories, category].sort((a, b) => a.position - b.position) };
@@ -628,8 +581,6 @@ const createChannelActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
     const space = known ? get().spaces.find(s => s.id === known.spaceId) : undefined;
     const origin = space?._instanceOrigin ?? get().categoryOriginMap.get(categoryId) ?? '';
     const category = await getApiForOrigin(origin).categories.update(categoryId, data);
-    // The category_updated WS event carries the same row; applying the
-    // response too means the caller sees the stored value without waiting.
     set((state) => ({
       categories: state.categories
         .map(c => (c.id === category.id ? category : c))
@@ -645,7 +596,6 @@ const createChannelActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
     const origin = space?._instanceOrigin ?? '';
     const client = getApiForOrigin(origin);
     await client.categories.delete(categoryId);
-    // WS events will update the store
   },
 
   updateChannelLayout: async (spaceId: string, data: { channels: Array<{ id: string; position: number; categoryId: string | null }>; categories: Array<{ id: string; position: number }> }) => {
@@ -653,14 +603,8 @@ const createChannelActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
     const origin = space?._instanceOrigin ?? '';
     const client = getApiForOrigin(origin);
     await client.channels.updateLayout(spaceId, data);
-    // WS event will broadcast the updated layout
   },
-});
 
-const createMemberActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
-  | 'addSpace' | 'removeSpace' | 'updateMemberPresence' | 'updateUserEverywhere' | 'addMember'
-  | 'removeMember'
->> = (set, get) => ({
   addSpace: (space: Space) => {
     set((state) => {
       if (state.spaces.find(s => s.id === space.id)) return state;
@@ -669,7 +613,6 @@ const createMemberActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
   },
 
   removeSpace: (spaceId: string) => {
-    // Collect channel IDs before set() so we can clean up chatStore after
     const currentState = get();
     const channelIdsToRemove = new Set<string>();
     for (const [channelId, sid] of currentState.channelToSpaceMap) {
@@ -708,32 +651,35 @@ const createMemberActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
       };
     });
 
-    // Clean up orphaned unread/read states and cached messages in chatStore
     if (channelIdsToRemove.size > 0) {
       useChatStore.getState().removeChannelStates(channelIdsToRemove);
     }
   },
 
-  updateMemberPresence: (userId: string, status: string) => {
+  updateMemberPresence: (subject: PresenceSubject, origin: string, status: string) => {
+    const key = activityKey(subject, origin);
     set((state) => {
       const typedStatus = status as 'online' | 'idle' | 'dnd' | 'offline';
-      // Mirror the status into the userViews cache so any component reading via
-      // useCanonicalUserView (e.g. the FriendItem avatar dot) re-renders with
-      // fresh status — not just spaceStore.members which only feeds space UIs.
-      // Match by user.id and user.homeUserId to catch both native rows and
-      // replicated stubs whose canonicalUserKey resolves to the canonical id.
       let nextUserViews = state.userViews;
-      for (const [key, entry] of state.userViews) {
-        const u = entry.user;
-        if (u.id === userId || u.homeUserId === userId) {
-          if (nextUserViews === state.userViews) nextUserViews = new Map(state.userViews);
-          nextUserViews.set(key, { ...entry, user: { ...u, status: typedStatus } });
-        }
+      for (const [viewKey, entry] of state.userViews) {
+        if (activityKey(entry.user, entry.deliveredBy) !== key) continue;
+        if (nextUserViews === state.userViews) nextUserViews = new Map(state.userViews);
+        nextUserViews.set(viewKey, { ...entry, user: { ...entry.user, status: typedStatus } });
       }
+
+      const spaceOrigins = new Map<string, string>();
+      const spaceOriginOf = (spaceId: string): string => {
+        let spaceOrigin = spaceOrigins.get(spaceId);
+        if (spaceOrigin === undefined) {
+          spaceOrigin = state.spaces.find(s => s.id === spaceId)?._instanceOrigin ?? '';
+          spaceOrigins.set(spaceId, spaceOrigin);
+        }
+        return spaceOrigin;
+      };
 
       return {
         members: state.members.map(m =>
-          m.userId === userId ? { ...m, user: { ...m.user, status: typedStatus } } : m
+          activityKey(m.user, spaceOriginOf(m.spaceId)) === key ? { ...m, user: { ...m.user, status: typedStatus } } : m
         ),
         userViews: nextUserViews,
       };
@@ -745,68 +691,24 @@ const createMemberActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
       members: state.members.map(m =>
         m.userId === user.id ? { ...m, user: { ...m.user, ...user } } : m
       ),
-      dmChannels: state.dmChannels.map(dm => ({
-        ...dm,
-        members: dm.members.map(m =>
-          m.id === user.id ? { ...m, ...user } : m
-        ),
-      })),
     }));
+    commitDmOperation(patchEveryCopy(get().dmConversations, (dm) =>
+      dm.members.some(m => m.id === user.id)
+        ? { ...dm, members: dm.members.map(m => (m.id === user.id ? { ...m, ...user } : m)) }
+        : dm,
+    ));
   },
 
-  addMember: (member: MemberWithUser) => {
-    set((state) => ({
-      members: [...state.members.filter(m => m.userId !== member.userId), member],
-    }));
+  addMember: (spaceId: string, member: MemberWithUser) => {
+    const change: RosterChange = { kind: 'join', member };
+    recordRosterChange(spaceId, change);
+    set((state) => ({ members: applyRosterChange(state.members, change) }));
   },
 
-  removeMember: (userId: string) => {
-    set((state) => ({
-      members: state.members.filter(m => m.userId !== userId),
-    }));
-  },
-});
-
-const createLayoutActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
-  | 'setSpaceLayout' | 'updateSpaceLayout' | 'transferOwnership' | 'findExistingDmForUser'
->> = (set, get) => ({
-  setSpaceLayout: (layout) => set({ spaceLayout: layout }),
-
-  updateSpaceLayout: async (items, folders) => {
-    const now = Date.now();
-    // Optimistic: apply the layout immediately with new timestamp
-    set({ spaceLayout: items, _layoutUpdatedAt: now });
-
-    // Push to ALL connected instances in parallel (browsing + remotes)
-    const targets: { origin: string; apiClient: BackspaceApiClient }[] = [
-      { origin: '', apiClient: api },
-    ];
-
-    // Dynamically import instanceStore to avoid circular dep
-    try {
-      const { useInstanceStore } = await import('./instanceStore');
-      const connected = useInstanceStore.getState().instances.filter(i => i.status === 'connected');
-      for (const inst of connected) {
-        targets.push({ origin: inst.origin, apiClient: inst.api });
-      }
-    } catch { /* instanceStore not available yet */ }
-
-    const results = await Promise.allSettled(
-      targets.map(t => t.apiClient.spaceLayout.update({ items, folders, updatedAt: now }))
-    );
-
-    // Use the first successful response to resolve new:* IDs
-    for (const result of results) {
-      if (result.status === 'fulfilled') {
-        const resolved = result.value;
-        set({
-          spaceLayout: resolved.items,
-          folders: resolved.folders,
-          _layoutUpdatedAt: resolved.updatedAt ?? now,
-        });
-        break;
-      }
-    }
+  removeMember: (spaceId: string, userId: string) => {
+    const change: RosterChange = { kind: 'leave', userId };
+    recordRosterChange(spaceId, change);
+    set((state) => ({ members: applyRosterChange(state.members, change) }));
   },
 
   transferOwnership: async (spaceId: string, newOwnerId: string) => {
@@ -845,19 +747,44 @@ const createLayoutActions: StateCreator<SpaceState, [], [], Pick<SpaceState,
     }
     return null;
   },
-});
 
-export const useSpaceStore = create<SpaceState>((...args) => ({
-  ...createInitialSpaceState(...args),
-  ...createDmActions(...args),
-  ...createSpaceActions(...args),
-  ...createChannelActions(...args),
-  ...createMemberActions(...args),
-  ...createLayoutActions(...args),
-  ...createRemoveInstanceSpacesSlice(...args),
-  ...createAddSpaceFromReadySlice(...args),
-  ...createPopulateFromReadySlice(...args),
+  reset: () => {
+    clearMyUserIdCache();
+    set({
+      spaces: [],
+      currentSpaceId: null,
+      lastSelectedSpaceId: null,
+      channels: [],
+      categories: [],
+      members: [],
+      roles: [],
+      folders: [],
+      spaceLayout: null,
+      dmConversations: EMPTY_DM_CONVERSATIONS,
+      dmChannels: [],
+      channelToSpaceMap: new Map(),
+      channelLastMessageIds: new Map(),
+      spacePermissions: new Map(),
+      channelPermissions: new Map(),
+      channelOriginMap: new Map(),
+      voiceChannelIds: new Set(),
+      categoryOriginMap: new Map(),
+      dmAlternatives: new Map(),
+      userViews: new Map(),
+      loadingSpaceId: null,
+      loadedSpaceIds: new Set(),
+      _layoutUpdatedAt: 0,
+    });
+  },
+
+  // Slices
+  ...createPopulateFromReadySlice(set, get, apiStore),
+  ...createAddSpaceFromReadySlice(set, get, apiStore),
+  ...createRemoveInstanceSpacesSlice(set, get, apiStore),
+  ...createSpaceLayoutSlice(set, get, apiStore),
 }));
+
+export { pushLayoutToOrigin };
 
 /**
  * Data-driven DM channel detection. Returns true if the given channelId
@@ -869,7 +796,6 @@ export function isDmChannel(channelId: string): boolean {
   if (dmChannels.length > 0) {
     return dmChannels.some(dm => dm.id === channelId);
   }
-  // Before WS ready populates dmChannels, fall back to URL path
   if (typeof window !== 'undefined') {
     return window.location.pathname.startsWith('/channels/@me/');
   }
@@ -886,18 +812,7 @@ export function getChannelOrigin(channelId: string): string {
 
 /**
  * Returns the owner's home-instance origin for a group DM, or '' for the
- * local home instance. Used to route owner-only API calls (rename, icon,
- * kick, transfer) so the federation event's sourceInstance equals the
- * channel's ownerHomeInstance — required by receiver authority checks.
- *
- * Distinct from getChannelOrigin: that function returns the channel's
- * pinned serving origin (where the client's WS connection mirrors the
- * channel), which can differ from the owner's home instance after a
- * manual transfer.
- *
- * The resolver itself lives in `utils/crossStoreResolvers.ts` so that
- * `api/client.ts` can call it without creating a value-cycle on spaceStore;
- * spaceStore registers the resolver below at module load.
+ * local home instance.
  */
 export function getOwnerInstanceForDm(channelId: string): string {
   const dm = useSpaceStore.getState().dmChannels.find(d => d.id === channelId);
@@ -908,40 +823,37 @@ setOwnerInstanceForDmResolver(getOwnerInstanceForDm);
 
 /**
  * Resolves a raw DM channel ID to its primary `dmChannels` entry ID.
- *
- * - If `rawId` is already a primary entry: returns `rawId` unchanged.
- * - If `rawId` is recorded in `dmAlternatives` as an alternate-origin local ID
- *   for a DM whose primary is present in `dmChannels`: returns the primary's ID.
- * - Otherwise: returns `null` (unknown ID — caller should no-op).
- *
- * Used by:
- *  - `dm_message_created` WS handler to route messages arriving from alternate
- *    origins to the primary entry (§3.11 of the failover spec).
- *  - Future DM WS handlers that need to dedup alternate-origin deliveries.
  */
 export function resolveDmChannelId(rawId: string): string | null {
   const { dmChannels, dmAlternatives } = useSpaceStore.getState();
-  if (dmChannels.some(dm => dm.id === rawId)) return rawId;
+  return locateDmChannel(dmChannels, dmAlternatives, rawId)?.dm.id ?? null;
+}
 
-  for (const [federatedId, byOrigin] of dmAlternatives) {
-    for (const localId of byOrigin.values()) {
-      if (localId !== rawId) continue;
-      const primary = dmChannels.find(dm => dm.federatedId === federatedId);
-      return primary ? primary.id : null;
-    }
-  }
-  return null;
+/**
+ * The channel id `origin` holds for the DM conversation of `channelId`, or
+ * null when that instance holds no copy of it.
+ */
+export function dmCopyIdOnOrigin(channelId: string, origin: string): string | null {
+  return copyIdOnOrigin(useSpaceStore.getState().dmConversations, channelId, origin);
+}
+
+/**
+ * The copy `origin` holds of the DM conversation of `channelId` (its id and
+ * its members as that instance knows them), or null when it holds none.
+ */
+export function dmCopyOnOrigin(channelId: string, origin: string): DmChannel | null {
+  return copyOnOrigin(useSpaceStore.getState().dmConversations, channelId, origin);
 }
 
 // ─── Cross-store resolvers (federation) ───────────────────────────────────────
-// The resolver/setter pairs and the WS-populated user-ID cache live in
-// `utils/crossStoreResolvers.ts` — a neutral module with no store imports —
-// to break a TDZ cycle: instanceStore registers these at top-level load, but
-// a spaceStore-rooted import chain leaves spaceStore mid-load when that code
-// runs. Re-exported here for backward compatibility with existing import
-// sites. See the header comment in crossStoreResolvers.ts for details.
 export {
-  getApiForOrigin, getTokenForOrigin, setApiForOriginResolver, setMyUserIdForOrigin, setOriginFromHostnameResolver, setTokenForOriginResolver, setUserIdForOriginResolver
+  setApiForOriginResolver,
+  getApiForOrigin,
+  setOriginFromHostnameResolver,
+  setUserIdForOriginResolver,
+  setMyUserIdForOrigin,
+  setTokenForOriginResolver,
+  getTokenForOrigin,
 } from '../utils/crossStoreResolvers';
 
 /**
@@ -972,9 +884,7 @@ export function getLayoutHomeOrigin(): string {
  */
 export function getMyUserIdForOrigin(origin: string): string | undefined {
   if (!origin) return useAuthStore.getState().user?.id;
-  // Direct cache (populated from WS ready) takes priority — always correct
   const cached = getCachedUserIdForOrigin(origin);
   if (cached) return cached;
-  // Fallback to instanceStore resolver (may have placeholder user during connection)
   return resolveUserIdFromInstances(origin);
 }

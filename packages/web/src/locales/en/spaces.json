@@ -352,7 +352,9 @@
       },
       "updateRolesFailed": "Failed to update roles",
       "kickFailed": "Failed to kick member",
-      "banFailed": "Failed to ban member"
+      "banFailed": "Failed to ban member",
+      "rolesAboveYou": "Roles at or above your highest role are locked.",
+      "rolesUnheld": "Roles with permissions you do not have cannot be given."
     }
   },
   "bans": {
@@ -372,11 +374,21 @@
     "create": "Create Role",
     "creating": "Creating...",
     "listHeading": "Roles",
-    "description": "Roles define what permissions members have. Higher roles take priority.",
+    "description": "Roles define what permissions members have.",
+    "hierarchyHint": "Roles higher in the list rank above the ones below them.",
     "defaultName": "new role",
     "copyName": "Copy of {{name}}",
     "backToList": "Back to roles",
     "created": "Role created. Customize it below.",
+    "aboveYou": "This role ranks at or above your highest role. You can view it but not change it.",
+    "reorder": {
+      "handle": "Move {{name}}",
+      "handleHint": "Drag, or use the up and down arrow keys",
+      "up": "Move {{name}} up",
+      "down": "Move {{name}} down",
+      "locked": "{{name}} ranks at or above your highest role",
+      "moved": "{{name}} moved to position {{position}} of {{total}}"
+    },
     "identity": "Identity",
     "nameLabel": "Role Name",
     "colorLabel": "Role Color",
@@ -396,10 +408,14 @@
     "createFailed": "Failed to create role",
     "saveFailed": "Failed to save role",
     "deleteFailed": "Failed to delete role",
-    "copyFailed": "Failed to copy role"
+    "copyFailed": "Failed to copy role",
+    "unheldLocked": "You can only switch permissions you have yourself. The others are locked.",
+    "unheldPermission": "You do not have this permission",
+    "copyUnheld": "This role has permissions you do not have, so you cannot copy it.",
+    "copyDeleteUnheld": "This role has permissions you do not have, so you cannot copy or delete it."
   },
   "memberRoles": {
-    "title": "Roles — {{name}}",
+    "title": "Edit roles for {{name}}",
     "viewProfile": "View Profile",
     "affectsAll": "Permission changes apply to every member with this role.",
     "selectRole": "Select a role to edit its permissions.",
@@ -449,7 +465,14 @@
     "loadFailed": "Failed to load overrides",
     "saveFailed": "Failed to save overrides",
     "partialFailure_one": "{{count}} override failed to save",
-    "partialFailure_other": "{{count}} overrides failed to save"
+    "partialFailure_other": "{{count}} overrides failed to save",
+    "unheldLocked": "You can only switch permissions you have yourself. The others are locked.",
+    "unheldPermission": "You do not have this permission",
+    "removeUnheld": "This override sets permissions you do not have. Only someone who has them can remove it.",
+    "removeUnheldShort": "Only someone with these permissions can remove it",
+    "aboveYouRole": "This role ranks at or above your highest role. You can view its override but not change or remove it.",
+    "aboveYouMember": "This member ranks at or above you. You can view their override but not change or remove it.",
+    "aboveYouShort": "Ranks at or above your highest role"
   },
   "sidebar": {
     "dmUnreadMessages": "{{quantity}} unread direct messages",

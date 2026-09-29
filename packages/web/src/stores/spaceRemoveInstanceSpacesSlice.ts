@@ -1,7 +1,8 @@
 import { useChatStore } from './chatStore';
 
 import type { StateCreator } from 'zustand';
-import { type UserViewEntry } from './spaceStore';
+import { dropOrigin } from './dmConversations';
+import { commitDmOperation, dmPinContext, type UserViewEntry } from './spaceStore';
 import type { SpaceState } from './spaceStoreTypes';
 
 export const createRemoveInstanceSpacesSlice: StateCreator<SpaceState, [], [], Pick<SpaceState, 'removeInstanceSpaces'>> = (set, get) => ({
@@ -35,16 +36,8 @@ export const createRemoveInstanceSpacesSlice: StateCreator<SpaceState, [], [], P
         }
       }
 
-      // Prune dmAlternatives: drop this origin from every inner map.
-      const dmAlternatives = new Map<string, Map<string, string>>();
-      for (const [fid, byOrigin] of state.dmAlternatives) {
-        const nextInner = new Map(byOrigin);
-        nextInner.delete(origin);
-        if (nextInner.size > 0) dmAlternatives.set(fid, nextInner);
-      }
-
       // Prune userViews: drop entries delivered by this origin. Symmetrical
-      // with dmAlternatives — full removal evicts; transient disconnect leaves
+      // with the DM copies — full removal evicts; transient disconnect leaves
       // the last-known view in place. If the surviving cache no longer holds
       // a home view for some user, render falls back to whatever the carrying
       // payload supplies (no crash; just degrades to stub view).
@@ -69,7 +62,6 @@ export const createRemoveInstanceSpacesSlice: StateCreator<SpaceState, [], [], P
         channelPermissions,
         channelOriginMap,
         spacePermissions,
-        dmAlternatives,
         userViews,
         currentSpaceId: remainingSpaces.find(s => s.id === state.currentSpaceId)
           ? state.currentSpaceId
@@ -80,6 +72,11 @@ export const createRemoveInstanceSpacesSlice: StateCreator<SpaceState, [], [], P
         loadedSpaceIds,
       };
     });
+
+    // This origin's DM copies go. A row pinned to one of them moves to
+    // another copy of its conversation, and its chat state moves with it,
+    // before the states of the removed ids are cleaned up below.
+    commitDmOperation(dropOrigin(get().dmConversations, origin, dmPinContext()));
 
     // Clean up orphaned unread/read states and cached messages in chatStore
     if (channelIdsToRemove.size > 0) {

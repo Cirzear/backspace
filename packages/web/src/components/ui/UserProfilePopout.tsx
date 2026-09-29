@@ -8,6 +8,7 @@ import { Username } from '../ui/Username';
 import { ProfileBio } from './ProfileBio';
 import { useSpaceStore, getApiForOrigin, resolveUserOrigin } from '../../stores/spaceStore';
 import { api } from '../../api/client';
+import { describeError } from '../../i18n/errors';
 import { useUIStore, type ProfileMemberContext } from '../../stores/uiStore';
 import { getAvatarGradient, adjustColor, mutedGradient } from '../../utils/gradients';
 import { parseFederatedUsername } from '../../utils/identity';
@@ -17,6 +18,7 @@ import { replaceEmojiShortcodes } from '../../utils/emojiShortcodes';
 import { computeFloatingPosition, type AnchorRect, type Placement } from '../../hooks/useFloatingPosition';
 import { useProfileMemberRoles } from '../../hooks/useProfileMember';
 import { useShownStatus } from '../../hooks/useShownStatus';
+import { viewerCanEditMemberRoles } from '../../utils/roleHierarchy';
 import { ProfileRoles } from './ProfileRoles';
 import { ProfileSpaceNickname } from './ProfileSpaceNickname';
 
@@ -37,8 +39,9 @@ export function UserProfilePopout({ user: propUser, onClose, anchor, placement =
   const { t } = useTranslation(['social', 'common']);
   const navigate = useNavigate();
   const f = useFormatters();
-  const addDmChannel = useSpaceStore((s) => s.addDmChannel);
+  const upsertDmCopy = useSpaceStore((s) => s.upsertDmCopy);
   const openModal = useUIStore((s) => s.openModal);
+  const addToast = useUIStore((s) => s.addToast);
   // Resolve to the best-known view of this user from the userViews cache.
   // The prop frequently arrives as a federated stub (when the carrying DM
   // came from a sibling instance that won the populateFromReady dedup race);
@@ -53,6 +56,17 @@ export function UserProfilePopout({ user: propUser, onClose, anchor, placement =
   const origin = resolveUserOrigin(user);
   const userApi = getApiForOrigin(origin);
   const roles = useProfileMemberRoles(member);
+  const isMobile = useUIStore((s) => s.isMobile);
+  // Edit Roles opens the member role editor, which is desktop-only. It is
+  // offered by the rule the editor gates with (permissions.md, "Role
+  // hierarchy"), read from the loaded space the card was opened in.
+  const canEditRoles = useSpaceStore((s) => {
+    if (!member || s.currentSpaceId !== member.spaceId) return false;
+    const space = s.spaces.find((sp) => sp.id === member.spaceId);
+    const target = s.members.find((m) => m.userId === member.userId);
+    if (!space || !target) return false;
+    return viewerCanEditMemberRoles(space, s.members, s.roles, s.spacePermissions.get(space.id), target);
+  }) && !isMobile;
 
   const [mutualCounts, setMutualCounts] = useState<{ friends: number; spaces: number } | null>(null);
 
@@ -109,18 +123,25 @@ export function UserProfilePopout({ user: propUser, onClose, anchor, placement =
         homeUserId: user.homeUserId ?? undefined,
         homeInstance: user.homeInstance ?? undefined,
       });
-      addDmChannel(channel);
+      // The answer joins its conversation; open the conversation's row.
+      const rowId = upsertDmCopy('', channel, 'stated');
       useUIStore.getState().setShowDms(true);
       onClose();
-      navigate(`/channels/@me/${channel.id}`);
+      navigate(`/channels/@me/${rowId}`);
     } catch (err) {
-      console.error('Failed to create DM channel:', err);
+      addToast(t('social:sendMessage.failed', { reason: describeError(err) }), 'warning');
     }
   };
 
   const handleViewFullProfile = () => {
     onClose();
     openModal('userProfile', { userId: user.id, user, origin, member });
+  };
+
+  const handleEditRoles = () => {
+    if (!member) return;
+    onClose();
+    openModal('memberRoles', { spaceId: member.spaceId, userId: member.userId });
   };
 
   const handleAvatarClick = (event: React.MouseEvent) => {
@@ -181,10 +202,7 @@ export function UserProfilePopout({ user: propUser, onClose, anchor, placement =
         {/* Name & info */}
         <div>
           <ProfileSpaceNickname member={member} />
-          <Username
-            username={user.displayName ?? baseName}
-            className="text-[16px] font-semibold leading-tight"
-          />
+          <span className="text-[16px] font-semibold leading-tight">{displayName}</span>
           <div className="text-[13px] text-txt-tertiary">
             <Username username={user.username} showAt className="text-[13px] text-txt-tertiary" />
           </div>
@@ -249,6 +267,14 @@ export function UserProfilePopout({ user: propUser, onClose, anchor, placement =
         >
           {t('social:profile.sendMessage')}
         </button>
+        {canEditRoles && (
+          <button
+            onClick={handleEditRoles}
+            className="w-full mt-1.5 py-2 rounded-lg text-[13px] font-medium text-txt-secondary hover:text-txt-primary bg-transparent hover:bg-white/[0.04] transition-colors"
+          >
+            {t('social:profile.editRoles')}
+          </button>
+        )}
         <button
           onClick={handleViewFullProfile}
           className="w-full mt-1.5 py-2 rounded-lg text-[13px] font-medium text-txt-tertiary hover:text-txt-secondary bg-transparent hover:bg-white/[0.04] transition-colors"

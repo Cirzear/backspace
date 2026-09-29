@@ -23,6 +23,9 @@
     "message": "Message",
     "remove": "Remove Friend"
   },
+  "sendMessage": {
+    "failed": "Could not open the conversation: {{reason}}"
+  },
   "request": {
     "incoming": "Incoming Friend Request",
     "outgoing": "Outgoing Friend Request",
@@ -67,6 +70,7 @@
     "roles": "Roles",
     "memberSince": "Member Since",
     "sendMessage": "Send Message",
+    "editRoles": "Edit Roles",
     "viewFull": "View Full Profile",
     "addFriend": "Add Friend"
   },

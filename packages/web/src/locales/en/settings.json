@@ -98,8 +98,8 @@
     "pip": {
       "sectionTitle": "Floating Window",
       "showOnSwitch": {
-        "label": "Show floating window when switching channels",
-        "description": "While you are in a voice channel or call, a floating window keeps it visible when you open another channel. Turn off to hide it."
+        "label": "Show floating window during calls",
+        "description": "While you are in a voice channel or call and look at something else, a small window keeps the call in view."
       }
     },
     "processing": {

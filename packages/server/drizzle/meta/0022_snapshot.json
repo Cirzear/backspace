@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "8ddfea8d-dfbc-4762-bb2a-3c8569a5372c",
-  "prevId": "c91e7200-22bf-4629-af58-8e481eac2011",
+  "id": "c91e7200-22bf-4629-af58-8e481eac2011",
+  "prevId": "6aedf949-0ab0-4475-be7a-69084a9c3567",
   "tables": {
     "attachments": {
       "name": "attachments",
@@ -3605,13 +3605,6 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
-        },
-        "owner_title": {
-          "name": "owner_title",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
         }
       },
       "indexes": {
@@ -4071,6 +4064,13 @@
             "username"
           ],
           "isUnique": true
+        },
+        "idx_users_home_user_id": {
+          "name": "idx_users_home_user_id",
+          "columns": [
+            "home_user_id"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {},

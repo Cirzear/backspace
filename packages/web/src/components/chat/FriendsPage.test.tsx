@@ -224,7 +224,39 @@ describe('FriendsPage', () => {
       await user.click(screen.getByText('Send Request'));
 
       await waitFor(() => {
-        expect(mockSendFriendRequest).toHaveBeenCalledWith('newbuddy@remote.example.com');
+        expect(mockSendFriendRequest).toHaveBeenCalledWith({ username: 'newbuddy@remote.example.com' });
+      });
+    });
+
+    it('sends the identity of a user found on a remote instance, with the handle for older servers', async () => {
+      const user = userEvent.setup();
+      const mockSendFriendRequest = vi.fn().mockResolvedValue('req-9');
+      // A native of orbit.test as the remote's search returns it after
+      // normalizeUserAssets: qualified username and home identity filled in.
+      const mockSearchUsers = vi.fn().mockResolvedValue([{
+        id: 'alice-id', username: 'alice@orbit.test', displayName: 'Alice', avatar: null, banner: null,
+        accentColor: null, avatarColor: null, bio: null, status: 'online', customStatus: null,
+        isAdmin: false, createdAt: 0, homeUserId: 'alice-id', homeInstance: 'orbit.test',
+        replicatedInstances: [], _instanceOrigin: 'https://orbit.test',
+      }]);
+      useSocialStore.setState({
+        friends: [],
+        requests: [],
+        sendFriendRequest: mockSendFriendRequest,
+        searchUsers: mockSearchUsers,
+      });
+
+      renderFriendsPage();
+      await user.click(screen.getByText('Add Friend'));
+      await user.type(screen.getByPlaceholderText(/Search or add by username/), 'alice');
+      await user.click(await screen.findByText('Send Friend Request'));
+
+      await waitFor(() => {
+        expect(mockSendFriendRequest).toHaveBeenCalledWith({
+          username: 'alice@orbit.test',
+          homeUserId: 'alice-id',
+          homeInstance: 'orbit.test',
+        });
       });
     });
 
@@ -311,14 +343,13 @@ describe('FriendsPage', () => {
     it('calls api.dm.create and navigates when clicking the Message button', async () => {
       const user = userEvent.setup();
       const friend = makeFriend({ id: 'friend-42', username: 'dmpal', displayName: 'DM Pal' });
-      const mockAddDmChannel = vi.fn();
 
       useSocialStore.setState({
         friends: [friend],
         requests: [],
       });
+      useSpaceStore.getState().reset();
       useSpaceStore.setState({
-        addDmChannel: mockAddDmChannel,
         findExistingDmForUser: () => null,
       });
 
@@ -344,12 +375,65 @@ describe('FriendsPage', () => {
       });
 
       await waitFor(() => {
-        expect(mockAddDmChannel).toHaveBeenCalledWith(expect.objectContaining({ id: 'dm-channel-99' }));
-      });
-
-      await waitFor(() => {
         expect(mockNavigate).toHaveBeenCalledWith('/channels/@me/dm-channel-99');
       });
+      expect(useSpaceStore.getState().dmChannels.map(d => d.id)).toEqual(['dm-channel-99']);
+    });
+
+    it('a DM the client already shows from another instance lands in its one row', async () => {
+      // REMOTE's copy of the conversation is listed; findExistingDmForUser
+      // (a shortcut, not identity) does not recognise it, so the request goes
+      // out. The conversation key in the answer makes it the same row.
+      const key = '0'.repeat(31) + '1';
+      const user = userEvent.setup();
+      const friend = makeFriend({ id: 'friend-42', username: 'dmpal', displayName: 'DM Pal' });
+      useSocialStore.setState({ friends: [friend], requests: [] });
+      useSpaceStore.getState().reset();
+      useSpaceStore.setState({ findExistingDmForUser: () => null });
+      useSpaceStore.getState().populateFromReady('https://remote.example', [], [], [
+        { id: 'dm-remote-copy', federatedId: key, createdAt: 1, members: [] },
+      ]);
+      const { api } = await import('../../api/client');
+      (api.dm.create as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'dm-home-copy', federatedId: key, createdAt: 2, members: [],
+      });
+
+      renderFriendsPage();
+      await user.click(screen.getByText('All'));
+      await user.click(screen.getByTitle('Message'));
+
+      await waitFor(() => {
+        expect(mockNavigate).toHaveBeenCalledWith('/channels/@me/dm-home-copy');
+      });
+      expect(useSpaceStore.getState().dmChannels.map(d => d.id)).toEqual(['dm-home-copy']);
+    });
+  });
+
+  describe('Friend names', () => {
+    it('names a friend with an empty display name by their username', async () => {
+      const user = userEvent.setup();
+      useSocialStore.setState({ friends: [makeFriend({ username: 'dmpal@orbit.test', displayName: '' })], requests: [] });
+      renderFriendsPage();
+      await user.click(screen.getByText('All'));
+      expect(screen.getByText('dmpal')).toBeInTheDocument();
+    });
+  });
+
+  describe('Message button failure', () => {
+    it('tells the user why opening the DM failed', async () => {
+      const user = userEvent.setup();
+      useSocialStore.setState({ friends: [makeFriend({ id: 'friend-7' })], requests: [] });
+      const addToast = vi.fn();
+      useUIStore.setState({ addToast });
+      const { api, HttpError } = await import('../../api/client');
+      (api.dm.create as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new HttpError(404, 'User not found', null, 'user_not_found'));
+
+      renderFriendsPage();
+      await user.click(screen.getByText('All'));
+      await user.click(screen.getByTitle('Message'));
+
+      await waitFor(() => expect(addToast).toHaveBeenCalledWith('Could not open the conversation: No user with that name was found.', 'warning'));
+      expect(mockNavigate).not.toHaveBeenCalled();
     });
   });
 

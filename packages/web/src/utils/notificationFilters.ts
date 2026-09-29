@@ -1,5 +1,6 @@
 import type { UserStatus, NotificationSetting } from '@backspace/shared';
 import { parseMentions } from '@backspace/shared/src/mentions';
+import { contentMentionsAny } from './mentionTokens';
 
 /**
  * The rule that decides whether a freshly-arrived chat message alerts the user.
@@ -33,8 +34,9 @@ export function isMessageAlert(input: MessageAlertInput): boolean {
   const level = channel?.level ?? space?.level ?? (input.allChannels ? 'all' : 'mentions');
   if (level === 'nothing') return false;
   if (level === 'all') return true;
+  if (!input.content) return false;
+  if (contentMentionsAny(input.content, input.myIds)) return true;
   const mentions = parseMentions(input.content);
-  if ([...mentions.userIds].some(id => input.myIds.has(id))) return true;
   if (mentions.everyone && !space?.suppressEveryone) return true;
   return !space?.suppressRoles && [...mentions.roleIds].some(id => input.roleIds?.has(id));
 }

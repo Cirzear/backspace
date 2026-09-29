@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { useVoiceStore } from '../../../stores/voiceStore';
+import { useUIStore } from '../../../stores/uiStore';
 import { useFormatters } from '../../../i18n/formatters';
 import { Toggle } from '../../ui/Toggle';
 import { VideoSection } from './VideoSection';
@@ -21,6 +22,10 @@ export function VoicePanel() {
   const setMessageSoundAllChannels = useVoiceStore((s) => s.setMessageSoundAllChannels);
   const pipEnabled = useVoiceStore((s) => s.pipEnabled);
   const setPipEnabled = useVoiceStore((s) => s.setPipEnabled);
+  // The floating window is mounted only by the desktop layout (AppLayout), and
+  // the mobile Voice settings screen renders this same panel, so the setting is
+  // offered only where it has an effect.
+  const isMobile = useUIStore((s) => s.isMobile);
 
   return (
     <div className="space-y-5">
@@ -52,7 +57,7 @@ export function VoicePanel() {
             />
           </div>
           <div className="flex items-center justify-between py-2">
-            <div>
+            <div className="flex-1 mr-4">
               <div className="text-sm text-txt-primary">{t('settings:voice.volume.messageSound.label')}</div>
               <div className="text-xs text-txt-tertiary">
                 {t('settings:voice.volume.messageSound.description')}
@@ -63,20 +68,26 @@ export function VoicePanel() {
         </div>
       </div>
 
-      <div>
-        <div className="text-[11px] font-semibold text-txt-tertiary uppercase tracking-wider mb-1.5">
-          {t('settings:voice.pip.sectionTitle')}
-        </div>
-        <div className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3.5">
-          <div className="flex items-center justify-between py-2">
-            <div>
-              <div className="text-sm text-txt-primary">{t('settings:voice.pip.showOnSwitch.label')}</div>
-              <div className="text-xs text-txt-tertiary">{t('settings:voice.pip.showOnSwitch.description')}</div>
+      {!isMobile && (
+        <div>
+          <div className="text-[11px] font-semibold text-txt-tertiary uppercase tracking-wider mb-1.5">
+            {t('settings:voice.pip.sectionTitle')}
+          </div>
+          <div className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3.5">
+            <div className="flex items-center justify-between py-2">
+              <div className="flex-1 mr-4">
+                <div className="text-sm text-txt-primary">{t('settings:voice.pip.showOnSwitch.label')}</div>
+                <div className="text-xs text-txt-tertiary">{t('settings:voice.pip.showOnSwitch.description')}</div>
+              </div>
+              <Toggle
+                enabled={pipEnabled}
+                onChange={setPipEnabled}
+                ariaLabel={t('settings:voice.pip.showOnSwitch.label')}
+              />
             </div>
-            <Toggle enabled={pipEnabled} onChange={setPipEnabled} />
           </div>
         </div>
-      </div>
+      )}
 
       <VideoSection />
 
@@ -86,7 +97,7 @@ export function VoicePanel() {
         </div>
         <div className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3.5">
           <div className="flex items-center justify-between py-2">
-            <div>
+            <div className="flex-1 mr-4">
               <div className="text-sm text-txt-primary">{t('settings:voice.processing.noiseSuppression.label')}</div>
               <div className="text-xs text-txt-tertiary">{t('settings:voice.processing.noiseSuppression.description')}</div>
             </div>
@@ -94,7 +105,7 @@ export function VoicePanel() {
           </div>
 
           <div className="flex items-center justify-between py-2">
-            <div>
+            <div className="flex-1 mr-4">
               <div className="text-sm text-txt-primary">{t('settings:voice.processing.echoCancellation.label')}</div>
               <div className="text-xs text-txt-tertiary">{t('settings:voice.processing.echoCancellation.description')}</div>
             </div>
@@ -102,7 +113,7 @@ export function VoicePanel() {
           </div>
 
           <div className="flex items-center justify-between py-2">
-            <div>
+            <div className="flex-1 mr-4">
               <div className="text-sm text-txt-primary">{t('settings:voice.processing.autoGain.label')}</div>
               <div className="text-xs text-txt-tertiary">{t('settings:voice.processing.autoGain.description')}</div>
             </div>

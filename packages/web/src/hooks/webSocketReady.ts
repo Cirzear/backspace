@@ -11,10 +11,10 @@ import { getChannelOrigin, setMyUserIdForOrigin, useSpaceStore } from '../stores
 import { useUIStore } from '../stores/uiStore';
 import { useVoiceStore } from '../stores/voiceStore';
 import { normalizeUserAssets, resolveAssetUrl } from '../utils/assetUrls';
-import { repinDmsToHomeCopies } from '../utils/dmOriginFailover';
 import { registerSelfId } from '../utils/identity';
 import { ownStatusReport, statusToAssertOnRemote } from '../utils/selfStatus';
 import { broadcastVoiceStatus } from '../utils/voice';
+import { readyActivityEntries, readyRowIndex } from '../utils/presenceSubject';
 import { getActiveRoom } from './useLiveKit';
 import { wsSend } from './useWebSocket';
 import { activePeerOrigins, awaitingApprovalPeerOrigins, rejectedPeerOrigins } from './webSocketFederationEvents';
@@ -79,8 +79,6 @@ function populateReadySpaces(origin: string, event: ReadyEvent): void {
   const isHome = origin === '';
   const { populateFromReady } = useSpaceStore.getState();
   populateFromReady(origin, event.spaces, event.folders, event.dmChannels, event.spaceLayout, event.layoutUpdatedAt);
-  // A conversation first listed from a sibling moves to its home copy.
-  repinDmsToHomeCopies();
 
   // Cache authoritative identity for this origin (federation-safe)
   if (!isHome) {
@@ -205,9 +203,12 @@ function hydrateReadyVoicePresence(origin: string, event: ReadyEvent): void {
 
 function hydrateReadyActivities(origin: string, event: ReadyEvent): void {
   const isHome = origin === '';
-  // Initialize activity data from ready payload
+  // Activity data from the ready payload: this origin's full snapshot,
+  // replacing whatever it reported before the reconnect.
+  const olderServerRows = readyRowIndex(event);
+  useActivityStore.getState().setOriginRows(origin, olderServerRows);
   if (event.userActivities) {
-    useActivityStore.getState().initActivities(event.userActivities);
+    useActivityStore.getState().initActivities(readyActivityEntries(event), origin, olderServerRows);
   }
   if (event.user.showActivity !== undefined) {
     useActivityStore.setState({ showActivity: event.user.showActivity });

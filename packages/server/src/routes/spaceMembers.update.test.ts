@@ -123,7 +123,7 @@ describe('space member nickname and roles', () => {
   });
 
   it('changes assignments, not role definitions, and refreshes permissions', async () => {
-    currentUserId = 'moderator';
+    currentUserId = 'owner';
     const response = await update({ roleIds: ['manager-role'] });
     expect(response.statusCode).toBe(200);
     expect(response.json().roles.map((r: { id: string }) => r.id)).toEqual(['manager-role']);

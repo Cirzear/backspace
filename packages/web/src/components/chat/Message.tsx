@@ -22,12 +22,15 @@ import { useUIStore } from '../../stores/uiStore';
 import { AttachmentRenderer, attUrlOf } from './AttachmentRenderer';
 import { AttachmentProgress } from './AttachmentProgress';
 import { EmbedRenderer } from './EmbedRenderer';
-import { Username } from '../ui/Username';
+import { FederationGlobeIcon } from '../ui/Username';
+import { Tooltip } from '../ui/Tooltip';
 import { EmojiPicker } from './EmojiPicker';
 import { hasPermissionBit, PermissionBits } from '../../utils/permissions';
 import { isDeletedPartnerDm } from '../../utils/dmFormatters';
-import { isSelf, resolveDisplayIdentity } from '../../utils/identity';
+import { isFederationGlobeApplicable, isSelf, resolveDisplayIdentity, userDisplayName } from '../../utils/identity';
 import { useCanonicalUserView } from '../../utils/userViewLookup';
+import { useSelfIdInChannel } from '../../utils/channelUser';
+import { contentMentionsAny } from '../../utils/mentionTokens';
 import {
   isPendingMessage,
   usePendingMessageStore,
@@ -72,6 +75,30 @@ function PendingAttachmentTile({ transferId }: PendingAttachmentTileProps) {
         size="tile"
       />
     </div>
+  );
+}
+
+/**
+ * A person's name in a message row (author, reply preview): the name as
+ * plain text, followed by the federation globe exactly when the person is
+ * from another instance (`isFederationGlobeApplicable`), with the full
+ * username as its tooltip. The same rule as the DM list and header.
+ */
+function PersonName({ name, person, className, style }: {
+  name: string;
+  person: Pick<User, 'username'>;
+  className: string;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <span className={`inline-flex items-center gap-0.5 ${className}`} style={style}>
+      {name}
+      {isFederationGlobeApplicable(person) && (
+        <Tooltip content={person.username} position="top">
+          <FederationGlobeIcon />
+        </Tooltip>
+      )}
+    </span>
   );
 }
 
@@ -178,6 +205,9 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     ? message.channelId || message.dmChannelId || ''
     : message.channelId || (message as MessageWithUser & { dmChannelId?: string }).dmChannelId || '';
   const isAuthor = isSelf(message.user, currentUser);
+  // The channel whose origin issued this message's ids; mentions resolve there.
+  const mentionChannelId = channelKey || null;
+  const selfIdHere = useSelfIdInChannel(mentionChannelId);
   const startEditing = () => {
     setEditContent(message.content ?? '');
     setEditingMessage(message.id);
@@ -377,7 +407,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
   const displayIdentity = (!isSelf(_resolvedIdentity, currentUser) && _rawMsgUser)
     ? _canonicalMsgUser
     : _resolvedIdentity;
-  const displayName = displayIdentity.displayName ?? displayIdentity.username;
+  const displayName = userDisplayName(displayIdentity);
 
   const spaces = useSpaceStore((s) => s.spaces);
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId);
@@ -432,8 +462,10 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
 
   const replyRoleColor = (msg: { userId: string }) => getMemberDisplayColor(msg.userId);
 
-  // Self-mention highlighting
-  const isMentioned = currentUser && message.content?.includes('<@' + currentUser.id + '>');
+  // Self-mention highlighting. A token carries an id on the channel's origin,
+  // so "me" is my id there, not my home id (#332). Tokens inside code are not
+  // mentions (the shared scan in utils/mentionTokens.ts).
+  const isMentioned = !!selfIdHere && !!message.content && contentMentionsAny(message.content, new Set([selfIdHere]));
 
   const content = (
     <div
@@ -485,17 +517,18 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
           const replyIdentity = (!isSelf(_rawReply, currentUser) && _rawReplyUser)
             ? _canonicalReplyUser
             : _rawReply;
-          const replyDisplayName = replyIdentity.displayName ?? replyIdentity.username;
+          const replyDisplayName = userDisplayName(replyIdentity);
           const preview = (
             <>
               <Avatar src={replyIdentity.avatar} name={replyDisplayName} size={16} user={replyIdentity} />
-              <Username
-                username={replyDisplayName}
+              <PersonName
+                name={replyDisplayName}
+                person={replyIdentity}
                 className="text-[14px] font-bold text-txt-primary"
                 style={replyRoleColor(replyTo)}
               />
               <span className="text-[14px] text-txt-message truncate max-w-[400px] group-hover/reply:text-txt-primary transition-colors">
-                {replyTo.content ? <InlineMessageText content={replyTo.content} /> : ''}
+                {replyTo.content ? <InlineMessageText content={replyTo.content} channelId={mentionChannelId} /> : ''}
               </span>
             </>
           );
@@ -518,8 +551,9 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
         {(isFirstInGroup || message.replyTo) && (
           <div className="flex items-baseline gap-2 mb-0.5">
             <span onClick={handleUsernameClick} onContextMenu={handleAuthorMenu}>
-              <Username
-                username={displayName}
+              <PersonName
+                name={displayName}
+                person={displayIdentity}
                 className="font-semibold cursor-pointer hover:underline text-[15px] leading-tight"
                 style={roleColor}
               />
@@ -591,7 +625,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
               <>
                 {message.content && (
                   <div className="text-txt-message text-[15px] leading-[1.5] break-words whitespace-pre-wrap selection:bg-accent-primary/30">
-                    <MarkdownRenderer content={message.content} />
+                    <MarkdownRenderer content={message.content} channelId={mentionChannelId} />
                     {message.editedAt && (
                       <span className="text-[10px] text-txt-tertiary ml-1 select-none font-medium">{t('chat:message.edited')}</span>
                     )}

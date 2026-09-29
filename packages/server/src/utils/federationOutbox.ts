@@ -2,11 +2,11 @@ import { getDb } from '../db/index.js';
 import * as schema from '../db/schema.js';
 import { eq, and, inArray } from 'drizzle-orm';
 import { generateSnowflake } from './snowflake.js';
-import crypto from 'node:crypto';
 import type { FederationRelayEvent, FederationRelayParticipant, FederationRelayAttachment, DmMessageWithUser, FederationRelayRequest, DmCallUndeliverableReason, FederationMessageRef, FederationMessageTarget } from '@backspace/shared';
 import { getOurOrigin, buildFederationHeaders } from './federationAuth.js';
 import { extractDomain, relayActorOfUser } from '../routes/federation.js';
 import { racePeering, ensurePeered, createAutoPlaceholderPeer } from './federationPeering.js';
+import { relayMentionsOf } from './federationMentions.js';
 import { federationFetch } from './federationFetch.js';
 
 // ─── Settings Cache ──────────────────────────────────────────────────────────
@@ -337,24 +337,6 @@ export function queueOutboxEvent(
 }
 
 /**
- * Compute a federated ID for a DM channel.
- *
- * For 1-on-1 DMs: deterministic SHA-256 hash of 2 sorted home user IDs (backward compatible).
- * For group DMs: call with no arguments to generate a new UUID.
- */
-export function computeFederatedId(homeUserIdA: string, homeUserIdB: string): string;
-export function computeFederatedId(): string;
-export function computeFederatedId(homeUserIdA?: string, homeUserIdB?: string): string {
-  if (homeUserIdA && homeUserIdB) {
-    // 1-on-1: deterministic pair hash (backward compatible with canonicalDmPairId)
-    const sorted = [homeUserIdA, homeUserIdB].sort();
-    return crypto.createHash('sha256').update(sorted.join(':')).digest('hex').slice(0, 32);
-  }
-  // Group: origin-assigned UUID
-  return crypto.randomUUID();
-}
-
-/**
  * Look up all members of a DM channel and return their federated identities.
  * Used to include participants in relay events so the receiving instance can
  * resolve both parties without relying on the friends list.
@@ -645,15 +627,18 @@ export function dmReplyRefForRelay(
 }
 
 /**
- * Build the relay payload object for a DM message.
- * Used internally by queueDmRelay; the sync endpoint builds the same shape.
+ * Build the message part of a relayed DM message event, without attachments.
+ * The live relay (`queueDmRelay`) and the sync endpoint's replay both use it,
+ * so a replayed message reaches a peer in the same shape as a live one.
  * `replyTo` comes from `dmReplyRefForRelay`: `replyToId` is this instance's
- * local id and only `replyTo` means anything to the receiver.
+ * local id and only `replyTo` means anything to the receiver. `mentions`
+ * (`relayMentionsOf`) names the users the content's `<@id>` tokens stand for,
+ * for the same reason.
  */
 export function buildRelayPayload(
   message: {
     id: string;
-    type?: 'user' | 'system' | null;
+    type?: string | null;
     content: string | null;
     replyToId?: string | null;
     editedAt?: number | null;
@@ -666,6 +651,7 @@ export function buildRelayPayload(
   },
   replyTo: FederationMessageRef | null = null,
 ): NonNullable<FederationRelayEvent['message']> {
+  const mentions = relayMentionsOf(message);
   return {
     userId: user.id,
     homeUserId: user.homeUserId || user.id,
@@ -674,6 +660,7 @@ export function buildRelayPayload(
     content: message.content,
     replyToId: message.replyToId ?? null,
     ...(replyTo ? { replyTo } : {}),
+    ...(mentions ? { mentions } : {}),
     editedAt: message.editedAt ?? null,
     createdAt: message.createdAt,
   };

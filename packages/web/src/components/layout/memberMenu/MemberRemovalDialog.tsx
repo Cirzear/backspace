@@ -23,7 +23,7 @@ export function MemberRemovalDialog({ target, action, name, onClose }: {
       const api = getApiForOrigin(target.origin);
       if (action === 'kick') await api.spaces.removeMember(target.spaceId, target.userId);
       else await api.spaces.ban(target.spaceId, target.userId);
-      if (getCurrentMember(target)) useSpaceStore.getState().removeMember(target.userId);
+      if (getCurrentMember(target)) useSpaceStore.getState().removeMember(target.spaceId, target.userId);
       onClose();
     } catch (error) {
       useUIStore.getState().addToast(describeError(error), 'warning');

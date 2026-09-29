@@ -8,6 +8,7 @@ import { verifyJwt } from '../utils/auth.js';
 import { statusOnConnect } from '../utils/presenceStatus.js';
 import { collectProfileBroadcastTargetIds } from '../utils/userDeletion.js';
 import { handleClientEvent } from './events.js';
+import { presenceUpdateFor } from './presenceEvent.js';
 
 import { connectionManager } from './connectionManager.js';
 import { buildReadyPayload } from './readyPayload.js';
@@ -184,15 +185,18 @@ export async function registerWebSocket(app: FastifyInstance): Promise<void> {
           }));
 
           // Broadcast the connect status to friends + DM co-members + space co-members.
-          const connectPayload = { type: 'presence_update' as const, userId, status: connectStatus };
+          const connectPayload = presenceUpdateFor(userId, connectStatus);
           const connectTargets = collectProfileBroadcastTargetIds(userId);
           for (const uid of connectTargets) connectionManager.sendToUser(uid, connectPayload);
 
           // S2S: project it to all active peers (mirrors profile_update fanout).
           // No-op for a replicated row: its home instance owns the projection.
+          // The relay is a full snapshot, so it carries the activities another
+          // session of this user already reported (none on a first connection).
           const _uid = userId;
+          const connectActivities = connectionManager.getUserActivities(_uid);
           void import('../utils/federationPresence.js').then(({ queuePresenceRelay }) => {
-            try { queuePresenceRelay(_uid, connectStatus, []); } catch (e) { console.warn('[ws] queuePresenceRelay(connect) failed', e); }
+            try { queuePresenceRelay(_uid, connectStatus, connectActivities); } catch (e) { console.warn('[ws] queuePresenceRelay(connect) failed', e); }
           });
         } catch {
           ws.send(JSON.stringify({ type: 'error', message: 'Invalid token' }));

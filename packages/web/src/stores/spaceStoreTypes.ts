@@ -1,5 +1,22 @@
-import type { Channel, ChannelCategory, CreateSpaceRequest, DmChannel, MemberWithUser, Role, Space, SpaceFolder, SpaceLayoutItem, SpaceWithChannelsAndMembers, UpdateChannelRequest, UpdateSpaceRequest, User } from '@backspace/shared';
-
+import type {
+  Channel,
+  ChannelCategory,
+  CreateSpaceRequest,
+  DmChannel,
+  DmMessageWithUser,
+  MemberWithUser,
+  Role,
+  Space,
+  SpaceFolder,
+  SpaceLayoutItem,
+  SpaceWithChannelsAndMembers,
+  UpdateChannelRequest,
+  UpdateSpaceRequest,
+  User,
+} from '@backspace/shared';
+import type { PresenceSubject } from '../utils/identity';
+import type { PeerDmChannel } from '../utils/dmConversationKey';
+import type { DmConversations } from './dmConversations';
 import type { TaggedSpace, UserViewEntry } from './spaceStore';
 
 export interface SpaceState {
@@ -24,6 +41,13 @@ export interface SpaceState {
   roles: Role[];
   folders: SpaceFolder[];
   spaceLayout: SpaceLayoutItem[] | null;
+  /**
+   * Every DM copy the client knows, grouped into conversations, with the
+   * pinned copy of each (`stores/dmConversations.ts`). The only DM state
+   * actions write; the DM fields below are derived from it.
+   */
+  dmConversations: DmConversations;
+  /** Derived: the pinned copy of each conversation, sorted by `sortDmChannels`. The DM list. */
   dmChannels: DmChannel[];
   channelToSpaceMap: Map<string, string>;
   channelLastMessageIds: Map<string, string>;
@@ -32,7 +56,11 @@ export interface SpaceState {
   channelOriginMap: Map<string, string>; // channelId → instance origin ('' = home)
   voiceChannelIds: Set<string>; // channelIds that are voice channels (excluded from unread)
   categoryOriginMap: Map<string, string>; // categoryId → instance origin ('' = home)
-  /** federatedId → (origin → localChannelId). Every DM from every origin's ready payload is recorded here regardless of dedup outcome, so failover can re-point to an alternate origin's local channel ID. */
+  /**
+   * Derived: conversation key → (origin → that origin's channel id), for every
+   * copy of every keyed conversation, the pinned one included. The index
+   * `resolveDmChannelId` reads to place an id another instance sent.
+   */
   dmAlternatives: Map<string, Map<string, string>>;
   /**
    * canonicalUserKey → best-known view of that user. Populated from every wire
@@ -52,14 +80,6 @@ export interface SpaceState {
    * to differentiate "load not yet attempted" from "loaded with empty result"
    * — see `MobileSpacesScreen`'s mascot empty state, which must not appear
    * during the pre-skeleton load window.
-   *
-   * Lifecycle:
-   *  - Added on successful `loadSpaceDetail` completion.
-   *  - Cleared per-space when the space is removed (`deleteSpace`,
-   *    `leaveSpace`, `removeSpace`, `removeInstanceSpaces`).
-   *  - Wiped entirely on `reset` (logout).
-   *
-   * Not persisted (ephemeral).
    */
   loadedSpaceIds: Set<string>;
   _layoutUpdatedAt: number;
@@ -69,11 +89,26 @@ export interface SpaceState {
   setCategories: (categories: ChannelCategory[]) => void;
   setMembers: (members: MemberWithUser[]) => void;
   setRoles: (roles: Role[]) => void;
+  /**
+   * A DM channel a server sent outside a listing (`dm_channel_created`, a
+   * create response) joins its conversation. Returns the channel id of the
+   * conversation's pinned copy, which is where the UI navigates.
+   */
+  upsertDmCopy: (origin: string, channel: PeerDmChannel, keySource: 'stated' | 'unknown') => string;
+  /** A message no listing placed gets an entry of its own under the origin that sent it. */
+  placeUnplacedDmMessage: (origin: string, message: DmMessageWithUser) => void;
+  /** Change the DM copy with this channel id (its last message, members, metadata). */
+  patchDmCopy: (channelId: string, patch: (channel: DmChannel) => DmChannel) => void;
+  /**
+   * Re-sort the DM list after unread or selection changed. `currentChannelId`
+   * overrides the chat store's for this sort.
+   */
+  resortDmChannels: (currentChannelId?: string | null) => void;
+  /** An origin's socket dropped (false) or came back: rows pinned there fail over by the pin rule. */
+  setDmOriginAvailable: (origin: string, available: boolean) => void;
+  reloadDmsForOrigin: (origin: string) => Promise<void>;
   setDmChannels: (channels: DmChannel[]) => void;
   addDmChannel: (channel: DmChannel, origin?: string) => void;
-  /** Record that `origin` holds its own copy of the DM `federatedId` under `channelId` (see `dmAlternatives`). */
-  recordDmAlternative: (federatedId: string, origin: string, channelId: string) => void;
-  reloadDmsForOrigin: (origin: string) => Promise<void>;
   removeDmChannel: (id: string) => void;
   addDmMember: (dmChannelId: string, user: User) => void;
   removeDmMember: (dmChannelId: string, userId: string) => void;
@@ -108,10 +143,17 @@ export interface SpaceState {
   updateChannelLayout: (spaceId: string, data: { channels: Array<{ id: string; position: number; categoryId: string | null }>; categories: Array<{ id: string; position: number }> }) => Promise<void>;
   addSpace: (space: Space) => void;
   removeSpace: (spaceId: string) => void;
-  updateMemberPresence: (userId: string, status: string) => void;
+  /**
+   * Set the status of the person `subject` names, as `origin` delivered it,
+   * wherever the client shows them: roster rows and cached views, matched by
+   * `activityKey` (their home identity), never by a raw row id.
+   */
+  updateMemberPresence: (subject: PresenceSubject, origin: string, status: string) => void;
   updateUserEverywhere: (user: User) => void;
-  addMember: (member: MemberWithUser) => void;
-  removeMember: (userId: string) => void;
+  /** A member joined `spaceId`, the open space. Also replayed onto an in-flight detail fetch's roster. */
+  addMember: (spaceId: string, member: MemberWithUser) => void;
+  /** A member left `spaceId`, the open space. Also replayed onto an in-flight detail fetch's roster. */
+  removeMember: (spaceId: string, userId: string) => void;
   setSpaceLayout: (layout: SpaceLayoutItem[] | null) => void;
   updateSpaceLayout: (items: SpaceLayoutItem[], folders: Record<string, { name: string | null; color: string | null; spaceIds: string[] }>) => Promise<void>;
   populateFromReady: (origin: string, spaces: SpaceWithChannelsAndMembers[], folders?: SpaceFolder[], dmChannels?: DmChannel[], spaceLayout?: SpaceLayoutItem[] | null, layoutUpdatedAt?: number) => void;
@@ -131,8 +173,3 @@ export interface SpaceState {
   findExistingDmForUser: (targetUser: { id: string; homeUserId?: string | null }) => { dm: DmChannel; origin: string } | null;
   reset: () => void;
 }
-
-/**
- * Push the current layout to a specific origin whose layout was older.
- * Used when populateFromReady receives a stale layout from an instance.
- */

@@ -280,7 +280,8 @@ describe('processFriendRequestCreateEvent — branch coverage', () => {
     seedLocalUser('alice-id', 'alice');
     seedReplicatedUser({
       id: 'bob-stub',
-      username: 'remote-bob@orbit.test',
+      // Already named: an id-named row would be renamed by the hint and announced.
+      username: 'bob@orbit.test',
       homeUserId: 'remote-bob',
       homeInstance: 'orbit.test',
     });
@@ -305,14 +306,16 @@ describe('processFriendRequestCreateEvent — branch coverage', () => {
     expect(result.accepted).toEqual(['already-friends-fwd']);
     expect(result.rejected).toEqual([]);
     expect(testDb.select().from(schema.friendRequests).all()).toHaveLength(0);
-    expect(sendToUser).not.toHaveBeenCalled();
+    // Only the filled display name is announced; no friend request event goes out.
+    expect(sendToUser.mock.calls.map(([, evt]) => (evt as { type: string }).type)).toEqual(['user_updated']);
   });
 
   it('accepts idempotently when users are already friends (recipient→sender row)', async () => {
     seedLocalUser('alice-id', 'alice');
     seedReplicatedUser({
       id: 'bob-stub',
-      username: 'remote-bob@orbit.test',
+      // Already named: an id-named row would be renamed by the hint and announced.
+      username: 'bob@orbit.test',
       homeUserId: 'remote-bob',
       homeInstance: 'orbit.test',
     });
@@ -338,7 +341,8 @@ describe('processFriendRequestCreateEvent — branch coverage', () => {
     expect(result.accepted).toEqual(['already-friends-rev']);
     expect(result.rejected).toEqual([]);
     expect(testDb.select().from(schema.friendRequests).all()).toHaveLength(0);
-    expect(sendToUser).not.toHaveBeenCalled();
+    // Only the filled display name is announced; no friend request event goes out.
+    expect(sendToUser.mock.calls.map(([, evt]) => (evt as { type: string }).type)).toEqual(['user_updated']);
   });
 
   it('accepts idempotently when a same-direction pending request already exists (re-delivery)', async () => {
