@@ -19,4 +19,8 @@ describe('mention completion candidates', () => {
     const many = Array.from({ length: 20 }, (_, i) => ({ ...members[0], userId: String(i) })) as MemberWithUser[];
     expect(mentionOptions({ query: '', members: many, roles, canMentionMass: true })).toHaveLength(8);
   });
+  it('supports ChannelUser candidates directly', () => {
+    const candidates = [{ userId: 'bob', user: { username: 'bob', displayName: 'Bob' } as any, member: null, nameColor: null }];
+    expect(mentionOptions({ query: 'bo', candidates, roles, canMentionMass: true }).map(o => o.token)).toEqual(['<@bob>']);
+  });
 });

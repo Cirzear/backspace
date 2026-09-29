@@ -23,10 +23,9 @@ import { useVisualViewportInset } from '../../hooks/useVisualViewportInset';
 import { useAuthStore } from '../../stores/authStore';
 import { findLastOwnEditableMessage } from './messageEditing';
 import {
-  filterMentionCandidates,
   useChannelMentionCandidates,
-  type ChannelUser,
 } from '../../utils/channelUser';
+import { mentionOptions, type MentionOption } from './mentionOptions';
 
 interface MessageInputProps {
   channelId: string;
@@ -206,10 +205,19 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     () => composerMentions({ value: draftText, members, roles, users: mentionUsers }),
     [draftText, members, roles, mentionUsers],
   );
+  const canMentionMass = !isDm && hasPermissionBit(channelPerms, PermissionBits.MENTION_EVERYONE);
   // The popover's rows; keyboard navigation indexes the same list.
   const mentionMatches = useMemo(
-    () => (mentionState ? filterMentionCandidates(mentionCandidates, mentionState.query) : []),
-    [mentionCandidates, mentionState],
+    () =>
+      mentionState
+        ? mentionOptions({
+            query: mentionState.query,
+            candidates: mentionCandidates,
+            roles: isDm ? [] : roles,
+            canMentionMass,
+          })
+        : [],
+    [mentionState, mentionCandidates, isDm, roles, canMentionMass],
   );
 
   const handleTyping = useCallback(() => {
@@ -396,13 +404,13 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   };
 
   const selectMention = useCallback(
-    (candidate: ChannelUser) => {
+    (option: MentionOption) => {
       if (!mentionState) return;
       const textarea = textareaRef.current;
       const cursorPos = textarea ? mentionModel.toWire(textarea.selectionStart, true) : draftText.length;
       const before = draftText.slice(0, mentionState.startIndex);
       const after = draftText.slice(cursorPos);
-      const insertion = `<@${candidate.userId}> `;
+      const insertion = `${option.token} `;
       const newContent = before + insertion + after;
       setDraft(channelId, newContent);
       setMentionState(null);
@@ -782,7 +790,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
         {/* Mention autocomplete popover */}
         {mentionState && mentionMatches.length > 0 && (
           <MentionPopover
-            candidates={mentionMatches}
+            options={mentionMatches}
             selectedIndex={mentionState.selectedIndex}
             onSelect={selectMention}
             key={draftText}
