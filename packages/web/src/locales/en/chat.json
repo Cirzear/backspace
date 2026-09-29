@@ -19,6 +19,7 @@
       "unknownUser": "Unknown User"
     },
     "reactions": {
+      "picker": "Reaction picker",
       "you": "You",
       "others_one": "{{count}} other",
       "others_other": "{{count}} others",
@@ -179,6 +180,10 @@
     "invalidSize": "Choose a non-empty image up to 5 MB.",
     "invalidType": "Only PNG, JPEG, WebP and GIF images are supported.",
     "invalidImage": "This image cannot be previewed. Choose a valid image.",
-    "removeNamed": "Remove {{name}}"
+    "removeNamed": "Remove {{name}}",
+    "addMore": "Add more",
+    "selectedCount_one": "{{count}} sticker selected",
+    "selectedCount_other": "{{count}} stickers selected",
+    "dropMore": "Click or drop more images here"
   }
 }

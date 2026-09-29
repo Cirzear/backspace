@@ -117,13 +117,14 @@ function MemberSidebarRow({
       />
       <div className="flex-1 min-w-0">
         <span
-          className={`text-[13.5px] leading-[1.2] font-medium truncate ${colorStyle ? (isOffline ? 'opacity-60' : '') : (isOffline ? 'text-txt-tertiary' : 'text-txt-primary')}`}
+          className={`block text-[13.5px] leading-[1.2] font-medium truncate ${colorStyle ? (isOffline ? 'opacity-60' : '') : (isOffline ? 'text-txt-tertiary' : 'text-txt-primary')}`}
           style={colorStyle}
+          title={displayName}
         >
           {displayName}
         </span>
         {!isOffline && isFederationGlobeApplicable(canonical) && (
-          <div className="text-[10px] leading-[1.3] text-txt-tertiary truncate opacity-60">@{parseFederatedUsername(canonical.username).domain}</div>
+          <div className="text-[10px] leading-[1.3] text-txt-tertiary truncate opacity-60" title={`@${parseFederatedUsername(canonical.username).domain}`}>@{parseFederatedUsername(canonical.username).domain}</div>
         )}
         {!isOffline && (
           <ActivityCard
@@ -228,7 +229,7 @@ export function MemberSidebar() {
   return (
     <>
     {memberMenu.dialogs}
-    <div className="w-60 bg-surface-members flex-shrink-0 overflow-y-auto select-none no-scrollbar hidden desktop:block border-l border-border-hard">
+    <div className="w-60 bg-surface-members flex-shrink-0 overflow-y-auto overflow-x-hidden select-none no-scrollbar hidden desktop:block border-l border-border-hard">
       {showMemberSkeleton ? (
         <div className="px-3 pt-4" role="status" aria-label={t('spaces:members.loading')}>
           {/* Role group 1 */}
@@ -256,7 +257,7 @@ export function MemberSidebar() {
             {group.kind === 'owner' && space ? (
               <OwnerTitleHeading key={space.id} space={space} count={group.members.length} />
             ) : (
-              <h3 className="text-[10.5px] font-bold text-txt-tertiary uppercase tracking-[0.06em] px-2 mb-1">
+              <h3 className="text-[10.5px] font-bold text-txt-tertiary uppercase tracking-[0.06em] px-2 mb-1 truncate" title={`${groupHeading(group.kind, group.label)} — ${formatNumber(group.members.length)}`}>
                 {groupHeading(group.kind, group.label)} — {formatNumber(group.members.length)}
               </h3>
             )}
@@ -267,7 +268,7 @@ export function MemberSidebar() {
         {/* Offline */}
         {offlineMembers.length > 0 && (
           <div>
-            <h3 className="text-[10.5px] font-bold text-txt-tertiary uppercase tracking-[0.06em] px-2 mb-1">
+            <h3 className="text-[10.5px] font-bold text-txt-tertiary uppercase tracking-[0.06em] px-2 mb-1 truncate" title={`${t('common:states.offline')} — ${formatNumber(offlineMembers.length)}`}>
               {t('common:states.offline')} — {formatNumber(offlineMembers.length)}
             </h3>
             {offlineMembers.map((m) => renderMember(m, true))}

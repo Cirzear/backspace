@@ -19,6 +19,7 @@
       "unknownUser": "未知用户"
     },
     "reactions": {
+      "picker": "表情回应",
       "you": "您",
       "others_other": "另外 {{count}} 人",
       "bySelf": "您做出了反应",
@@ -175,6 +176,9 @@
     "invalidSize": "请选择不超过 5 MB 的非空图片。",
     "invalidType": "仅支持 PNG、JPEG、WebP 和 GIF 图片。",
     "invalidImage": "无法预览这张图片，请选择有效的图片。",
-    "removeNamed": "移除 {{name}}"
+    "removeNamed": "移除 {{name}}",
+    "addMore": "添加更多",
+    "selectedCount_other": "已选择 {{count}} 个表情",
+    "dropMore": "点击或拖入更多图片"
   }
 }

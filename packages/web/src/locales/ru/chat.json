@@ -19,6 +19,7 @@
       "unknownUser": "Неизвестный пользователь"
     },
     "reactions": {
+      "picker": "Выбор реакции",
       "you": "Вы",
       "others_one": "ещё {{count}} человек",
       "others_few": "ещё {{count}} человека",
@@ -187,6 +188,12 @@
     "invalidSize": "Выберите непустое изображение размером до 5 МБ.",
     "invalidType": "Поддерживаются только PNG, JPEG, WebP и GIF.",
     "invalidImage": "Не удалось отобразить изображение. Выберите корректный файл.",
-    "removeNamed": "Удалить {{name}}"
+    "removeNamed": "Удалить {{name}}",
+    "addMore": "Добавить еще",
+    "selectedCount_one": "Выбран {{count}} стикер",
+    "selectedCount_few": "Выбрано {{count}} стикера",
+    "selectedCount_many": "Выбрано {{count}} стикеров",
+    "selectedCount_other": "Выбрано {{count}} стикеров",
+    "dropMore": "Нажмите или перетащите еще изображения"
   }
 }

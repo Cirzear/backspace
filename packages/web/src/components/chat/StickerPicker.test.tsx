@@ -66,6 +66,32 @@ describe('sticker controls', () => {
     expect(screen.getAllByRole('button', { name: 'Happy' })).toHaveLength(1);
   });
 
+  it('supports uploading multiple stickers and adds them all to the collection', async () => {
+    const sticker2 = { id: 'b'.repeat(64), name: 'Cool', token: `sticker:https://chat.test/api/stickers/assets/${'b'.repeat(64)}.webp` };
+    vi.mocked(api.stickers.list).mockResolvedValue([]);
+    vi.mocked(uploadSticker).mockImplementation(async (file, name) => {
+      return name === 'Cool' ? sticker2 : sticker;
+    });
+
+    render(<StickerPicker onSelect={vi.fn()} />);
+    await screen.findByText('Your sticker collection starts here');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Upload image' }));
+    const f1 = new File(['1'], 'Happy.png', { type: 'image/png' });
+    const f2 = new File(['2'], 'Cool.png', { type: 'image/png' });
+    fireEvent.change(screen.getByLabelText('Choose image', { selector: 'input' }), { target: { files: [f1, f2] } });
+
+    const previews = screen.getAllByAltText('Preview sticker');
+    expect(previews).toHaveLength(2);
+    previews.forEach(p => fireEvent.load(p));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add to my stickers' }));
+
+    await waitFor(() => expect(uploadSticker).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole('button', { name: 'Happy' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Cool' })).toBeInTheDocument();
+  });
+
   it('previews the full image without a permanent collection button', async () => {
     render(<StickerMessage token={sticker.token} />);
     fireEvent.click(screen.getByRole('button', { name: 'Preview sticker' }));

@@ -73,11 +73,43 @@ it.each([
   expect(URL.createObjectURL).not.toHaveBeenCalled();
 });
 
-it('rejects multi-file drops explicitly', () => {
-  render(<StickerUploadForm onAdded={vi.fn()} onCancel={vi.fn()} />);
-  fireEvent.drop(screen.getByRole('button', { name: 'Choose image' }), { dataTransfer: { files: [png(), png()] } });
-  expect(screen.getByRole('alert')).toHaveTextContent('Choose one image at a time.');
+it('supports multi-file drops and batch uploading', async () => {
+  const added = vi.fn();
+  render(<StickerUploadForm onAdded={added} onCancel={vi.fn()} />);
+  const file1 = new File(['1'], 'First.png', { type: 'image/png' });
+  const file2 = new File(['2'], 'Second.png', { type: 'image/png' });
+  fireEvent.drop(screen.getByRole('button', { name: 'Choose image' }), { dataTransfer: { files: [file1, file2] } });
+
+  const textboxes = screen.getAllByRole('textbox');
+  expect(textboxes).toHaveLength(2);
+  expect(textboxes[0]).toHaveValue('First');
+  expect(textboxes[1]).toHaveValue('Second');
   expect(confirm()).toBeDisabled();
+
+  const previews = screen.getAllByAltText('Preview sticker');
+  expect(previews).toHaveLength(2);
+  previews.forEach(p => fireEvent.load(p));
+
+  expect(confirm()).toBeEnabled();
+  fireEvent.click(confirm());
+
+  await waitFor(() => expect(uploadSticker).toHaveBeenCalledTimes(2));
+  expect(uploadSticker).toHaveBeenCalledWith(file1, 'First');
+  expect(uploadSticker).toHaveBeenCalledWith(file2, 'Second');
+  await waitFor(() => expect(added).toHaveBeenCalledWith([sticker, sticker]));
+});
+
+it('allows removing an item from the batch before submitting', () => {
+  render(<StickerUploadForm onAdded={vi.fn()} onCancel={vi.fn()} />);
+  const file1 = new File(['1'], 'First.png', { type: 'image/png' });
+  const file2 = new File(['2'], 'Second.png', { type: 'image/png' });
+  fireEvent.drop(screen.getByRole('button', { name: 'Choose image' }), { dataTransfer: { files: [file1, file2] } });
+
+  expect(screen.getAllByRole('textbox')).toHaveLength(2);
+  fireEvent.click(screen.getByRole('button', { name: 'Remove First' }));
+
+  // Removing one leaves 1 item, which transitions to single-item view
+  expect(screen.getByRole('textbox')).toHaveValue('Second');
 });
 
 it('blocks corrupt previews and blank names', () => {

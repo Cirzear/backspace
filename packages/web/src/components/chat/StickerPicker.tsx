@@ -51,8 +51,12 @@ export function StickerPicker({ onSelect, mobile = false }: { onSelect: (token: 
   return (
     <div className={`flex flex-col min-h-0 text-txt-primary ${mobile ? 'w-full flex-1' : 'w-[352px] max-w-[calc(100*var(--app-vw)-24px)] h-[456px]'}`}
       onKeyDown={event => { if (event.key !== 'Escape') event.stopPropagation(); }}>
-      {uploading ? <StickerUploadForm key={userId} onCancel={() => setUploading(false)} onAdded={item => {
-        setItems(rows => [item, ...rows.filter(row => row.id !== item.id)]);
+      {uploading ? <StickerUploadForm key={userId} onCancel={() => setUploading(false)} onAdded={added => {
+        const list = Array.isArray(added) ? added : [added];
+        setItems(rows => {
+          const ids = new Set(list.map(item => item.id));
+          return [...list, ...rows.filter(row => !ids.has(row.id))];
+        });
         setUploading(false);
         setManaging(false);
         setNotice(t('stickers.saved'));

@@ -91,4 +91,21 @@ describe('MemberSidebar: member names', () => {
     render(<MemberSidebar />);
     expect(screen.getByText('kai')).toBeInTheDocument();
   });
+
+  it('renders display name with block truncate and title for overflow handling', () => {
+    const longUser: User = {
+      ...user('u-long', 'VeryLongNameThatExceedsTheContainerWidthLimit', 'online'),
+      customStatus: 'Exploring deep space and listening to music',
+    };
+    useSpaceStore.setState({ members: [member(longUser, [])] });
+    render(<MemberSidebar />);
+    const nameEl = screen.getByText('VeryLongNameThatExceedsTheContainerWidthLimit');
+    expect(nameEl).toHaveClass('block');
+    expect(nameEl).toHaveClass('truncate');
+    expect(nameEl).toHaveAttribute('title', 'VeryLongNameThatExceedsTheContainerWidthLimit');
+
+    const statusEl = screen.getByText('Exploring deep space and listening to music');
+    expect(statusEl).toHaveClass('truncate');
+    expect(statusEl).toHaveAttribute('title', 'Exploring deep space and listening to music');
+  });
 });

@@ -19,6 +19,7 @@
       "unknownUser": "Unbekannter Nutzer"
     },
     "reactions": {
+      "picker": "Reaktionsauswahl",
       "you": "Du",
       "others_one": "{{count}} weitere Person",
       "others_other": "{{count}} weitere",
@@ -179,6 +180,10 @@
     "invalidSize": "Wähle ein nicht leeres Bild bis 5 MB.",
     "invalidType": "Nur PNG, JPEG, WebP und GIF werden unterstützt.",
     "invalidImage": "Dieses Bild kann nicht angezeigt werden. Wähle ein gültiges Bild.",
-    "removeNamed": "{{name}} entfernen"
+    "removeNamed": "{{name}} entfernen",
+    "addMore": "Mehr hinzufügen",
+    "selectedCount_one": "{{count}} Sticker ausgewählt",
+    "selectedCount_other": "{{count}} Sticker ausgewählt",
+    "dropMore": "Klicken oder weitere Bilder hierher ziehen"
   }
 }

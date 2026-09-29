@@ -26,7 +26,7 @@ import { AttachmentProgress } from './AttachmentProgress';
 import { EmbedRenderer } from './EmbedRenderer';
 import { FederationGlobeIcon } from '../ui/Username';
 import { Tooltip } from '../ui/Tooltip';
-import { EmojiPicker } from './EmojiPicker';
+import { ReactionPickerPopover } from './ReactionPickerPopover';
 import { hasPermissionBit, PermissionBits } from '../../utils/permissions';
 import { isDeletedPartnerDm } from '../../utils/dmFormatters';
 import { isFederationGlobeApplicable, isSelf, resolveDisplayIdentity, userDisplayName } from '../../utils/identity';
@@ -158,7 +158,6 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
   const confirmDeleteTimeout = useRef<ReturnType<typeof setTimeout>>();
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const reactionPickerBtnRef = useRef<HTMLButtonElement>(null);
-  const reactionPickerRef = useRef<HTMLDivElement>(null);
   const currentUser = useAuthStore((s) => s.user);
   const editMessage = useChatStore((s) => s.editMessage);
   const editingMessageId = useChatStore((s) => s.editingMessageId);
@@ -291,28 +290,6 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
   const sourceUrl = isGifOnly
     ? (message.content?.trim() ?? null)
     : imageEmbedSourceUrl;
-
-  // Close reaction picker on outside click
-  useEffect(() => {
-    if (!showReactionPicker) return;
-    const handler = (e: MouseEvent) => {
-      if (reactionPickerRef.current?.contains(e.target as Node)) return;
-      if (reactionPickerBtnRef.current?.contains(e.target as Node)) return;
-      setShowReactionPicker(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [showReactionPicker]);
-
-  // Close reaction picker on Escape
-  useEffect(() => {
-    if (!showReactionPicker) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setShowReactionPicker(false);
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [showReactionPicker]);
 
   const handleReactionEmojiSelect = useCallback((emoji: { native: string }) => {
     addReaction(message.id, emoji.native);
@@ -740,34 +717,13 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
       </div>
 
       {/* Reaction emoji picker */}
-      {showInteractions && showReactionPicker && canAddReactions && reactionPickerBtnRef.current && (() => {
-        const PICKER_HEIGHT = 400;
-        const PICKER_WIDTH = 360;
-        const MARGIN = 8;
-        const btnRect = layoutRect(reactionPickerBtnRef.current!.getBoundingClientRect());
-        const spaceBelow = layoutPixels(window.innerHeight) - btnRect.bottom;
-        const spaceAbove = btnRect.top;
-        const flipAbove = spaceBelow < (PICKER_HEIGHT + MARGIN) && spaceAbove > spaceBelow;
-        const top = flipAbove
-          ? Math.max(MARGIN, btnRect.top - PICKER_HEIGHT - MARGIN)
-          : btnRect.bottom + MARGIN;
-        const left = Math.min(
-          Math.max(MARGIN, btnRect.left),
-          layoutPixels(window.innerWidth) - PICKER_WIDTH - MARGIN,
-        );
-        return createPortal(
-          <div
-            ref={reactionPickerRef}
-            className={`fixed z-[300] ${flipAbove ? 'animate-slide-down' : 'animate-slide-up'}`}
-            style={{ top, left }}
-          >
-            <div className="glass rounded-xl overflow-hidden">
-              <EmojiPicker onEmojiSelect={handleReactionEmojiSelect} />
-            </div>
-          </div>,
-          document.body,
-        );
-      })()}
+      {showInteractions && showReactionPicker && canAddReactions && (
+        <ReactionPickerPopover
+          anchorEl={reactionPickerBtnRef.current}
+          onEmojiSelect={handleReactionEmojiSelect}
+          onClose={() => setShowReactionPicker(false)}
+        />
+      )}
 
       {/* Action buttons on hover */}
       {showInteractions && (isHovered || showReactionPicker || confirmingDelete) && !isEditing && (
