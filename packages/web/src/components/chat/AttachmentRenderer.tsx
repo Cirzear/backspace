@@ -1,3 +1,4 @@
+import { SaveStickerButton } from './SaveStickerButton';
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { Attachment } from '@backspace/shared';
@@ -249,6 +250,7 @@ export function AttachmentRenderer({ attachment }: AttachmentRendererProps) {
             loading="lazy"
           />
         </div>
+        <SaveStickerButton source={attUrl} name={originalName} />
         {federationInlineBadge && <div className="mt-1">{federationInlineBadge}</div>}
       </div>
     );

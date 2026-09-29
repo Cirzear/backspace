@@ -1,3 +1,4 @@
+import { stickerUrl } from '@backspace/shared/src/stickers';
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
@@ -43,6 +44,7 @@ function truncateName(name: string): string {
  */
 export function ReactionPill({ emoji, reactions, onToggle }: ReactionPillProps) {
   const { t } = useTranslation(['chat', 'common']);
+  const imageUrl = stickerUrl(emoji);
   const fmt = useFormatters();
   const currentUser = useAuthStore((s) => s.user);
   const isMobile = useUIStore((s) => s.isMobile);
@@ -130,7 +132,8 @@ export function ReactionPill({ emoji, reactions, onToggle }: ReactionPillProps) 
         }`}
         style={{ padding: '2px 8px', fontSize: '13px', lineHeight: 1 }}
       >
-        <span style={{ fontSize: '14px', lineHeight: 1 }}>{emoji}</span>
+        {imageUrl ? <img src={imageUrl} alt={t('chat:stickers.title')} className="w-7 h-7 object-contain" />
+          : <span style={{ fontSize: '14px', lineHeight: 1 }}>{emoji}</span>}
         <span className={`font-semibold ${mine ? 'text-accent-mint' : 'text-txt-secondary'}`} style={{ fontSize: '12px' }}>
           {fmt.formatNumber(reactions.length)}
         </span>
@@ -143,7 +146,8 @@ export function ReactionPill({ emoji, reactions, onToggle }: ReactionPillProps) 
           style={style}
           className="glass rounded-md px-2.5 py-1.5 flex items-center gap-2 max-w-[360px] pointer-events-none animate-fade-in"
         >
-          <span className="text-[16px] leading-none flex-shrink-0">{emoji}</span>
+          {imageUrl ? <img src={imageUrl} alt={t('chat:stickers.preview')} className="w-36 h-36 object-contain" />
+            : <span className="text-[16px] leading-none flex-shrink-0">{emoji}</span>}
           <span className="text-[13px] leading-[18px] text-txt-secondary [overflow-wrap:anywhere]">
             {before}
             <span className="font-medium text-txt-primary">{names}</span>

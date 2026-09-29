@@ -1,4 +1,6 @@
-import React, { useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import { StickerPicker } from './StickerPicker';
+import React, { useRef, useEffect, useState } from 'react';
 import Picker from '@emoji-mart/react';
 import data from '@emoji-mart/data';
 
@@ -11,9 +13,12 @@ interface EmojiPickerProps {
    * to consume the available height of the sheet.
    */
   mobile?: boolean;
+  stickers?: boolean;
 }
 
-export function EmojiPicker({ onEmojiSelect, mobile = false }: EmojiPickerProps) {
+export function EmojiPicker({ onEmojiSelect, mobile = false, stickers = true }: EmojiPickerProps) {
+  const { t } = useTranslation('chat');
+  const [showStickers, setShowStickers] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Prevent keyboard events from bubbling out (e.g. Enter submitting the chat input)
@@ -43,7 +48,11 @@ export function EmojiPicker({ onEmojiSelect, mobile = false }: EmojiPickerProps)
 
   return (
     <div ref={containerRef} className={wrapperClass}>
-      <Picker
+      {stickers && <div className="flex gap-3 p-2 text-sm text-txt-primary">
+        <button type="button" aria-pressed={!showStickers} onClick={() => setShowStickers(false)}>Emoji</button>
+        <button type="button" aria-pressed={showStickers} onClick={() => setShowStickers(true)}>{t('stickers.title')}</button>
+      </div>}
+      {stickers && showStickers ? <StickerPicker onSelect={token => onEmojiSelect({ native: token })} /> : <Picker
         data={data}
         onEmojiSelect={onEmojiSelect}
         theme="dark"
@@ -57,7 +66,7 @@ export function EmojiPicker({ onEmojiSelect, mobile = false }: EmojiPickerProps)
         emojiButtonSize={mobile ? 40 : 32}
         dynamicWidth={mobile ? true : false}
         categories={['frequent', 'people', 'nature', 'foods', 'activity', 'places', 'objects', 'symbols', 'flags']}
-      />
+      />}
     </div>
   );
 }

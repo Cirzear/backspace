@@ -615,10 +615,10 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     [draftText, setDraft, channelId, mentionModel, members, roles, mentionUsers],
   );
 
-  const handleGifSelect = useCallback(
+  const handleMediaSelect = useCallback(
     (url: string) => {
-      // GIF picks bypass the staged-transfer pipeline — they're remote URLs,
-      // not local files, and ship as plain content.
+      // GIF URLs and sticker tokens refer to already-hosted media; neither
+      // should enter the staged local-file pipeline or discard the text draft.
       setActivePopover(null);
       void sendMessage(channelId, url).catch((error: unknown) => {
         addToast(error instanceof Error ? error.message : t('chat:composer.sendFailed'), 'warning');
@@ -755,7 +755,8 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
           activeTab={activePopover}
           onClose={() => setActivePopover(null)}
           onEmojiSelect={handleEmojiSelect}
-          onGifSelect={handleGifSelect}
+          onGifSelect={handleMediaSelect}
+          onStickerSelect={handleMediaSelect}
           anchorRef={popoverAnchorRef}
           gifEnabled={gifEnabled}
           onTabChange={setActivePopover}

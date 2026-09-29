@@ -1,3 +1,5 @@
+import { stickerUrl } from '@backspace/shared/src/stickers';
+import { StickerMessage } from './StickerMessage';
 import { insertComposerMention } from './useComposerMention';
 import { useChannelActivityStore } from '../../stores/channelActivityStore';
 import { getChannelOrigin } from '../../stores/spaceStore';
@@ -625,7 +627,9 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
               <>
                 {message.content && (
                   <div className="text-txt-message text-[15px] leading-[1.5] break-words whitespace-pre-wrap selection:bg-accent-primary/30">
-                    <MarkdownRenderer content={message.content} channelId={mentionChannelId} />
+                    {stickerUrl(message.content)
+                      ? <StickerMessage token={message.content} />
+                      : <MarkdownRenderer content={message.content} channelId={mentionChannelId} />}
                     {message.editedAt && (
                       <span className="text-[10px] text-txt-tertiary ml-1 select-none font-medium">{t('chat:message.edited')}</span>
                     )}

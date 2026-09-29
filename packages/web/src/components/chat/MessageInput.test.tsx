@@ -1,3 +1,4 @@
+import { api } from '../../api/client';
 import { useContextMenuStore } from '../../stores/contextMenuStore';
 import { act } from '@testing-library/react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -214,4 +215,17 @@ describe('MessageInput slow sends', () => {
     await act(async () => { fail(new Error('Offline')); await sending.catch(() => {}); });
     expect(input).toHaveValue('failed text\nnew text');
   });
+});
+
+it('sends a personal sticker without discarding the current text draft', async () => {
+  const token = `sticker:https://chat.test/api/stickers/assets/${'a'.repeat(64)}.webp`;
+  vi.spyOn(api.stickers, 'list').mockResolvedValue([{ id: 'a'.repeat(64), name: 'Happy', token }]);
+  const send = vi.spyOn(useChatStore.getState(), 'sendMessage').mockResolvedValue(undefined);
+  useComposerStore.getState().setDraft('dm-1', 'unfinished draft');
+  render(<MessageInput channelId="dm-1" channelName="general" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Emoji picker' }));
+  fireEvent.click(screen.getByRole('button', { name: 'My stickers' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Happy' }));
+  expect(send).toHaveBeenCalledWith('dm-1', token);
+  expect(screen.getByRole('textbox')).toHaveValue('unfinished draft');
 });

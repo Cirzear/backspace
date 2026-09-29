@@ -152,5 +152,16 @@
     "action": "Anstupsen",
     "received": "{{actor}} hat {{target}} angestupst",
     "disconnected": "Verbindung getrennt. Anstupsen wurde nicht gesendet."
+  },
+  "stickers": {
+    "title": "Meine Sticker",
+    "upload": "Bild hochladen",
+    "limits": "PNG, JPEG, WebP oder GIF · maximal 5 MB",
+    "loading": "Wird geladen…",
+    "empty": "Noch keine Sticker. Lade ein Bild hoch.",
+    "remove": "Entfernen",
+    "save": "Zu meinen Stickern hinzufügen",
+    "saved": "Zu meinen Stickern hinzugefügt",
+    "preview": "Sticker-Vorschau"
   }
 }

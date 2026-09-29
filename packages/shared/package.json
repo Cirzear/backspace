@@ -18,7 +18,9 @@
     "./src/mentions": "./src/mentions.ts",
     "./src/mentions.js": "./src/mentions.ts",
     "./src/errors": "./src/errors.ts",
-    "./src/errors.js": "./src/errors.ts"
+    "./src/errors.js": "./src/errors.ts",
+    "./src/stickers": "./src/stickers.ts",
+    "./src/stickers.js": "./src/stickers.ts"
   },
   "scripts": {
     "build": "tsc",

@@ -148,5 +148,16 @@
     "action": "戳一戳",
     "received": "{{actor}} 戳了戳 {{target}}",
     "disconnected": "连接已断开，戳一戳未发送"
+  },
+  "stickers": {
+    "title": "我的表情",
+    "upload": "上传图片",
+    "limits": "PNG、JPEG、WebP 或 GIF · 单张最大 5 MB",
+    "loading": "处理中…",
+    "empty": "暂无表情，上传图片即可添加。",
+    "remove": "移除",
+    "save": "添加到我的表情",
+    "saved": "已添加到我的表情",
+    "preview": "预览表情"
   }
 }
