@@ -213,11 +213,6 @@
       "count": 3
     }
   },
-  "packages/server/src/ws/reactionEvents.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 2
-    }
-  },
   "packages/server/test/federation-e2e-call-addressing.test.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1

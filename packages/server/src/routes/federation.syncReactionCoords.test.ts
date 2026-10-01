@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
@@ -190,6 +190,13 @@ describe('POST /api/federation/sync — replayed reactions carry shared message 
     app = await buildApp();
   });
 
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await app.close();
+    home.sqlite.close();
+    orbit.sqlite.close();
+  });
+
   it('names the reacted message by its id and origin on the instance that created it', async () => {
     logReaction(home.db, 'reaction_add', 200);
     const events = (await orbitPullsFromHome(0)).filter(e => e.eventType === 'reaction_add');
@@ -203,6 +210,47 @@ describe('POST /api/federation/sync — replayed reactions carry shared message 
     const result = await orbitReplays(await orbitPullsFromHome(0));
     expect(result.rejected).toEqual([]);
     expect(orbitReactors()).toEqual(['alice-on-orbit']);
+  });
+
+  it.each(['🎉', `sticker:https://home.test/api/stickers/assets/${'a'.repeat(64)}.webp`])(
+    'accepts repeated %s adds without duplicating rows or broadcasts',
+    async (emoji) => {
+      logReaction(home.db, 'reaction_add', 200);
+      const [synced] = await orbitPullsFromHome(0);
+      if (!synced?.reaction) throw new Error('Expected a synced reaction');
+      const event = { ...synced, reaction: { ...synced.reaction, emoji } };
+      const { connectionManager } = await import('../ws/handler.js');
+      const broadcast = vi.spyOn(connectionManager, 'sendToDmMembers');
+
+      const first = await orbitReplays([event]);
+      // Different delivery IDs still represent the same reactor and emoji.
+      const replay = { ...event, messageId: `${event.messageId}-replay` };
+      const second = await orbitReplays([event, replay]);
+
+      expect(first.rejected).toEqual([]);
+      expect(second.rejected).toEqual([]);
+      expect(second.accepted).toEqual([event.messageId, replay.messageId]);
+      const rows = orbit.db.select().from(schema.dmReactions).all();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ dmMessageId: 'msg-on-orbit', userId: 'alice-on-orbit', emoji });
+      expect(broadcast).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('keeps an existing local reaction when the same home identity is relayed', async () => {
+    orbit.db.insert(schema.dmReactions).values({
+      id: 'already-local', dmMessageId: 'msg-on-orbit', userId: 'alice-on-orbit', emoji: '🎉', createdAt: 150,
+    }).run();
+    logReaction(home.db, 'reaction_add', 200);
+    const { connectionManager } = await import('../ws/handler.js');
+    const broadcast = vi.spyOn(connectionManager, 'sendToDmMembers');
+
+    const result = await orbitReplays(await orbitPullsFromHome(0));
+
+    expect(result.rejected).toEqual([]);
+    expect(orbitReactors()).toEqual(['alice-on-orbit']);
+    expect(orbit.db.select().from(schema.dmReactions).all()[0]?.id).toBe('already-local');
+    expect(broadcast).not.toHaveBeenCalled();
   });
 
   it('a replayed reaction_remove removes it from the message on the receiver', async () => {

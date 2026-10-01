@@ -243,6 +243,9 @@ export const reactions = sqliteTable('reactions', {
   createdAt: integer('created_at').notNull(),
 }, (table) => ({
   messageIdx: index('idx_reactions_message_id').on(table.messageId),
+  // Retries and concurrent adds represent the same reaction, not extra votes.
+  messageUserEmojiIdx: uniqueIndex('idx_reactions_message_user_emoji')
+    .on(table.messageId, table.userId, table.emoji),
 }));
 
 export const dmReactions = sqliteTable('dm_reactions', {
@@ -253,6 +256,9 @@ export const dmReactions = sqliteTable('dm_reactions', {
   createdAt: integer('created_at').notNull(),
 }, (table) => ({
   dmMessageIdx: index('idx_dm_reactions_dm_message_id').on(table.dmMessageId),
+  // The resolved local user row is the actor key, including federated reactions.
+  messageUserEmojiIdx: uniqueIndex('idx_dm_reactions_message_user_emoji')
+    .on(table.dmMessageId, table.userId, table.emoji),
 }));
 
 export const roles = sqliteTable('roles', {

@@ -145,9 +145,13 @@ PK: id
 |--------|------|-------|
 | id | text PK | |
 | messageId | text NOT NULL | FK → messages.id CASCADE |
-| userId | text NOT NULL | FK → users.id CASCADE |
-| emoji | text NOT NULL | |
+| userId | text NOT NULL | FK → users.id CASCADE; resolved instance-local actor ID |
+| emoji | text NOT NULL | Exact reaction token: Unicode emoji or `sticker:<asset-url>` |
 | createdAt | integer NOT NULL | |
+
+**UNIQUE:** `idx_reactions_message_user_emoji` on `(message_id, user_id, emoji)` — one reaction per message, actor and exact token, including concurrent adds and retries. Different users, messages or tokens remain independent. The existing `idx_reactions_message_id` lookup index is retained.
+
+**Migration `0025_reaction_uniqueness`.** Before creating the unique indexes, deduplicates both `reactions` and `dm_reactions` by their respective message/user/emoji triple. Keeps the row with the earliest `created_at`; ties keep the smallest `id` in SQLite's ascending text order. Other triples, surviving IDs/timestamps and parent rows are unchanged. The journal timestamp is greater than every preceding entry so upgrades apply it even though some older journal timestamps are out of order. Normal startup `migrate()` records it once; subsequent migration runs are no-ops.
 
 ---
 
@@ -196,9 +200,11 @@ PK: id
 |--------|------|-------|
 | id | text PK | |
 | dmMessageId | text NOT NULL | FK → dm_messages.id CASCADE |
-| userId | text NOT NULL | FK → users.id CASCADE |
-| emoji | text NOT NULL | |
+| userId | text NOT NULL | FK → users.id CASCADE; resolved instance-local actor ID, including federated actors |
+| emoji | text NOT NULL | Exact reaction token: Unicode emoji or `sticker:<asset-url>` |
 | createdAt | integer NOT NULL | |
+
+**UNIQUE:** `idx_dm_reactions_message_user_emoji` on `(dm_message_id, user_id, emoji)` — the same one-reaction-per-triple rule as channel reactions. Migration `0025_reaction_uniqueness` removes existing duplicates deterministically before enforcing it (see [reactions](#reactions)). The existing `idx_dm_reactions_dm_message_id` lookup index is retained.
 
 ---
 

@@ -263,6 +263,41 @@ describe('POST /api/users/@me/reattach — stub merge', () => {
     expect(friendRows[0]!.friendId).toBe('detached-1');
   });
 
+  it.each(['🎉', `sticker:https://orbit.test/api/stickers/assets/${'a'.repeat(64)}.webp`])(
+    'merges overlapping %s reactions before repointing the stub identity',
+    async (emoji) => {
+      testDb.insert(schema.spaces).values({ id: 'space-1', name: 'Space', ownerId: 'alice', createdAt: 1 }).run();
+      testDb.insert(schema.channels).values({
+        id: 'channel-1', spaceId: 'space-1', name: 'chat', type: 'text', createdAt: 1,
+      }).run();
+      testDb.insert(schema.messages).values({
+        id: 'space-msg', channelId: 'channel-1', userId: 'alice', content: 'hello', createdAt: 1,
+      }).run();
+      const reactions = [
+        { id: 'kept', userId: 'detached-1', emoji, createdAt: 2 },
+        { id: 'overlap', userId: 'stub-new', emoji, createdAt: 3 },
+        { id: 'other-user', userId: 'alice', emoji, createdAt: 4 },
+        { id: 'other-emoji', userId: 'stub-new', emoji: '👍', createdAt: 5 },
+      ];
+      testDb.insert(schema.reactions).values(reactions.map(r => ({ ...r, messageId: 'space-msg' }))).run();
+      testDb.insert(schema.dmReactions).values(reactions.map(r => ({ ...r, dmMessageId: 'm-stub' }))).run();
+
+      const res = await reattach('detached-1', 'youruser@orbit.test');
+
+      expect(res.statusCode).toBe(200);
+      const expected = [
+        { id: 'kept', userId: 'detached-1' },
+        { id: 'other-emoji', userId: 'detached-1' },
+        { id: 'other-user', userId: 'alice' },
+      ];
+      expect(testDb.select({ id: schema.reactions.id, userId: schema.reactions.userId })
+        .from(schema.reactions).orderBy(schema.reactions.id).all()).toEqual(expected);
+      expect(testDb.select({ id: schema.dmReactions.id, userId: schema.dmReactions.userId })
+        .from(schema.dmReactions).orderBy(schema.dmReactions.id).all()).toEqual(expected);
+      expect(testDb.select().from(schema.users).where(eq(schema.users.id, 'stub-new')).get()).toBeUndefined();
+    },
+  );
+
   it('409 when the new identity is held by a REAL account (not a stub)', async () => {
     testDb.update(schema.users).set({ passwordHash: 'real-hash' }).where(eq(schema.users.id, 'stub-new')).run();
     const res = await reattach('detached-1', 'youruser@orbit.test');

@@ -42,6 +42,18 @@ Source: `packages/server/src/ws/handler.ts` (transport/auth), `packages/server/s
 | `reaction_add` | messageId, emoji | ADD_REACTIONS perm (space) |
 | `reaction_remove` | messageId, emoji | own reactions only |
 
+Adds are idempotent by `(messageId, instance-local userId, emoji)` (the DM table
+uses `dmMessageId`). Emoji strings, including sticker reaction values, are kept
+unchanged. Each add targets that database UNIQUE constraint; an existing triple
+returns before any broadcast, mutation-log write or federation outbox enqueue.
+Other database errors propagate instead of being mistaken for duplicate adds.
+A successful removal permits a subsequent add to create and announce a new row.
+Space membership/ADD_REACTIONS checks, DM membership and dead-one-on-one
+read-only checks run before the write, including for duplicate requests.
+Federated accounts still use their authenticated local actor ID for storage and
+broadcasts; DM relay payloads retain their home identity and the message's shared
+federation coordinates.
+
 ### Read State
 | type | fields | notes |
 |------|--------|-------|

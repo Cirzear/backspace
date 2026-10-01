@@ -176,6 +176,13 @@
       "when": 1790667384907,
       "tag": "0024_personal_stickers",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1790854034749,
+      "tag": "0025_reaction_uniqueness",
+      "breakpoints": true
     }
   ]
 }
