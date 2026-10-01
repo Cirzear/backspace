@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="screen_share_channel">Screen sharing</string>
+    <string name="screen_share_title">Backspace is sharing your screen</string>
+    <string name="screen_share_body">Your call stays active while you use other apps.</string>
+    <string name="screen_share_stop">Stop sharing</string>
+</resources>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="screen_share_channel">Демонстрация экрана</string>
+    <string name="screen_share_title">Backspace демонстрирует ваш экран</string>
+    <string name="screen_share_body">Звонок продолжается, пока вы используете другие приложения.</string>
+    <string name="screen_share_stop">Остановить демонстрацию</string>
+</resources>

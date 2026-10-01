@@ -1,3 +1,4 @@
+import { isNativeScreenShare } from '../../mobile/nativeScreenSharePlugin';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { useVoiceStore } from '../../stores/voiceStore';
@@ -126,6 +127,7 @@ export function StreamQualityControls() {
   const electronPlatform = isElectron() ? window.backspace?.platform : null;
   const isScreenSharing = useVoiceStore((s) => s.isScreenSharing);
   const liveAudio = useVoiceStore((s) => s.screenShareAudio);
+  const native = isNativeScreenShare();
   const audioSwitch = systemAudioSwitch(isScreenSharing, liveAudio, config.shareAudio);
 
   // Unknown limits (not yet fetched, or a host that cannot be asked) show the
@@ -147,7 +149,8 @@ export function StreamQualityControls() {
   const autoKbps = Math.round(result.publish.videoEncoding.maxBitrate / 1000);
 
   return (
-    <div className="flex flex-col gap-3">
+    <fieldset disabled={native && isScreenSharing} className="flex flex-col gap-3 min-w-0">
+      {native && isScreenSharing && <p className="text-xs text-txt-secondary">{t('voice:nativeScreenShare.restartSettings')}</p>}
       {/* Resolution */}
       <div>
         <div className="text-[11px] text-txt-tertiary font-semibold uppercase tracking-wider mb-1.5">
@@ -186,6 +189,8 @@ export function StreamQualityControls() {
         </div>
       </div>
 
+      {/* Android's plugin negotiates codec/content mode; do not offer ignored settings. */}
+      {!native && <>
       {/* Content Mode */}
       <div>
         <div className="text-[11px] text-txt-tertiary font-semibold uppercase tracking-wider mb-1.5">
@@ -227,6 +232,7 @@ export function StreamQualityControls() {
         </div>
       </div>
 
+      </>}
       {/* Bitrate — Auto | Custom pills like every other row; the slider only exists in Custom */}
       <div>
         <div className="text-[11px] text-txt-tertiary font-semibold uppercase tracking-wider mb-1.5">
@@ -306,7 +312,8 @@ export function StreamQualityControls() {
                 {t('voice:streamSettings.systemAudioAdding')}
               </div>
             )}
-            {audioSwitch.checked && !audioSwitch.adding && (
+            {native && <div className="text-xs text-txt-secondary mt-1">{t('voice:nativeScreenShare.audioNote')}</div>}
+            {!native && audioSwitch.checked && !audioSwitch.adding && (
               <div className="text-[10px] text-accent-amber/80 mt-0.5">
                 {electronPlatform === 'win32'
                   ? t('voice:streamSettings.electronWindowsAudioNote')
@@ -326,6 +333,6 @@ export function StreamQualityControls() {
           />
         </div>
       </div>
-    </div>
+    </fieldset>
   );
 }

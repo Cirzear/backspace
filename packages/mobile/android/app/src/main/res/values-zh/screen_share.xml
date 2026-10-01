@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="screen_share_channel">屏幕共享</string>
+    <string name="screen_share_title">Backspace 正在共享屏幕</string>
+    <string name="screen_share_body">使用其他应用时，通话仍会继续。</string>
+    <string name="screen_share_stop">停止共享</string>
+</resources>

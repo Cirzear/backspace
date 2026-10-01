@@ -1,3 +1,5 @@
+import { hasNativeScreenShare, stopNativeScreenShare } from '../mobile/nativeScreenShare';
+import { describeNativeScreenShareError } from '../mobile/nativeScreenShareErrors';
 import type { VideoCaptureOptions } from 'livekit-client';
 import { useVoiceStore } from '../stores/voiceStore';
 import { useUIStore } from '../stores/uiStore';
@@ -105,6 +107,15 @@ export async function handleCameraAction(): Promise<void> {
  * new voice status itself, so neither is repeated here.
  */
 export async function handleScreenShareAction(): Promise<void> {
+  if (hasNativeScreenShare()) {
+    try {
+      await stopNativeScreenShare();
+    } catch (error) {
+      console.error('[voiceActions] Failed to stop native screen share:', error);
+      useUIStore.getState().addToast(describeNativeScreenShareError(error), 'warning');
+    }
+    return;
+  }
   const room = getActiveRoom();
   if (!room) return;
   if (!useVoiceStore.getState().isScreenSharing) {

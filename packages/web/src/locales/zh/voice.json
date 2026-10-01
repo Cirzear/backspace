@@ -250,5 +250,26 @@
     "shareScreen": "共享屏幕",
     "stopSharingScreen": "停止共享屏幕",
     "disconnect": "断开通话"
+  },
+  "nativeScreenShare": {
+    "consent": "选择画质，然后批准 Android 的屏幕录制授权。共享期间切换到后台，麦克风和通话声音将由原生服务继续处理。",
+    "audioNote": "系统音频需要 Android 10 或更高版本。只能采集允许播放录制的应用声音，不包含受保护内容和通话音频。",
+    "restartSettings": "如需更改画质或系统音频，请停止共享后重新开始。",
+    "starting": "正在等待 Android 授权…",
+    "cancelled": "已取消屏幕共享，未共享任何内容。",
+    "failed": "屏幕共享失败，请检查屏幕录制和麦克风权限后重试。",
+    "errors": {
+      "busy": "已有屏幕共享正在运行，请先停止再开始新的共享。",
+      "invalidOptions": "Android 无法使用这些录制设置。系统音频需要 Android 10 或更高版本。",
+      "audioPermission": "后台通话需要麦克风权限，请允许使用麦克风后重试。",
+      "consent": "Android 无法打开屏幕录制授权请求。",
+      "service": "Android 无法启动屏幕共享前台服务。",
+      "timeout": "屏幕共享启动超时，请检查连接后重试。",
+      "audioUpdate": "无法应用麦克风或耳聋设置，已停止共享。",
+      "audioCapture": "Android 无法采集请求的音频，请检查麦克风和系统音频支持情况。",
+      "release": "Android 未能完全释放屏幕录制，请通过系统通知停止共享。",
+      "connection": "原生通话连接已结束或被拒绝，屏幕共享已停止。",
+      "serverUnavailable": "此服务器尚未提供原生屏幕共享接口，请更新服务器后再从 Android 共享。"
+    }
   }
 }

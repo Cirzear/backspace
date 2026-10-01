@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="screen_share_channel">Bildschirmübertragung</string>
+    <string name="screen_share_title">Backspace überträgt deinen Bildschirm</string>
+    <string name="screen_share_body">Dein Anruf bleibt aktiv, während du andere Apps verwendest.</string>
+    <string name="screen_share_stop">Übertragung beenden</string>
+</resources>

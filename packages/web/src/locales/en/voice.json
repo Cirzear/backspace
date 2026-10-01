@@ -252,5 +252,26 @@
     "shareScreen": "Share screen",
     "stopSharingScreen": "Stop sharing screen",
     "disconnect": "Disconnect from call"
+  },
+  "nativeScreenShare": {
+    "consent": "Choose quality, then approve Android’s screen capture request. Microphone and call audio continue through the native service while you share in the background.",
+    "audioNote": "System audio requires Android 10 or newer. Only apps that allow playback capture can be heard; protected content and call audio are excluded.",
+    "restartSettings": "Stop and restart sharing to change quality or system audio.",
+    "starting": "Waiting for Android permission…",
+    "cancelled": "Screen sharing was cancelled. Nothing is being shared.",
+    "failed": "Screen sharing failed. Check screen capture and microphone permissions and try again.",
+    "errors": {
+      "busy": "A screen share is already active. Stop it before starting another.",
+      "invalidOptions": "Android could not use these capture settings. System audio requires Android 10 or newer.",
+      "audioPermission": "Microphone permission is required for background call audio. Allow microphone access and try again.",
+      "consent": "Android could not open the screen capture permission request.",
+      "service": "Android could not start the foreground sharing service.",
+      "timeout": "Starting screen sharing timed out. Check the connection and try again.",
+      "audioUpdate": "The microphone or deafen setting could not be applied. Sharing has been stopped.",
+      "audioCapture": "Android could not capture the requested audio. Check microphone and system audio support.",
+      "release": "Android could not fully release screen capture. Stop sharing from the system notification.",
+      "connection": "The native call connection ended or was rejected. Screen sharing has stopped.",
+      "serverUnavailable": "This server does not provide native screen sharing. Update the server before sharing from Android."
+    }
   }
 }

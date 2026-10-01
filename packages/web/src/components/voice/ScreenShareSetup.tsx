@@ -1,3 +1,5 @@
+import { NativeScreenShareSetup } from '../../mobile/NativeScreenShareSetup';
+import { isNativeScreenShare } from '../../mobile/nativeScreenSharePlugin';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
@@ -72,6 +74,11 @@ function errorKey(err: unknown): SetupError {
 }
 
 export function ScreenShareSetup() {
+  // Keep Android outside every browser staging effect and preview path.
+  return isNativeScreenShare() ? <NativeScreenShareSetup /> : <BrowserScreenShareSetup />;
+}
+
+function BrowserScreenShareSetup() {
   const { t } = useTranslation(['voice', 'common']);
   const isOpen = useScreenShareSetupStore((s) => s.isOpen);
   const close = useScreenShareSetupStore((s) => s.close);

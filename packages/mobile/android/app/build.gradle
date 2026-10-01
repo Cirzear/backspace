@@ -1,8 +1,10 @@
 apply plugin: 'com.android.application'
+apply plugin: 'org.jetbrains.kotlin.android'
 
 android {
     namespace = "io.github.backspace.mobile"
     compileSdk = rootProject.ext.compileSdkVersion
+    kotlinOptions { jvmTarget = '21' }
     defaultConfig {
         applicationId "io.github.backspace.mobile"
         minSdkVersion rootProject.ext.minSdkVersion
@@ -36,6 +38,9 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
+    // Separate native voice and screen Rooms keep microphone and playback capture independent.
+    implementation 'io.livekit:livekit-android:2.29.0'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

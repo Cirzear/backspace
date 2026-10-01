@@ -386,7 +386,47 @@ ScreenShareConfig {
 
 **Enforcement is client-side only.** LiveKit's `VideoGrant` has no bitrate, resolution or frame-rate field, and the publish goes from the client straight to the SFU without passing the Backspace server, so no instance can enforce these caps on a modified client. The host's server takes part only when it issues the token. Server-side enforcement would need a LiveKit feature, not a Backspace protocol change.
 
-### Start flow — `ScreenShareSetup` (stage, then publish)
+### Android native screen sharing and audio handover
+
+`ScreenShareSetup` dispatches Android to `mobile/NativeScreenShareSetup.tsx`;
+no browser staging, `getDisplayMedia` or preview capture runs. Resolution,
+frame rate, bitrate and optional system audio remain available before consent.
+Android negotiates codec/content mode; quality/audio changes require restarting.
+System audio requires Android 10+, permits only capturable app playback, and
+excludes protected content and communication audio. Copy is in `voice:nativeScreenShare`
+for all four shipped languages.
+
+`mobile/nativeScreenShare.ts` requests `/api/livekit/screen-token` through the
+channel-origin API, or the incoming federated DM's `callOrigin` API with
+`federatedCallId`. The exact Web room identity is `ownerIdentity`; home IDs are
+never substituted. Consuming the initial federated LiveKit token clears only
+that token/URL; call origin and locator survive until the call ends.
+
+The response supplies a screen token/identity and a voice token/identity on the
+same LiveKit URL. Native uses separate participants because each audio device
+module has one capture source. Screen publishes screen video and optional system
+audio; native voice owns microphone capture and remote microphone playback.
+Server metadata associates each with the original Web participant, not a parsed
+helper identity. The original Web room remains connected.
+
+Before `BackspaceScreenShare.start`, `nativeVoiceActive` is set and the bridge
+awaits `suspendWebMicrophoneForNative(room)`: Web microphone publication and raw
+capture are stopped, not merely muted. Web microphone playback is suspended;
+watched screen audio stays on its existing Web path. Native receives the same
+origin's WebSocket URL and in-memory auth token, and binds the screen identity
+before capturing. No token enters preferences or URLs. Successful native start
+updates sharing status and broadcasts `voice_status`; cancellation is failure,
+never success. Mute/deafen and origin-scoped moderation changes propagate with
+`updateAudioState`.
+
+OS stop, errors, setup cancellation, leave, room disconnect and logout converge
+on native stop plus `/api/livekit/screen-stop {identity}` on the issuing API.
+Cleanup retains that session's in-memory credential across synchronous logout.
+Only completed native teardown releases `nativeVoiceActive`, allowing the Web
+microphone effect to reacquire. Store resets deliberately do not clear native
+ownership ahead of actual teardown.
+
+### Start flow — `ScreenShareSetup` (browser/desktop stage, then publish)
 
 Every screen share starts from one screen, `ScreenShareSetup` (mounted once in `App.tsx`, opened through `screenShareSetupStore`). The control-bar button, the keybind, the mobile call screen and "Change stream" on the local tile all open it; nothing calls capture directly.
 

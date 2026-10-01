@@ -252,5 +252,26 @@
     "shareScreen": "Bildschirm teilen",
     "stopSharingScreen": "Bildschirmübertragung beenden",
     "disconnect": "Anruf verlassen"
+  },
+  "nativeScreenShare": {
+    "consent": "Wähle die Qualität und bestätige dann die Bildschirmaufnahme von Android. Mikrofon und Anrufaudio laufen beim Teilen im Hintergrund über den nativen Dienst weiter.",
+    "audioNote": "Systemaudio erfordert Android 10 oder neuer. Nur Apps, die Wiedergabeaufnahmen erlauben, sind hörbar; geschützte Inhalte und Anrufaudio sind ausgeschlossen.",
+    "restartSettings": "Beende die Freigabe und starte sie erneut, um Qualität oder Systemaudio zu ändern.",
+    "starting": "Warten auf die Android-Berechtigung…",
+    "cancelled": "Die Bildschirmfreigabe wurde abgebrochen. Es wird nichts geteilt.",
+    "failed": "Die Bildschirmfreigabe ist fehlgeschlagen. Prüfe die Berechtigungen für Bildschirmaufnahme und Mikrofon und versuche es erneut.",
+    "errors": {
+      "busy": "Eine Bildschirmfreigabe ist bereits aktiv. Beende sie, bevor du eine weitere startest.",
+      "invalidOptions": "Android konnte diese Aufnahmeeinstellungen nicht verwenden. Systemaudio erfordert Android 10 oder neuer.",
+      "audioPermission": "Für Anrufaudio im Hintergrund ist die Mikrofonberechtigung erforderlich. Erlaube den Zugriff und versuche es erneut.",
+      "consent": "Android konnte die Berechtigungsanfrage für die Bildschirmaufnahme nicht öffnen.",
+      "service": "Android konnte den Vordergrunddienst für die Freigabe nicht starten.",
+      "timeout": "Zeitüberschreitung beim Start der Bildschirmfreigabe. Prüfe die Verbindung und versuche es erneut.",
+      "audioUpdate": "Die Mikrofon- oder Taubschaltung konnte nicht angewendet werden. Die Freigabe wurde beendet.",
+      "audioCapture": "Android konnte das angeforderte Audio nicht aufnehmen. Prüfe Mikrofon und Unterstützung für Systemaudio.",
+      "release": "Android konnte die Bildschirmaufnahme nicht vollständig beenden. Stoppe die Freigabe über die Systembenachrichtigung.",
+      "connection": "Die native Anrufverbindung wurde beendet oder abgelehnt. Die Bildschirmfreigabe wurde gestoppt.",
+      "serverUnavailable": "Dieser Server bietet keine native Bildschirmfreigabe. Aktualisiere den Server, bevor du von Android teilst."
+    }
   }
 }

@@ -13,6 +13,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         // Register before the bridge is built; retain Capacitor's external navigation isolation.
         registerPlugin(BackspaceSessionPlugin.class);
+        registerPlugin(BackspaceScreenSharePlugin.class);
         super.onCreate(savedInstanceState);
         // Inset the entire WebView, including fixed portals. CSS padding on individual
         // pages cannot protect fullscreen layouts and would double-count keyboard resize.

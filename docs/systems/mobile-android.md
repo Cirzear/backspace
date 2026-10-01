@@ -70,7 +70,46 @@ app theme so the status strip stays dark across Android theme changes.
 TLS errors are not bypassed; cleartext traffic and mixed content are disabled.
 External websites are not allowlisted into the native bridge.
 
+## Native screen sharing and microphone handoff
+
+Android uses MediaProjection in a user-authorized `mediaProjection|microphone`
+foreground service. `BackspaceScreenShare` owns two LiveKit connections because the
+Android SDK's audio device module has one capture input per Room:
+
+- `purpose: screen-share`: screen video and independent playback-capture audio,
+  no remote subscriptions and no actual microphone capture.
+- `purpose: native-voice`: the microphone and remote microphone playback.
+
+Both carry server-signed `ownerIdentity` metadata and are aggregated into the
+existing user by `hooks/liveKitParticipants.ts`, not displayed as extra members.
+Track subscription uses the publisher identity; watch/volume state uses the owner.
+`hooks/liveKitMicrophone.ts` unpublishes and releases the browser mic before native
+start, and restores it after native stop. Web playback pauses only remote voice;
+other watched screen audio keeps its existing playback controls.
+
+`POST /api/livekit/screen-token` issues the bounded source grants after membership,
+active call, identity and STREAM checks. `screen-stop` removes both publishers.
+An authenticated native WebSocket binds through `native_voice_bind` without
+claiming or displacing the existing web voice socket, and keeps the same voice
+session alive while the WebView sleeps. See `voice.md` and `websocket.md` for the
+lifecycle and federated-host routing. Server and receiving clients must be updated
+along with the APK; an old server is reported explicitly, not as browser capture
+support failure.
+
+System audio requires Android 10+ and source apps that permit playback capture.
+The app's own UID is excluded to avoid rebroadcasting the call. Protected/DRM
+video can be black; prohibited audio can be silent. The microphone is independent
+and can be muted without stopping screen capture. Notification and system stop
+controls release the capture. This does not bypass Android recording consent.
+
 ## Limits and verification
+
+There is no background push registration or automatic APK updater. Ordinary calls
+outside a sharing session still use the Web media pipeline. Native sharing does
+not guarantee that every device will keep the Web owner connection alive forever;
+a terminal Web room disconnect ends the share rather than leaving orphan media.
+Background, locked-screen, route and microphone-restoration behavior must be
+verified on devices, not inferred from a foreground service or successful build.
 
 Compilation and unit tests are not device verification. Before treating a build
 as production-ready, exercise instance selection, login/logout, restart credential
