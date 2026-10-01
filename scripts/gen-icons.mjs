@@ -4,7 +4,7 @@
  *
  * Reads from assets/brand/{app-icon.svg, app-icon-small.svg, mark-icon.svg,
  * mark-small.svg, mark-mono-light.svg, mark-tray.svg} and writes the
- * entire desktop + web icon set:
+ * entire desktop + web + Android icon set:
  *   - macOS .icns (10-rep iconset)
  *   - Windows .ico (multi-size)
  *   - Linux per-size PNGs (electron-builder dir mode)
@@ -12,6 +12,7 @@
  *   - Windows tray .ico (multi-size, DPI-auto, glyph inset per frame)
  *   - Linux tray PNG (22x22, 18px glyph)
  *   - Web favicons, PWA, in-app brand logo, PWA maskable
+ *   - Android legacy, round and adaptive launcher icons (mdpi–xxxhdpi)
  *   - assets/brand/app-icon-1024.png, a reference export of the app icon
  *
  * Run via `pnpm gen-icons` after artwork changes; commit the diff.
@@ -30,9 +31,10 @@
  *
  * APP-ICON RENDERING: every app-icon output renders straight from vector.
  * `app-icon.svg` already carries its own badge, drop shadow and
- * inner shadow, so there is no raster source and no post-render masking —
- * sharp/librsvg renders the SVG at the target size and that's the pixel
- * output. Sizes 16 and 32 render from `app-icon-small.svg` instead: at
+ * inner shadow, so there is no raster source — sharp/librsvg renders
+ * the SVG at the target size. The legacy Android round variant additionally
+ * applies a circular silhouette; adaptive icons leave masking to the launcher.
+ * Sizes 16 and 32 render from `app-icon-small.svg` instead: at
  * that size the standard mark's inset strokes and shadow read as noise,
  * so the small variant carries a bolder, simplified mark inside the same
  * badge geometry. See APP_ICON_SMALL_MAX.
@@ -66,6 +68,16 @@ const DESKTOP_BUILD = join(ROOT, 'packages/desktop/build');
 const DESKTOP_RES   = join(ROOT, 'packages/desktop/resources');
 const WEB_ICONS      = join(ROOT, 'packages/web/public/icons');
 const BRAND          = join(ROOT, 'assets/brand');
+const ANDROID_RES    = join(ROOT, 'packages/mobile/android/app/src/main/res');
+
+// Launcher bitmaps are 48dp; adaptive layers are 108dp with a central 66dp
+// safe circle. A 52dp-tall mark fits inside that circle even at its corners.
+const ANDROID_ICON_DENSITIES = [
+  ['mdpi', 1], ['hdpi', 1.5], ['xhdpi', 2], ['xxhdpi', 3], ['xxxhdpi', 4],
+];
+const ANDROID_LEGACY_DP = 48;
+const ANDROID_ADAPTIVE_DP = 108;
+const ANDROID_MARK_HEIGHT_DP = 52;
 
 // app-icon.svg's badge ground: a vertical gradient from plum to
 // near-black, matching the badge's own `paint0_linear` gradient exactly.
@@ -359,6 +371,34 @@ async function writeMaskableIcon(path, markSvg, canvas, heightScale) {
   writeFileSync(path, composed);
 }
 
+async function writeAndroidIcons(icons, markSvg, trace) {
+  for (const [density, scale] of ANDROID_ICON_DENSITIES) {
+    const dir = join(ANDROID_RES, `mipmap-${density}`);
+    mkdirSync(dir, { recursive: true });
+    const size = Math.round(ANDROID_LEGACY_DP * scale);
+    const launcher = join(dir, 'ic_launcher.png');
+    await writeAppIconPng(launcher, icons, size);
+    await trace('android-icon', launcher, `${density} (app-icon)`);
+
+    // Android 7.1 may select roundIcon without supporting adaptive layers.
+    // Use the same badge artwork, with a circular silhouette and no clipped glyph.
+    const round = join(dir, 'ic_launcher_round.png');
+    const badge = await renderAppIconPng(icons, size);
+    const circle = Buffer.from(`<svg width="${size}" height="${size}"><circle cx="${size / 2}" cy="${size / 2}" r="${size / 2}" fill="white"/></svg>`);
+    const roundBadge = await sharp(plumGradientSvg(size)).composite([{ input: badge }]).png().toBuffer();
+    await sharp(roundBadge).composite([{ input: circle, blend: 'dest-in' }]).png({ compressionLevel: 9 }).toFile(round);
+    await trace('android-round', round, `${density} (round app-icon)`);
+
+    const canvas = Math.round(ANDROID_ADAPTIVE_DP * scale);
+    const mark = await sharp(markSvg, { density: SVG_DENSITY })
+      .resize({ height: Math.round(ANDROID_MARK_HEIGHT_DP * scale) }).png().toBuffer();
+    const foreground = join(dir, 'ic_launcher_foreground.png');
+    await sharp({ create: { width: canvas, height: canvas, channels: 4, background: '#00000000' } })
+      .composite([{ input: mark, gravity: 'center' }]).png({ compressionLevel: 9 }).toFile(foreground);
+    await trace('android-front', foreground, `${density} (52dp safe mark)`);
+  }
+}
+
 // ---- main ----
 
 async function main() {
@@ -512,6 +552,9 @@ async function main() {
   // rule, so no bolder variant is needed here.
   copyFileSync(SRC.markMonoLight, join(WEB_ICONS, 'logo-mark.svg'));
   await trace('logo-mark-svg', join(WEB_ICONS, 'logo-mark.svg'), 'copy of mark-mono-light.svg');
+
+  // --- Android: native launcher resources, independent of WebView assets ---
+  await writeAndroidIcons(icons, markIcon, trace);
 
   // --- Summary ---
   const fmtBytes = (n) => {

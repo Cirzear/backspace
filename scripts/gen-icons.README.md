@@ -5,6 +5,7 @@ Regenerates every brand artefact from sources in `assets/brand/`:
 - macOS `.icns`, Windows `.ico`, Linux per-size PNGs (`packages/desktop/build/`)
 - Tray icons for all three platforms (`packages/desktop/resources/`)
 - Web favicons, PWA manifest icons, maskable, in-app `logo.png` (`packages/web/public/icons/`)
+- Android legacy, round and adaptive foreground PNGs (`packages/mobile/android/app/src/main/res/mipmap-*`)
 
 ## When to run
 
@@ -15,11 +16,11 @@ the same PR.
 ```bash
 pnpm gen-icons
 git status                       # review which files changed
-git add packages/desktop/build/ packages/desktop/resources/ packages/web/public/icons/ assets/brand/app-icon-1024.png
+git add packages/desktop/build/ packages/desktop/resources/ packages/web/public/icons/ packages/mobile/android/app/src/main/res/mipmap-*/ assets/brand/app-icon-1024.png
 git commit -m "chore: regenerate brand icons"
 ```
 
-(Stage explicit paths rather than `git add -A` — the generator only writes to those four paths, and an unrelated working-tree change shouldn't accidentally land in a "regenerate icons" commit.)
+(Stage explicit paths rather than `git add -A` — the generator only writes to those paths, and an unrelated working-tree change shouldn't accidentally land in a "regenerate icons" commit.)
 
 ## Determinism
 
@@ -48,9 +49,9 @@ inner shadow and a soft-light stroke overlay, with the glyph itself a
 white-to-`#7c6cf6` gradient.
 
 Every app-icon output renders straight from vector: there is no raster
-source and no post-render masking. `app-icon.svg` carries its own badge,
-filters and stroke overlay, so sharp/librsvg renders it at the target
-size and that's the pixel output. The only routing decision by size is:
+source. `app-icon.svg` carries its own badge, filters and stroke overlay,
+so sharp/librsvg renders it at the target size. Only the native Android legacy
+round variant adds a circular silhouette after rendering. The routing decision by size is:
 16 and 32 render from `app-icon-small.svg` instead, whose mark is a
 bolder, simplified variant of the same glyph in the same badge geometry.
 At 16/32 the standard mark's inset strokes and shadow read as noise at
@@ -98,5 +99,16 @@ badge shape) instead of leaving the canvas transparent:
   (Android launcher masks crop arbitrarily past the icon's own bounds)
   with `mark-icon.svg`'s gradient glyph centred at 60% of the canvas
   height.
+
+## Native Android
+
+The generator also writes the five launcher densities (mdpi, hdpi, xhdpi,
+xxhdpi, xxxhdpi). Legacy `ic_launcher.png` uses the full badge; the round variant
+composites that badge over the plum ground and applies a circular silhouette.
+Adaptive foregrounds use the bare gradient glyph at 52dp tall, centered in a
+108dp transparent canvas, so the glyph fits inside Android's 66dp safe circle.
+The two `mipmap-anydpi-v26` XMLs reference the same foreground and the gradient
+in `drawable/ic_launcher_background.xml`; keep its colors aligned with the SVG
+master. Neither PWA icons nor WebView assets override these native resources.
 
 `Artworks-Backspace/` is the design archive — never read by this script.
