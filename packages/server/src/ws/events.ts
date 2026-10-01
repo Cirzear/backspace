@@ -24,6 +24,7 @@ import { generateFederatedCallToken } from '../routes/livekit.js';
 import { config } from '../config.js';
 import { canActOnMemberInSpace } from '../utils/roleHierarchy.js';
 import { ERROR_MESSAGES } from '../utils/httpErrors.js';
+import { syncNativeVoicePermissions } from './nativeVoiceSessions.js';
 
 /**
  * Re-evaluate SPEAK permission for all participants in voice channels
@@ -38,6 +39,8 @@ export function checkVoicePermissions(spaceId: string): void {
 
     for (const userId of room.participants) {
       const perms = computePermissions(userId, spaceId, roomId);
+      // STREAM/CONNECT revocation must end native publishers even when SPEAK is unchanged.
+      syncNativeVoicePermissions(userId);
       const canSpeak = (perms & PermissionBits.SPEAK) !== 0n || (perms & PermissionBits.ADMINISTRATOR) !== 0n;
       const wasMuted = connectionManager.isPermissionMuted(spaceId, userId);
       const shouldMute = !canSpeak;

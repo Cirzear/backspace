@@ -10,6 +10,7 @@ import { sanitizeUser } from '../utils/sanitize.js';
 import { canActOnMember, canManageRoleAt } from '@backspace/shared/src/permissions.js';
 import { canActOnMemberInSpace, getHierarchyStanding } from '../utils/roleHierarchy.js';
 import { roleGrantRefusal } from './spaceRoles.js';
+import { syncNativeVoicePermissions } from '../ws/nativeVoiceSessions.js';
 import { checkVoicePermissions } from '../ws/events.js';
 import { connectionManager } from '../ws/handler.js';
 
@@ -360,6 +361,8 @@ export function removeSpaceMemberRoutes(app: FastifyInstance): void {
       ))
       .run();
 
+    // Membership removal also revokes native publishers, which bypass the Web media pipeline.
+    syncNativeVoicePermissions(uid);
     // Clean up any voice restrictions for the removed member
     db.delete(schema.voiceRestrictions).where(
       and(

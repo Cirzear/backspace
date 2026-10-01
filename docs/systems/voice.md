@@ -247,6 +247,68 @@ Three independent muting mechanisms:
 
 ## Screen Sharing
 
+### Android native publisher sessions
+
+`POST /api/livekit/screen-token` authenticates through the same instance API as the
+Web voice session. Exactly one of `channelId`, `dmChannelId`, `federatedCallId`
+locates the active call; `ownerIdentity` must be the existing Web participant's
+identity. Space calls require current room membership, CONNECT and STREAM. DM
+calls require active call state and membership. The SFU must confirm the owner
+is actually connected before credentials are issued.
+
+**RoomService transport:** `utils/nativeVoicePublisher.ts` uses the configured
+LiveKit URL for owner checks, helper removal and permission updates. It maps only
+`wss:` → `https:` and `ws:` → `http:`; existing HTTP(S) schemes stay unchanged.
+`patches/livekit-server-sdk@2.19.1.patch` fixes the SDK's Twirp URL construction in
+source and both ESM/CommonJS distributions to preserve the base pathname:
+`/livekit` and `/livekit/` both send `/livekit/twirp/livekit.RoomService/<method>`,
+while root-host URLs still send `/twirp/livekit.RoomService/<method>`. The SDK's
+public RoomServiceClient options do not expose its internal RPC prefix. No extra
+URL, proxy change or transport fallback is required; failures still propagate.
+
+The response contains `{ token, voiceToken, url, roomName, identity, voiceIdentity,
+ownerIdentity }`. Android uses two independent SDK rooms/ADMs in the same SFU room:
+
+- `screen:<random UUID>`: SCREEN_SHARE + SCREEN_SHARE_AUDIO only, cannot subscribe.
+- `native-voice:<random UUID>`: MICROPHONE only when SPEAK and moderation allow;
+  may subscribe unless space-deafened. Native subscribes only to remote microphones.
+
+Both JWTs contain immutable signed JSON metadata `{ purpose, ownerIdentity }`;
+`purpose` is `screen-share` or `native-voice`. Neither may publish camera/data or
+update its own metadata. Clients aggregate both helpers into the owner, retain
+actual publisher identities for subscriptions, and suppress Web mic/playback
+while native voice owns audio. Random identities prevent an older helper token
+from displacing either the Web owner or a newer helper session.
+
+`POST /api/livekit/screen-stop { identity }` stops both helpers and is idempotent;
+only the authenticated issuer can stop a tracked session. The native authenticated
+WebSocket binds with `native_voice_bind { identity }` rather than `voice_join`.
+It shares the existing voice lifetime without sending `displaced` to Web. Losing
+that socket ends its native publishers; a bound live socket keeps the space/DM
+voice session alive while WebView is suspended. The normal reconnect grace still
+applies to the Web owner after both transports disappear. See websocket.md.
+
+ConnectionManager leave, device displacement, room destruction, account removal,
+and federated-call cleanup revoke the tracked pair. Role/override changes revoke
+it when CONNECT/STREAM is lost; mute/SPEAK/deafen changes update voice-helper SFU
+permissions. Membership kicks/leaves revoke native participants, including remote
+DM participants absent from the host's local WebSocket participant set. SFU cleanup
+failures are logged (and explicit stop fails); they are not reported as success.
+
+**Security/lifecycle boundary:** JWTs expire after 60 seconds for initial entry,
+not after 60 seconds of an already-connected session. This feature adds no mandatory
+LiveKit webhook or persistent session table. As with the existing main-room tokens,
+self-hosted SFU removal is not assumed to revoke a bearer token: an old token may
+rejoin within its validity window. A backend restart loses the in-memory helper
+registry; orphaned SFU participants cannot then be recovered by `screen-stop` alone.
+Native must stop both SDK rooms on process/service/transport teardown. These limits
+must not be described as strict JWT revocation or guaranteed orphan reclamation.
+
+Federated incoming calls request through their signaling `callOrigin`; that instance
+proxies the authenticated home pair to the actual room host. Host attribution checks
+both homeUserId and homeInstance and never treats bare home ids as globally unique.
+No new database schema, LiveKit service, or deployment callback is required.
+
 ### Resolution & Framerate Options
 ```
 Standard resolutions: 540, 720, 1080, 1440, 2160 (+ 'native')

@@ -7,6 +7,7 @@ import { hasPermission, isBanned, isSpaceOwner, PermissionBits } from '../utils/
 import { canActOnMemberInSpace } from '../utils/roleHierarchy.js';
 import { sanitizeUser } from '../utils/sanitize.js';
 import { connectionManager } from '../ws/handler.js';
+import { syncNativeVoicePermissions } from '../ws/nativeVoiceSessions.js';
 
 export function spaceBanRoutes(app: FastifyInstance): void {
   // GET /api/spaces/:id/bans - List bans
@@ -130,6 +131,7 @@ export function spaceBanRoutes(app: FastifyInstance): void {
       )).run();
     });
 
+    syncNativeVoicePermissions(targetId);
     // Broadcast member_left event so other clients update their member list
     connectionManager.sendToSpace(id, {
       type: 'member_left',

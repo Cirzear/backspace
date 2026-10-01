@@ -166,6 +166,14 @@ not representative of Linux behaviour).
 
 Caddy provisions and renews TLS certificates automatically for `DOMAIN`; the persisted ACME state lives in the `caddy-data` / `caddy-config` named volumes.
 
+Server-side LiveKit management requests use this same `/livekit` route. The pnpm
+patch `patches/livekit-server-sdk@2.19.1.patch` preserves the configured pathname
+when appending `/twirp/livekit.RoomService/<method>`; otherwise the SDK sends the
+request to Backspace's root route instead of the SFU. `nativeVoicePublisher.ts`
+converts WebSocket schemes to HTTP(S) without downgrading an existing HTTPS URL.
+Keep the patch in dependency installs; no Caddy change or separate internal
+LiveKit URL is needed. See voice.md, "RoomService transport".
+
 ### First-time setup: `install.sh`
 
 `./install.sh` is the interactive installer for a fresh Linux host. It prompts for the domain, whether to enable voice, and an instance name (each skippable via the `DOMAIN` / `ENABLE_VOICE` / `INSTANCE_NAME` env vars for a non-interactive run), generates a `JWT_SECRET`, writes `.env`, optionally configures LiveKit (`livekit.yaml` + `COMPOSE_PROFILES=voice`), and brings the stack up.

@@ -2,7 +2,7 @@
   "name": "backspace",
   "version": "1.7.0",
   "private": true,
-  "description": "Open, self-hosted communication platform \u2014 text, voice, video, and federation",
+  "description": "Open, self-hosted communication platform — text, voice, video, and federation",
   "license": "AGPL-3.0-only",
   "author": "Jannis Braun",
   "homepage": "https://github.com/TheZwiss/backspace",
@@ -66,7 +66,8 @@
       "better-sqlite3"
     ],
     "patchedDependencies": {
-      "uiohook-napi@1.5.5": "patches/uiohook-napi@1.5.5.patch"
+      "uiohook-napi@1.5.5": "patches/uiohook-napi@1.5.5.patch",
+      "livekit-server-sdk@2.19.1": "patches/livekit-server-sdk@2.19.1.patch"
     }
   },
   "packageManager": "pnpm@10.34.3",

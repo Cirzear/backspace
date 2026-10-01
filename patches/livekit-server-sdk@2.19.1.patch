@@ -1,0 +1,48 @@
+diff --git a/dist/TwirpRPC.cjs b/dist/TwirpRPC.cjs
+index be019086d9ef4b6dc7e9b640ad8f5ac02ac6d830..65ae0b3c719feabb857f9250f69cd82865a007f1 100644
+--- a/dist/TwirpRPC.cjs
++++ b/dist/TwirpRPC.cjs
+@@ -132,7 +132,10 @@ class TwirpRpc {
+       let response;
+       let transportError;
+       try {
+-        response = await fetch(new URL(path, current), init);
++        // Resolve beneath the configured reverse-proxy path, not the origin root.
++        const baseUrl = new URL(current);
++        baseUrl.pathname = `${baseUrl.pathname.replace(/\/$/, "")}/`;
++        response = await fetch(new URL(path.replace(/^\//, ""), baseUrl), init);
+       } catch (e) {
+         transportError = e;
+       }
+diff --git a/dist/TwirpRPC.js b/dist/TwirpRPC.js
+index 5b6100458bec06965215cc11208d82fc6cfb579d..d078a9f5a23c59b64f371dec42f90b1d1f1237e4 100644
+--- a/dist/TwirpRPC.js
++++ b/dist/TwirpRPC.js
+@@ -111,7 +111,10 @@ class TwirpRpc {
+       let response;
+       let transportError;
+       try {
+-        response = await fetch(new URL(path, current), init);
++        // Resolve beneath the configured reverse-proxy path, not the origin root.
++        const baseUrl = new URL(current);
++        baseUrl.pathname = `${baseUrl.pathname.replace(/\/$/, "")}/`;
++        response = await fetch(new URL(path.replace(/^\//, ""), baseUrl), init);
+       } catch (e) {
+         transportError = e;
+       }
+diff --git a/src/TwirpRPC.ts b/src/TwirpRPC.ts
+index f93a9d0408d42ca5c007d8b5f21187e56a3ce08e..9729742b4e47b24813fb9f5cab0aeed8ff74908b 100644
+--- a/src/TwirpRPC.ts
++++ b/src/TwirpRPC.ts
+@@ -209,7 +209,10 @@ export class TwirpRpc {
+       let response: Response | undefined;
+       let transportError: unknown;
+       try {
+-        response = await fetch(new URL(path, current), init);
++        // Resolve beneath the configured reverse-proxy path, not the origin root.
++        const baseUrl = new URL(current);
++        baseUrl.pathname = `${baseUrl.pathname.replace(/\/$/, '')}/`;
++        response = await fetch(new URL(path.replace(/^\//, ''), baseUrl), init);
+       } catch (e) {
+         transportError = e;
+       }

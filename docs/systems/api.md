@@ -312,8 +312,16 @@ Backend: Klipy API (requires `gifApiKey` in instance_settings)
 ## Voice (`routes/livekit.ts`) — auth required
 ```
 POST /livekit/token  { channelId | dmChannelId } → { token, url }
+POST /livekit/screen-token { channelId? | dmChannelId? | federatedCallId?, ownerIdentity } → { token, voiceToken, url, roomName, identity, voiceIdentity, ownerIdentity }
+POST /livekit/screen-stop { identity } → 204
 ```
-Permissions checked: CONNECT, SPEAK, STREAM (space channels). DM calls: always full grants.
+Main token permissions: CONNECT, SPEAK, STREAM (space channels); full DM grants.
+Native token requests require exactly one locator, active voice/call membership,
+an authenticated owner identity already connected to the host SFU, and CONNECT +
+STREAM for space channels. The screen token cannot subscribe; the voice token
+publishes only MICROPHONE subject to SPEAK/moderation. Both prohibit camera/data
+and metadata changes. Stop is idempotent and only the tracked issuer may stop the
+pair. See voice.md for the 60-second token and in-memory cleanup limitations.
 
 ## Instance (`routes/instance.ts`) — public
 ```

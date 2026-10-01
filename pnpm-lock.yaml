@@ -23,6 +23,9 @@ overrides:
   sharp@^0.35: ^0.35.4
 
 patchedDependencies:
+  livekit-server-sdk@2.19.1:
+    hash: 50da562f9e15735f01de8ca610968e405f8b44904783695e569214baf6e528c8
+    path: patches/livekit-server-sdk@2.19.1.patch
   uiohook-napi@1.5.5:
     hash: 58cc6a1bd7f69277c47fa5fb1d8342d52acc5a48c420c0e5854857ee6e783d51
     path: patches/uiohook-napi@1.5.5.patch
@@ -149,7 +152,7 @@ importers:
         version: 9.0.3
       livekit-server-sdk:
         specifier: ^2.19.1
-        version: 2.19.1
+        version: 2.19.1(patch_hash=50da562f9e15735f01de8ca610968e405f8b44904783695e569214baf6e528c8)
       sharp:
         specifier: ^0.35.4
         version: 0.35.4(@types/node@22.20.4)
@@ -10779,7 +10782,7 @@ snapshots:
       typed-emitter: 2.1.0
       webrtc-adapter: 9.0.6
 
-  livekit-server-sdk@2.19.1:
+  livekit-server-sdk@2.19.1(patch_hash=50da562f9e15735f01de8ca610968e405f8b44904783695e569214baf6e528c8):
     dependencies:
       '@bufbuild/protobuf': 1.10.1
       '@livekit/protocol': 1.51.0

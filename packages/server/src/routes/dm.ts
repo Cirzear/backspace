@@ -4,6 +4,7 @@ import { getDb, schema } from '../db/index.js';
 import { authenticate } from '../utils/auth.js';
 import { generateSnowflake } from '../utils/snowflake.js';
 import { isDmMember, isDeadOneOnOne } from '../utils/permissions.js';
+import { revokeNativeVoiceSessions } from '../ws/nativeVoiceSessions.js';
 import { connectionManager } from '../ws/handler.js';
 import {
   MAX_MESSAGE_LENGTH,
@@ -400,6 +401,11 @@ export function ensureOneOnOneDmChannel(
  * No-op if the user isn't currently in this DM's voice room.
  */
 function evictUserFromDmVoiceRoom(channelId: string, userId: string): void {
+  // Remote DM publishers are not in the host's local WS participant set.
+  revokeNativeVoiceSessions({ userId, roomId: channelId });
+  const federatedId = getDb().select({ value: schema.dmChannels.federatedId }).from(schema.dmChannels)
+    .where(eq(schema.dmChannels.id, channelId)).get()?.value;
+  if (federatedId) revokeNativeVoiceSessions({ userId, roomId: federatedId });
   const userRoom = connectionManager.getUserRoom(userId);
   if (userRoom && userRoom.roomId === channelId) {
     const left = connectionManager.leaveCurrentRoom(userId);

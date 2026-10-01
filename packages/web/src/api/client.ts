@@ -1,3 +1,4 @@
+import type { NativeScreenRoomLocator, NativeScreenTokenResponse } from '../mobile/nativeScreenShareTypes';
 import { getApiBaseUrl } from '../platform/instanceRuntime';
 import { getSessionItem, removeSessionItem, flushSessionStorage } from '../platform/sessionStorage';
 import type { PersonalSticker } from '@backspace/shared/src/stickers';
@@ -310,6 +311,8 @@ export class BackspaceApiClient {
   readonly livekit: {
     token: (channelId: string) => Promise<LiveKitTokenResponse>;
     dmToken: (dmChannelId: string) => Promise<LiveKitTokenResponse>;
+    screenToken: (data: NativeScreenRoomLocator & { ownerIdentity: string }) => Promise<NativeScreenTokenResponse>;
+    screenStop: (identity: string) => Promise<void>;
   };
 
   readonly settings: {
@@ -465,6 +468,8 @@ export class BackspaceApiClient {
         throw HttpError.fromBody(response.status, await response.json().catch(() => null));
       }
 
+      // Explicit no-content routes (screen-stop) must not attempt JSON decoding.
+      if (response.status === 204) return undefined as T;
       return response.json() as Promise<T>;
     }
 
@@ -711,6 +716,8 @@ export class BackspaceApiClient {
         request<LiveKitTokenResponse>('POST', '/livekit/token', { channelId }),
       dmToken: (dmChannelId: string) =>
         request<LiveKitTokenResponse>('POST', '/livekit/token', { dmChannelId }),
+      screenToken: (data) => request<NativeScreenTokenResponse>('POST', '/livekit/screen-token', data),
+      screenStop: (identity) => request<void>('POST', '/livekit/screen-stop', { identity }),
     };
 
     this.settings = {

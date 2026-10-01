@@ -61,6 +61,25 @@ Source: `packages/server/src/ws/handler.ts`, `packages/server/src/ws/events.ts`
 | `voice_leave` | — | |
 | `voice_status` | isMuted, isDeafened, isCameraOn, isScreenSharing | server enforces space/permission mute |
 
+### Native Voice Companion
+
+After normal `auth` → `ready`, Android sends `native_voice_bind { identity }` with
+its screen-token identity. The server requires that this authenticated user owns
+the tracked native session and that its voice/call session is still active.
+Success returns `{ type: 'native_voice_bound', identity, userId, spaceMuted,
+permissionMuted, muted, deafened }`; `muted` is the OR of the two forced-mute
+sources and `deafened` is space deafen, not the user's own mute/deafen choices.
+Refusal returns `error { code: 'forbidden' }` to that socket.
+
+This binding does not replace `voiceWs` or emit `displaced`; a native companion
+must not send `voice_join` or DM `voice_status`. It receives ordinary moderation
+messages and filters them using the acknowledged instance-local `userId`. It
+uses the same RFC ping/pong and optional application `ping`/`pong` heartbeat.
+A bound live companion retains the existing voice session while WebView sleeps.
+Stopping/revoking its native session closes the bound socket with code 1000 and
+reason `Native voice session ended`. A native socket disconnect stops its helper
+pair; it does not independently end a still-connected Web voice session.
+
 ### Voice Moderation
 | type | fields | permission |
 |------|--------|------------|

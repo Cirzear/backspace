@@ -6,9 +6,10 @@ import { computePermissions, PermissionBits } from '../utils/permissions.js';
 import { collectProfileBroadcastTargetIds } from '../utils/userDeletion.js';
 import { unreadCountEvent } from './channelUnreadCounts.js';
 
-import { buildReadyPayload } from './readyPayload.js';
+import { pushReadyPayloadToConnections } from './readyPayload.js';
 import { getVoiceRoomElapsedSeconds, MAX_PENDING_VOICE_RECONNECTS, VOICE_RECONNECT_GRACE_MS, type DmRoomMeta, type FederatedCallEntry, type SpaceRoomMeta, type VoiceRoom } from './voiceRoomTypes.js';
 import { WsRateLimiter } from './wsRateLimiter.js';
+import { hasNativeVoiceSocket, removeNativeVoiceSocket, revokeNativeVoiceSessions, syncNativeVoicePermissions } from './nativeVoiceSessions.js';
 
 class ConnectionManager {
   // userId → Set of WebSocket connections (multiple tabs)
@@ -17,9 +18,7 @@ class ConnectionManager {
   private userSpaces: Map<string, Set<string>> = new Map();
   // ws → userId (reverse lookup)
   private wsToUser: Map<WebSocket, string> = new Map();
-  // Unified voice room tracking (replaces voiceStates + activeCalls)
   private voiceRooms: Map<string, VoiceRoom> = new Map();
-  // O(1) reverse index: userId → roomId
   private userToRoom: Map<string, string> = new Map();
   // userId → { isMuted, isDeafened, isCameraOn, isScreenSharing } — voice user status
   private voiceUserStates: Map<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }> = new Map();
@@ -72,6 +71,7 @@ class ConnectionManager {
     const userId = this.wsToUser.get(ws);
     if (!userId) return undefined;
 
+    const wasNativeVoice = removeNativeVoiceSocket(ws);
     this.wsToUser.delete(ws);
     const userConnections = this.connections.get(userId);
     if (userConnections) {
@@ -81,6 +81,8 @@ class ConnectionManager {
       // another tab must not disturb the active voice session.
       if (this.voiceWs.get(userId) === ws) {
         this.voiceWs.delete(userId);
+        this.scheduleVoiceDisconnect(userId);
+      } else if (wasNativeVoice && !this.voiceWs.has(userId)) {
         this.scheduleVoiceDisconnect(userId);
       }
 
@@ -115,6 +117,7 @@ class ConnectionManager {
 
   private scheduleVoiceDisconnect(userId: string): void {
     this.cancelVoiceDisconnect(userId);
+    if (hasNativeVoiceSocket(userId)) return;
     const roomId = this.userToRoom.get(userId)
       ?? Array.from(this.voiceRooms).find(([, room]) =>
         room.roomType === 'dm'
@@ -152,7 +155,8 @@ class ConnectionManager {
   }
 
   private finalizeVoiceDisconnect(userId: string, expectedRoomId: string | null = null): void {
-    if (this.voiceWs.has(userId)) return;
+    if (this.voiceWs.has(userId) || hasNativeVoiceSocket(userId)) return;
+    revokeNativeVoiceSessions({ userId });
     const current = this.getUserRoom(userId);
     const left = (!expectedRoomId || current?.roomId === expectedRoomId)
       ? this.leaveCurrentRoom(userId)
@@ -193,6 +197,8 @@ class ConnectionManager {
     // Double check they are still offline
     if (this.isUserOnline(userId)) return;
 
+    // Native remote-call sessions have no userToRoom entry, but still require teardown.
+    revokeNativeVoiceSessions({ userId });
     console.log(`[ConnectionManager] Finalizing disconnect for user ${userId}`);
     const db = getDb();
     db.update(schema.users).set({ status: 'offline' }).where(eq(schema.users.id, userId)).run();
@@ -534,6 +540,7 @@ class ConnectionManager {
 
   /** Remove a federated call entry and clear its timeout. */
   clearFederatedCall(federatedId: string): void {
+    revokeNativeVoiceSessions({ roomId: federatedId });
     this.federatedCalls.delete(federatedId);
     const timeout = this.federatedCallTimeouts.get(federatedId);
     if (timeout) {
@@ -613,6 +620,7 @@ class ConnectionManager {
     // Enforce one-room-per-user invariant: silently remove from old room
     const currentRoomId = this.userToRoom.get(userId);
     if (currentRoomId && currentRoomId !== roomId) {
+      revokeNativeVoiceSessions({ userId });
       const oldRoom = this.voiceRooms.get(currentRoomId);
       if (oldRoom) {
         oldRoom.participants.delete(userId);
@@ -632,6 +640,7 @@ class ConnectionManager {
     const room = this.voiceRooms.get(roomId);
     if (!room || !room.participants.has(userId)) return null;
 
+    revokeNativeVoiceSessions({ userId, roomId });
     room.participants.delete(userId);
     this.userToRoom.delete(userId);
 
@@ -664,6 +673,7 @@ class ConnectionManager {
     const room = this.voiceRooms.get(roomId);
     if (!room) return [];
 
+    revokeNativeVoiceSessions({ roomId });
     const displaced: string[] = [];
     for (const userId of room.participants) {
       this.userToRoom.delete(userId);
@@ -729,6 +739,8 @@ class ConnectionManager {
 
   /** Store which ws owns the voice session for this user. */
   setVoiceWs(userId: string, ws: WebSocket): void {
+    const previous = this.voiceWs.get(userId);
+    if (previous && previous !== ws) revokeNativeVoiceSessions({ userId });
     this.cancelVoiceDisconnect(userId);
     this.voiceWs.set(userId, ws);
   }
@@ -740,6 +752,7 @@ class ConnectionManager {
 
   /** Clear the voice ws binding for this user. */
   clearVoiceWs(userId: string): void {
+    revokeNativeVoiceSessions({ userId });
     this.cancelVoiceDisconnect(userId);
     this.voiceWs.delete(userId);
   }
@@ -748,6 +761,7 @@ class ConnectionManager {
     const key = `${spaceId}:${userId}`;
     if (muted) this.spaceMutedUsers.add(key);
     else this.spaceMutedUsers.delete(key);
+    syncNativeVoicePermissions(userId);
   }
 
   isSpaceMuted(spaceId: string, userId: string): boolean {
@@ -758,6 +772,7 @@ class ConnectionManager {
     const key = `${spaceId}:${userId}`;
     if (deafened) this.spaceDeafenedUsers.add(key);
     else this.spaceDeafenedUsers.delete(key);
+    syncNativeVoicePermissions(userId);
   }
 
   isSpaceDeafened(spaceId: string, userId: string): boolean {
@@ -774,6 +789,7 @@ class ConnectionManager {
     const key = `${spaceId}:${userId}`;
     if (muted) this.permissionMutedUsers.add(key);
     else this.permissionMutedUsers.delete(key);
+    syncNativeVoicePermissions(userId);
   }
 
   isPermissionMuted(spaceId: string, userId: string): boolean {
@@ -977,16 +993,7 @@ class ConnectionManager {
 
   /** Push a fresh ready payload to a specific user, forcing full store re-sync. */
   pushReadyPayload(userId: string): void {
-    const connections = this.getUserConnections(userId);
-    if (connections.size === 0) return;
-
-    const readyData = buildReadyPayload(userId);
-    const message = JSON.stringify({ type: 'ready', ...readyData });
-    for (const ws of connections) {
-      if (ws.readyState === 1) {
-        ws.send(message);
-      }
-    }
+    pushReadyPayloadToConnections(userId, this.getUserConnections(userId));
   }
 }
 

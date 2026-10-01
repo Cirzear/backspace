@@ -7,6 +7,7 @@ import { getChannelSpaceId, hasPermission, computePermissions, isDmMember, Permi
 import type { LiveKitTokenRequest, LiveKitTokenResponse } from '@backspace/shared';
 import { getDb, schema } from '../db/index.js';
 import { eq } from 'drizzle-orm';
+import { registerLivekitScreenRoutes } from './livekitScreen.js';
 
 /**
  * Generate a LiveKit token for a federated call participant.
@@ -41,6 +42,7 @@ export async function generateFederatedCallToken(
 }
 
 export async function livekitRoutes(app: FastifyInstance): Promise<void> {
+  registerLivekitScreenRoutes(app);
   app.post<{ Body: LiveKitTokenRequest & { dmChannelId?: string } }>('/api/livekit/token', {
     preHandler: authenticate,
   }, async (request, reply) => {

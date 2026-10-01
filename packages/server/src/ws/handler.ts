@@ -8,6 +8,7 @@ import { verifyJwt } from '../utils/auth.js';
 import { statusOnConnect } from '../utils/presenceStatus.js';
 import { collectProfileBroadcastTargetIds } from '../utils/userDeletion.js';
 import { handleClientEvent } from './events.js';
+import { handleNativeVoiceBind } from './nativeVoiceBinding.js';
 import { presenceUpdateFor } from './presenceEvent.js';
 
 import { connectionManager } from './connectionManager.js';
@@ -214,6 +215,12 @@ export async function registerWebSocket(app: FastifyInstance): Promise<void> {
       // Rate limit all post-auth, non-ping messages (per-user, shared across tabs)
       if (!connectionManager.getUserRateLimiter(userId!).consume()) {
         ws.send(JSON.stringify({ type: 'error', message: 'Rate limited' }));
+        return;
+      }
+
+      // Native background presence shares, rather than displaces, the Web voice owner.
+      if (parsed.type === 'native_voice_bind' && userId) {
+        handleNativeVoiceBind(parsed, userId, ws);
         return;
       }
 

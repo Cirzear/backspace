@@ -8,7 +8,17 @@ import { channelUnreadCounts, dmUnreadCounts } from './channelUnreadCounts.js';
 import { loadOpenDmChannels } from '../utils/dmChannelWire.js';
 import { presenceIdentityOf, snapshotActivities } from './presenceEvent.js';
 import { connectionManager } from './handler.js';
+import type { WebSocket } from 'ws';
 import { type DmRoomMeta } from './voiceRoomTypes.js';
+
+/** Reuses the ready serialization for a server-requested re-sync of connected sessions. */
+export function pushReadyPayloadToConnections(userId: string, connections: Set<WebSocket>): void {
+  if (connections.size === 0) return;
+  const message = JSON.stringify({ type: 'ready', ...buildReadyPayload(userId) });
+  for (const ws of connections) {
+    if (ws.readyState === 1) ws.send(message);
+  }
+}
 
 // SQLite's SQLITE_MAX_VARIABLE_NUMBER default is 999.
 // Chunk inArray() calls to stay safely under this limit.

@@ -329,6 +329,17 @@ Returns the correct API client for the given origin. Uses a resolver pattern to 
 - `spaceStore` re-exports `getApiForOrigin` (and its sibling setters) from the utility for backward compatibility with existing import sites
 - Consumers call `getApiForOrigin(getChannelOrigin(channelId))` to get the right client
 
+**Android native capture:** `/api/livekit/screen-token` follows that same channel
+origin for spaces and locally hosted calls. For an incoming federated call it uses
+the signaling `callOrigin` and `federatedCallId`; the server proxies to the actual
+SFU host. The returned screen and native-voice identities are random and must not
+be parsed as user ids. Their server-signed `{ purpose, ownerIdentity }` metadata
+associates tracks with the existing Web participant; subscriptions still target
+the actual helper identity. `/screen-stop` and the native authenticated WebSocket
+must use the same API origin/session as issuance, not a guessed host credential.
+A pair-aware host check refuses ambiguous legacy main-call identities when two DM
+members have the same home user id on different home instances.
+
 The same pattern covers `resolveOriginFromHostname` (for `resolveUserOrigin`), the user-ID resolver (`resolveUserIdFromInstances`), and the WS-populated user-ID cache (`setMyUserIdForOrigin` / `getCachedUserIdForOrigin` / `clearMyUserIdCache`).
 
 **Why the utility exists:** `instanceStore` runs top-level `setXResolver` calls at module load. If spaceStore holds the backing `let _getApiForOrigin` declaration AND the import chain reaches instanceStore while spaceStore is mid-load (e.g. via `JoinSpaceModal` importing `useInstanceStore` directly), the setter crashes with TDZ: `Cannot access '_getApiForOrigin' before initialization`. Hoisting the mutable bindings into a module that has no back-edges into the stores eliminates the cycle. Do NOT add imports from `./stores/*` into `crossStoreResolvers.ts` — doing so re-creates the exact cycle that module was carved out to break.

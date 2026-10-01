@@ -5,6 +5,7 @@ import { deleteUploadFile } from '../../../utils/fileCleanup.js';
 import { sanitizeUser } from '../../../utils/sanitize.js';
 import { loadDmChannelWire } from '../../../utils/dmChannelWire.js';
 import { generateSnowflake } from '../../../utils/snowflake.js';
+import { revokeNativeVoiceSessions } from '../../../ws/nativeVoiceSessions.js';
 import { connectionManager } from '../../../ws/handler.js';
 import { GROUP_DM_NAME_MAX_LENGTH, GROUP_DM_NAME_MIN_LENGTH } from '@backspace/shared/src/constants.js';
 import { and, eq, or } from 'drizzle-orm';
@@ -391,6 +392,8 @@ export function processMemberRemoveEvent(
     return;
   }
   const localUser = removed.user;
+  revokeNativeVoiceSessions({ userId: localUser.id, roomId: channel.id });
+  if (channel.federatedId) revokeNativeVoiceSessions({ userId: localUser.id, roomId: channel.federatedId });
 
   // Insert system message for member leaving (before deletion so the broadcast
   // still reaches the departing user's connections). Tagged with source for dedup.

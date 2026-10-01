@@ -44,6 +44,32 @@ Backspace federation is peer-to-peer with no central authority. Each instance ma
 
 ---
 
+## Native voice/screen helper credentials
+
+The existing DM room host also signs Android's two helper participants. A client
+on the remote side requests `/api/livekit/screen-token` from its signaling origin;
+that server resolves the active `FederatedCallEntry` and sends an HMAC-signed POST
+with a 10-second timeout (no redirects, no local-room fallback):
+
+- `/api/federation/livekit/screen-token`: `{ federatedCallId, ownerIdentity,
+  actor: { homeUserId, homeInstance } }` → `LiveKitScreenTokenResponse`.
+- `/api/federation/livekit/screen-stop`: `{ identity, actor }` → 204.
+
+Inbound requests use `authenticateS2SPeer` (active peer, signature, replay nonce),
+`attributionRefusal` and pair-aware `resolveRelayActor`. The host requires active
+DM state, membership of that resolved local actor, and an existing owner SFU
+participant. It never resolves an arbitrary bare home id or forwards a helper
+token intended for another participant. Remote owners are not necessarily in the
+host's local WebSocket participant set, so their check uses the active hosted
+call plus actual SFU presence rather than requiring a local voice socket.
+
+Both origin and host keep ephemeral cleanup records. Call end, membership removal
+and native transport loss stop the pair; origin cleanup calls the signed host stop
+endpoint. An unreachable host causes a surfaced/logged cleanup failure, not a
+pretend-success or a token signed for a different SFU. No outbox, new database
+schema or mandatory LiveKit webhook is introduced. See voice.md for short token
+validity, replay and backend-restart limitations.
+
 ## 1. Peer Handshake & Discovery
 
 ### 2-Phase Flow
