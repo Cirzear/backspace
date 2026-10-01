@@ -25,5 +25,13 @@
     "title": "Unable to start Backspace",
     "description": "Startup or secure session storage failed. The app is blocked to protect your session.",
     "reload": "Reload"
+  },
+  "nav": {
+    "spaces": "Spaces",
+    "dms": "DMs",
+    "you": "You"
+  },
+  "chat": {
+    "channelFallback": "Channel"
   }
 }

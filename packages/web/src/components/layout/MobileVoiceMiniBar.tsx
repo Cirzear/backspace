@@ -32,11 +32,11 @@ export function MobileVoiceMiniBar() {
 
   // Resolve channel name
   const isDmCall = currentVoiceChannelId.startsWith('dm-');
-  let channelName = 'Voice Call';
+  let channelName = t('voice:status.voiceCall');
   if (isDmCall) {
     const dmId = currentVoiceChannelId.replace('dm-', '');
     const dm = dmChannels.find(d => d.id === dmId);
-    if (dm) channelName = 'DM Call';
+    if (dm) channelName = t('voice:status.dmCall');
   } else {
     const ch = channels.find(c => c.id === currentVoiceChannelId);
     if (ch) channelName = ch.name;
@@ -80,7 +80,7 @@ export function MobileVoiceMiniBar() {
           ) : isDropped ? (
             <p className="text-[10px] text-txt-tertiary">{t('voice:status.disconnected')}</p>
           ) : participantCount > 0 ? (
-            <p className="text-[10px] text-txt-tertiary">{participantCount} connected</p>
+            <p className="text-[10px] text-txt-tertiary">{t('voice:mobileCall.connectedCount', { count: participantCount })}</p>
           ) : null}
         </div>
       </button>
@@ -97,6 +97,7 @@ export function MobileVoiceMiniBar() {
       {/* Quick controls */}
       <div className="flex items-center gap-1 shrink-0">
         <button
+          aria-label={isMuted ? t('voice:controls.unmute') : t('voice:controls.mute')}
           onClick={(e) => { e.stopPropagation(); toggleMute(); }}
           className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
             isMuted ? 'bg-accent-rose/20 text-accent-rose' : 'text-txt-secondary hover:text-txt-primary hover:bg-interactive-hover'
@@ -115,6 +116,7 @@ export function MobileVoiceMiniBar() {
         </button>
 
         <button
+          aria-label={isDeafened ? t('voice:controls.undeafen') : t('voice:controls.deafen')}
           onClick={(e) => { e.stopPropagation(); toggleDeafen(); }}
           className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
             isDeafened ? 'bg-accent-rose/20 text-accent-rose' : 'text-txt-secondary hover:text-txt-primary hover:bg-interactive-hover'
@@ -127,6 +129,7 @@ export function MobileVoiceMiniBar() {
         </button>
 
         <button
+          aria-label={t('voice:mobileCall.disconnect')}
           onClick={(e) => {
             e.stopPropagation();
             const { activeDmCall, disconnectFn, federatedCallId, callOrigin } = useVoiceStore.getState();

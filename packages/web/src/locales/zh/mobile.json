@@ -25,5 +25,13 @@
     "title": "无法启动 Backspace",
     "description": "启动或安全会话存储失败。为保护会话，应用已被阻止继续运行。",
     "reload": "重新加载"
+  },
+  "nav": {
+    "spaces": "空间",
+    "dms": "私信",
+    "you": "我"
+  },
+  "chat": {
+    "channelFallback": "频道"
   }
 }

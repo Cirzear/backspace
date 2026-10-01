@@ -25,5 +25,13 @@
     "title": "Backspace konnte nicht starten",
     "description": "Start oder sicherer Sitzungsspeicher fehlgeschlagen. Die App wurde zum Schutz deiner Sitzung blockiert.",
     "reload": "Neu laden"
+  },
+  "nav": {
+    "spaces": "Räume",
+    "dms": "Direktnachrichten",
+    "you": "Du"
+  },
+  "chat": {
+    "channelFallback": "Kanal"
   }
 }

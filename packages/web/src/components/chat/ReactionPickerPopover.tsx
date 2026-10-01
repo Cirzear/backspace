@@ -131,10 +131,11 @@ export function ReactionPickerPopover({
       style={{
         top: coords.top,
         left: coords.left,
-        maxHeight: `calc(100vh - ${VIEWPORT_MARGIN * 2}px)`,
+        // Match the scaled viewport used by the mobile shell and keyboard layout.
+        maxHeight: `calc(100 * var(--app-vh) - ${VIEWPORT_MARGIN * 2}px)`,
       }}
     >
-      <div className="glass rounded-xl overflow-hidden max-h-[calc(100vh-16px)] flex flex-col">
+      <div className="glass rounded-xl overflow-hidden max-h-[calc(100*var(--app-vh)-16px)] flex flex-col">
         <EmojiPicker onEmojiSelect={onEmojiSelect} />
       </div>
     </div>,
