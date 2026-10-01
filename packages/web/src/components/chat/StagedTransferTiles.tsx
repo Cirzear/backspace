@@ -32,7 +32,7 @@ export function StagedTransferTiles({
         return (
           <div
             key={transfer.id}
-            className="relative group bg-surface-channel rounded-lg p-2 max-w-[200px] shadow-elevation-low border border-border-hard overflow-hidden"
+            className="relative group bg-surface-channel rounded-lg p-2 max-w-[200px] shadow-elevation-low border border-border-hard"
           >
             {isImage ? (
               <div className="w-[150px] h-[150px] bg-surface-input/40 rounded flex items-center justify-center text-txt-tertiary overflow-hidden">
@@ -62,18 +62,20 @@ export function StagedTransferTiles({
               </div>
             )}
 
-            {/* Overlay: progress / paused / failed indicator (driven by AttachmentProgress) */}
+            {/* Clip the progress overlay, not the completed remove chip that overlaps the tile. */}
             {showOverlay && (
-              <AttachmentProgress
-                loaded={transfer.progress.loaded}
-                total={transfer.progress.total}
-                state={transfer.state}
-                filename={transfer.file.name}
-                size="tile"
-                onPause={transfer.state === 'active' ? () => onPause(transfer.id) : undefined}
-                onResume={transfer.state === 'paused' ? () => void onResume(transfer.id) : undefined}
-                onAbort={() => onRemove(transfer.id)}
-              />
+              <div className="absolute inset-0 rounded-inherit overflow-hidden">
+                <AttachmentProgress
+                  loaded={transfer.progress.loaded}
+                  total={transfer.progress.total}
+                  state={transfer.state}
+                  filename={transfer.file.name}
+                  size="tile"
+                  onPause={transfer.state === 'active' ? () => onPause(transfer.id) : undefined}
+                  onResume={transfer.state === 'paused' ? () => void onResume(transfer.id) : undefined}
+                  onAbort={() => onRemove(transfer.id)}
+                />
+              </div>
             )}
 
             {/* Final-state remove button (top-right rose chip) — only when completed */}
