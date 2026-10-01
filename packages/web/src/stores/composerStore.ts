@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core';
 import { create } from 'zustand';
 import { persist, type PersistStorage, type StorageValue } from 'zustand/middleware';
 
@@ -12,6 +13,7 @@ interface ComposerStoreState {
 }
 
 interface ComposerStoreActions {
+  resetSession: () => void;
   get: (channelId: string) => ComposerState;
   attach: (channelId: string, transferId: string) => void;
   removeStaged: (channelId: string, transferId: string) => void;
@@ -28,6 +30,8 @@ const EMPTY: ComposerState = { draftText: '', replyTo: null, stagedTransferIds: 
 // Mirrors transferStore's mapAwareStorage pattern; only the `states` slice is persisted.
 const mapAwareStorage: PersistStorage<Pick<ComposerStoreState, 'states'>> = {
   getItem: (name) => {
+    // Android unsent work belongs only to the current signed-in session.
+    if (Capacitor.isNativePlatform()) return null;
     const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(name) : null;
     if (!raw) return null;
     try {
@@ -41,6 +45,7 @@ const mapAwareStorage: PersistStorage<Pick<ComposerStoreState, 'states'>> = {
     }
   },
   setItem: (name, value) => {
+    if (Capacitor.isNativePlatform()) return;
     if (typeof localStorage === 'undefined') return;
     const entries = Array.from(value.state.states.entries());
     const payload = JSON.stringify({ state: { states: entries }, version: value.version });
@@ -51,6 +56,7 @@ const mapAwareStorage: PersistStorage<Pick<ComposerStoreState, 'states'>> = {
     }
   },
   removeItem: (name) => {
+    if (Capacitor.isNativePlatform()) return;
     if (typeof localStorage !== 'undefined') localStorage.removeItem(name);
   },
 };
@@ -59,6 +65,7 @@ export const useComposerStore = create<ComposerStore>()(
   persist(
     (set, get) => ({
       states: new Map<string, ComposerState>(),
+      resetSession: () => set({ states: new Map() }),
 
       get: (channelId) => get().states.get(channelId) ?? EMPTY,
 

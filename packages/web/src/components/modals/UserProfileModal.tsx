@@ -1,3 +1,4 @@
+import { getUploadUrl } from '../../utils/assetUrls';
 import React, { useEffect, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useFormatters } from '../../i18n/formatters';
@@ -143,9 +144,8 @@ export function UserProfileModal() {
   const displayName = user.displayName ?? baseName;
 
   // Banner — use correct API client for remote users
-  const profileApi = getApiForOrigin(userOrigin);
   const bannerSrc = user.banner
-    ? (user.banner.startsWith('http') ? user.banner : profileApi.uploads.url(user.banner))
+    ? getUploadUrl(user.banner, userOrigin)
     : null;
   const bannerFallback = user.accentColor
     ? mutedGradient(user.accentColor, adjustColor(user.accentColor, -40))
@@ -417,7 +417,6 @@ export function UserProfileModal() {
               ) : (
                 <div className="space-y-1">
                   {mutualSpaces.map((space) => {
-                    const spaceApi = getApiForOrigin(space._instanceOrigin);
                     return (
                     <button
                       key={`${space.id}:${space._instanceOrigin}`}
@@ -427,7 +426,7 @@ export function UserProfileModal() {
                       <div className="relative shrink-0">
                         {space.icon ? (
                           <img
-                            src={space.icon.startsWith('http') ? space.icon : spaceApi.uploads.url(space.icon)}
+                            src={getUploadUrl(space.icon, space._instanceOrigin)}
                             alt={space.name}
                             className="w-8 h-8 rounded-lg object-cover"
                           />

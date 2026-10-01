@@ -1,3 +1,4 @@
+import { getUploadUrl } from '../../../utils/assetUrls';
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { ImageCropModal } from '../../ui/ImageCropModal';
@@ -111,11 +112,11 @@ export function OverviewPanel({ spaceId }: OverviewPanelProps) {
   const hasChanges = hasNameChange || hasIconChange || hasBannerChange || hasAvatarColorChange;
 
   const currentIconUrl = space.icon
-    ? (space.icon.startsWith('http') ? space.icon : api.uploads.url(space.icon))
+    ? getUploadUrl(space.icon, space._instanceOrigin)
     : null;
 
   const currentBannerUrl = space.banner
-    ? (space.banner.startsWith('http') ? space.banner : api.uploads.url(space.banner))
+    ? getUploadUrl(space.banner, space._instanceOrigin)
     : null;
 
   // ─── Icon handlers ────────────────────────────────────────────────────────
@@ -527,7 +528,7 @@ export function OverviewPanel({ spaceId }: OverviewPanelProps) {
                         ) : (
                           transferCandidates.map((member) => {
                             const avatarUrl = member.user.avatar
-                              ? (member.user.avatar.startsWith('http') || member.user.avatar.startsWith('/') ? member.user.avatar : `/api/uploads/${member.user.avatar}`)
+                              ? getUploadUrl(member.user.avatar, space._instanceOrigin)
                               : null;
                             return (
                               <button

@@ -186,6 +186,8 @@ Before modifying any subsystem, read its spec from `docs/systems/`. After making
 
 ## Feature Status
 
+Android client architecture and build instructions: [mobile-android.md](docs/systems/mobile-android.md). Read before changing APK packaging, native bootstrap, instance selection, secure session storage or Android navigation.
+
 All core features are implemented and deployed:
 
 **Communication:** Text channels, voice/video (LiveKit), screen sharing (VP9, configurable), DMs (1-on-1 + group up to 10), DM calls (ring/accept/reject), reactions, replies, typing indicators, read states, embeds (YouTube/Vimeo/Spotify/generic), GIF search (Klipy)

@@ -1,4 +1,8 @@
 import React, { useEffect } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { NativeInstanceHeader } from './mobile/NativeInstanceHeader';
+import { NativeLifecycle } from './mobile/NativeLifecycle';
+import { NativeSessionGuard } from './mobile/NativeSessionGuard';
 import { Routes, Route, Navigate, useSearchParams } from 'react-router-dom';
 import { LoginPage } from './components/auth/LoginPage';
 import { RegisterPage } from './components/auth/RegisterPage';
@@ -56,7 +60,8 @@ export function App() {
           style={{ height: 'var(--titlebar-inset)', borderBottomWidth: 'calc(1px / var(--interface-scale))' }} />
       )}
       <div className={showTitleBar ? 'flex-1 min-h-0' : 'contents'}>
-        <SwAutoUpdate />
+        {!Capacitor.isNativePlatform() && <SwAutoUpdate />}
+        {Capacitor.isNativePlatform() && <><NativeInstanceHeader /><NativeLifecycle /><NativeSessionGuard /></>}
         <TelemetryAsk />
         <ScreenShareSetup />
         <Routes>

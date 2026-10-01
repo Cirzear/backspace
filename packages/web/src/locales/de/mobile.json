@@ -3,5 +3,27 @@
     "editProfile": "Profil bearbeiten",
     "homeInstance": "Heimatinstanz: {{domain}}",
     "logOutConfirm": "Möchtest du dich wirklich abmelden?"
+  },
+  "instance": {
+    "title": "Instanz auswählen",
+    "description": "Verbinde dich mit einem Backspace-Server, dem du vertraust.",
+    "address": "Instanzadresse",
+    "httpsHelp": "Gib einen vollständigen HTTPS-Ursprung ein, etwa https://chat.example.com. HTTP und ungültige Zertifikate werden nicht unterstützt.",
+    "check": "Instanz prüfen",
+    "checking": "Wird geprüft…",
+    "confirm": "Diese Instanz verwenden",
+    "connectionError": "Die Instanz konnte nicht überprüft werden. Prüfe Adresse, Verbindung und HTTPS-Zertifikat.",
+    "invalidOrigin": "Gib einen vollständigen HTTPS-Ursprung ohne Zugangsdaten, Pfad, Abfrage oder Fragment ein.",
+    "httpError": "Die Instanz antwortete mit HTTP {{status}}.",
+    "invalidResponse": "Der Server hat keine gültigen Backspace-Instanzinformationen zurückgegeben.",
+    "sessionHelp": "Nicht gesendete Entwürfe und Übertragungen bleiben nur für diese Sitzung erhalten.",
+    "selected": "Instanz: {{host}}",
+    "change": "Instanz wechseln",
+    "logoutRequired": "Melde dich vor dem Instanzwechsel ab."
+  },
+  "startup": {
+    "title": "Backspace konnte nicht starten",
+    "description": "Start oder sicherer Sitzungsspeicher fehlgeschlagen. Die App wurde zum Schutz deiner Sitzung blockiert.",
+    "reload": "Neu laden"
   }
 }

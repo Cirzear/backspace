@@ -1,3 +1,4 @@
+import { getUploadUrl } from '../../utils/assetUrls';
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { SpaceFolder } from '@backspace/shared';
@@ -138,7 +139,7 @@ export function MobileFolderSheet({ folder, onClose, onSelectSpace, onUpdateFold
         <div className="flex-1 overflow-y-auto px-2 py-1">
           {folderSpaces.map(space => {
             const iconUrl = space.icon
-              ? (space.icon.startsWith('http') || space.icon.startsWith('/') ? space.icon : `/api/uploads/${space.icon}`)
+              ? getUploadUrl(space.icon, space._instanceOrigin)
               : null;
             const grad = getSpaceGradient(space.id, space.name, space.avatarColor);
             return (

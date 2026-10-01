@@ -8,6 +8,12 @@ vi.mock('../stores/uiStore', () => ({
   },
 }));
 
+const runtime = vi.hoisted(() => ({ native: false }));
+vi.mock('../platform/instanceRuntime', () => ({
+  getHomeOrigin: () => runtime.native ? 'https://home.test' : window.location.origin,
+  getApiBaseUrl: () => runtime.native ? 'https://home.test/api' : '/api',
+}));
+
 const mockStartDownload = vi.fn();
 const mockGet = vi.fn();
 
@@ -25,6 +31,7 @@ import { useUIStore } from '../stores/uiStore';
 
 describe('saveImage', () => {
   beforeEach(() => {
+    runtime.native = false;
     mockStartDownload.mockReset();
     mockGet.mockReset();
   });
@@ -148,4 +155,18 @@ describe('copyImageToClipboard', () => {
     expect(mockWriteText).toHaveBeenCalledWith('https://external.com/image.jpg');
     expect(mockAddToast).toHaveBeenCalledWith('Copied image link', 'info', 3000);
   });
+});
+
+it('downloads and copies native relative images from the home instance', async () => {
+  runtime.native = true;
+  mockStartDownload.mockResolvedValue('native-download');
+  mockGet.mockReturnValue({ state: 'completed' });
+  await saveImage('/api/uploads/native.png');
+  expect(mockStartDownload).toHaveBeenCalledWith('https://home.test/api/uploads/native.png', expect.objectContaining({ filename: 'native.png' }));
+  const fetchImage = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(new Blob(['img'], { type: 'image/png' })));
+  Object.assign(navigator, { clipboard: { write: vi.fn(), writeText: vi.fn() } });
+  await copyImageToClipboard('/api/uploads/native.png');
+  expect(fetchImage).toHaveBeenCalledWith('https://home.test/api/uploads/native.png');
+  runtime.native = false;
+  vi.restoreAllMocks();
 });

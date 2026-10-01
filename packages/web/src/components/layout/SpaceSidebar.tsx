@@ -1,3 +1,5 @@
+import { getHomeOrigin } from '../../platform/instanceRuntime';
+import { getUploadUrl } from '../../utils/assetUrls';
 import { DmUnreadBadge } from './DmUnreadBadge';
 import { SpaceUnreadBadge } from './SpaceUnreadBadge';
 import { useNotificationMuted } from '../notifications/useNotificationMuted';
@@ -136,7 +138,7 @@ function SidebarItem({ id, name, icon, avatarColor, active, onClick, onContextMe
         )
       ) : icon ? (
         <img
-          src={icon.startsWith('http') || icon.startsWith('/') ? icon : `/api/uploads/${icon}`}
+          src={getUploadUrl(icon)}
           alt={name}
           className="w-full h-full object-cover"
         />
@@ -212,7 +214,7 @@ function MiniSpaceIcon({ space }: { space: TaggedSpace }) {
   if (icon) {
     return (
       <img
-        src={icon.startsWith('http') || icon.startsWith('/') ? icon : `/api/uploads/${icon}`}
+        src={getUploadUrl(icon)}
         alt=""
         className="w-full h-full object-cover rounded-[3px]"
       />
@@ -469,7 +471,7 @@ function FolderFlyout({
               <div className="w-8 h-8 rounded-[10px] flex-shrink-0 overflow-hidden flex items-center justify-center" style={grad ? { background: grad.gradient } : undefined}>
                 {icon ? (
                   <img
-                    src={icon.startsWith('http') || icon.startsWith('/') ? icon : `/api/uploads/${icon}`}
+                    src={getUploadUrl(icon)}
                     alt=""
                     className="w-full h-full object-cover"
                   />
@@ -661,7 +663,7 @@ export function SpaceSidebar() {
         onClick: async () => {
           try {
             const code = await useSpaceStore.getState().generateInvite(spaceId);
-            const origin = (space as TaggedSpace)._instanceOrigin || window.location.origin;
+            const origin = (space as TaggedSpace)._instanceOrigin || getHomeOrigin();
             // Match the public join route used by the invite modal.
             const url = `${origin}/join/${code}`;
             await navigator.clipboard.writeText(url);

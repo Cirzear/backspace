@@ -1,3 +1,8 @@
+import { Capacitor } from '@capacitor/core';
+import { useComposerStore } from './composerStore';
+import { usePendingMessageStore } from './pendingMessageStore';
+import { useTransferStore } from './transferStore';
+import { getSessionItem, setSessionItem, removeSessionItem, flushSessionStorage } from '../platform/sessionStorage';
 import { useChannelActivityStore } from './channelActivityStore';
 import { useNotificationStore } from './notificationStore';
 import { create } from 'zustand';
@@ -63,6 +68,13 @@ interface AuthState {
  * could land in the new one.
  */
 function resetUserStores() {
+  // Android's first release keeps unsent work only for the current account session.
+  // Web/Electron retain their existing reload/resume persistence behavior.
+  if (Capacitor.isNativePlatform()) {
+    useTransferStore.getState().resetSession();
+    usePendingMessageStore.getState().resetSession();
+    useComposerStore.getState().resetSession();
+  }
   clearSelfIds();
   useChatStore.getState().clearAllMessages();
   useSpaceStore.getState().reset();
@@ -128,7 +140,7 @@ export function selectMyChosenStatus(state: Pick<AuthState, 'user' | 'trueHomeSt
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
-  token: localStorage.getItem('backspace_token'),
+  token: getSessionItem('backspace_token'),
   user: null,
   trueHomeStatus: null,
   isLoading: false,
@@ -136,7 +148,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   initSession: (token: string, user: User) => {
     resetUserStores();
-    localStorage.setItem('backspace_token', token);
+    setSessionItem('backspace_token', token);
     set({ token, user, trueHomeStatus: lastTrueHomeStatus(user), isLoading: false });
     useInstanceStore.getState().autoConnectAll().catch(() => {});
   },
@@ -146,6 +158,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const response = await api.auth.login({ username, password });
       get().initSession(response.token, response.user);
+      await flushSessionStorage();
     } catch (err) {
       set({ isLoading: false, error: err instanceof Error ? err.message : 'Login failed' });
       throw err;
@@ -157,6 +170,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const response = await api.auth.register({ username, password, displayName, avatarColor });
       get().initSession(response.token, response.user);
+      await flushSessionStorage();
     } catch (err) {
       set({ isLoading: false, error: err instanceof Error ? err.message : 'Registration failed' });
       throw err;
@@ -164,7 +178,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   logout: () => {
-    localStorage.removeItem('backspace_token');
+    removeSessionItem('backspace_token');
     resetUserStores();
     set({ token: null, user: null, trueHomeStatus: null });
   },
@@ -181,7 +195,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // Auto-connect to remote instances (fire-and-forget)
       useInstanceStore.getState().autoConnectAll().catch(() => {});
     } catch {
-      localStorage.removeItem('backspace_token');
+      removeSessionItem('backspace_token');
       set({ token: null, user: null, trueHomeStatus: null, isLoading: false });
     }
   },
@@ -217,9 +231,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // is nothing to propagate (client-federation.md §1).
     const response = await api.users.changePassword({ currentPassword, newPassword });
 
-    // Update token in state and localStorage
-    localStorage.setItem('backspace_token', response.token);
+    // Update token in state and platform credential storage
+    setSessionItem('backspace_token', response.token);
     set({ token: response.token });
+    await flushSessionStorage();
   },
 
   deleteAccount: async (password: string, username: string) => {
@@ -230,9 +245,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     await api.users.deleteAccount({ password, username });
 
     // Clear all state
-    localStorage.removeItem('backspace_token');
+    removeSessionItem('backspace_token');
     resetUserStores();
     set({ token: null, user: null, trueHomeStatus: null });
+    await flushSessionStorage();
   },
 
   setUser: (user: User) => set({ user }),

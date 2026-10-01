@@ -1,9 +1,11 @@
+import { getHomeOrigin } from '../platform/instanceRuntime';
+import { getUploadUrl } from './assetUrls';
 import { useUIStore } from '../stores/uiStore';
 import { useTransferStore } from '../stores/transferStore';
 
 function deriveFilename(url: string): string {
   try {
-    const u = new URL(url, window.location.origin);
+    const u = new URL(url, getHomeOrigin());
     const last = u.pathname.split('/').pop() || 'image';
     return last.split('?')[0] || 'image';
   } catch {
@@ -15,7 +17,8 @@ function deriveFilename(url: string): string {
  * Downloads an image via the transfer manager. Falls back to opening in a new
  * tab if the transfer pipeline can't fetch the URL (e.g., CORS).
  */
-export async function saveImage(url: string, filename?: string): Promise<void> {
+export async function saveImage(source: string, filename?: string): Promise<void> {
+  const url = getUploadUrl(source);
   const fname = filename ?? deriveFilename(url);
 
   try {
@@ -41,7 +44,8 @@ export async function saveImage(url: string, filename?: string): Promise<void> {
  * GIFs are copied as URL text to preserve animation (PNG conversion strips it).
  * Falls back to copying the URL as text if CORS or clipboard API blocks it.
  */
-export async function copyImageToClipboard(url: string): Promise<void> {
+export async function copyImageToClipboard(source: string): Promise<void> {
+  const url = getUploadUrl(source);
   // GIFs lose animation when converted to PNG — copy the URL instead
   if (isGifUrl(url)) {
     await navigator.clipboard.writeText(url);

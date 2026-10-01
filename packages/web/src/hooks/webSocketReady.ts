@@ -1,3 +1,4 @@
+import { getHomeHost } from '../platform/instanceRuntime';
 import type { Activity, ActiveCallInfo, ServerEvent } from '@backspace/shared';
 import { ConnectionState as LiveKitConnectionState } from 'livekit-client';
 import { useActivityStore } from '../stores/activityStore';
@@ -97,7 +98,7 @@ function syncReadyIdentity(origin: string, event: ReadyEvent): void {
     const report = ownStatusReport(authUser, { origin, isHome }, { userId: event.user.id, status: event.user.status });
     if (report) useAuthStore.getState().applyOwnStatus(report);
     if (!isHome) {
-      const status = statusToAssertOnRemote(authUser, event.user, window.location.host);
+      const status = statusToAssertOnRemote(authUser, event.user, getHomeHost());
       if (status) wsSend({ type: 'presence_update', status }, origin);
     }
   }

@@ -1,3 +1,4 @@
+import { getUploadUrl } from '../../utils/assetUrls';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useFormatters } from '../../i18n/formatters';
@@ -6,7 +7,7 @@ import type { User } from '@backspace/shared';
 import { Avatar } from '../ui/Avatar';
 import { Username } from '../ui/Username';
 import { ProfileBio } from './ProfileBio';
-import { useSpaceStore, getApiForOrigin, resolveUserOrigin } from '../../stores/spaceStore';
+import { useSpaceStore, resolveUserOrigin } from '../../stores/spaceStore';
 import { api } from '../../api/client';
 import { describeError } from '../../i18n/errors';
 import { useUIStore, type ProfileMemberContext } from '../../stores/uiStore';
@@ -54,7 +55,6 @@ export function UserProfilePopout({ user: propUser, onClose, anchor, placement =
   const shownStatus = useShownStatus(user, user.status);
 
   const origin = resolveUserOrigin(user);
-  const userApi = getApiForOrigin(origin);
   const roles = useProfileMemberRoles(member);
   const isMobile = useUIStore((s) => s.isMobile);
   // Edit Roles opens the member role editor, which is desktop-only. It is
@@ -151,7 +151,7 @@ export function UserProfilePopout({ user: propUser, onClose, anchor, placement =
 
   // Banner display
   const bannerSrc = user.banner
-    ? (user.banner.startsWith('http') || user.banner.startsWith('/') ? user.banner : userApi.uploads.url(user.banner))
+    ? getUploadUrl(user.banner, origin)
     : null;
   const bannerFallback = user.accentColor
     ? mutedGradient(user.accentColor, adjustColor(user.accentColor, -40))

@@ -1,3 +1,5 @@
+import { getHomeHost } from '../platform/instanceRuntime';
+import { getUploadUrl } from '../utils/assetUrls';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Trans, useTranslation } from 'react-i18next';
@@ -184,7 +186,7 @@ export function JoinPage() {
 
     // Build the qualified invite code: code@originHost
     // If the invite is already qualified (arrived via redirect), preserve the original origin
-    const originHost = parsed?.origin ? new URL(parsed.origin).host : window.location.host;
+    const originHost = parsed?.origin ? new URL(parsed.origin).host : getHomeHost();
     const code = parsed?.code || rawInviteCode || '';
     const qualifiedCode = `${code}@${originHost}`;
 
@@ -266,7 +268,7 @@ export function JoinPage() {
         <div className="text-center mb-6">
           <div className="flex justify-center mb-4">
             <Avatar
-              src={preview.icon ? (parsed?.origin ? `${parsed.origin}/api/uploads/${preview.icon}` : preview.icon) : null}
+              src={preview.icon ? getUploadUrl(preview.icon, parsed?.origin) : null}
               name={preview.spaceName}
               size={72}
               avatarColor={preview.avatarColor}

@@ -1,6 +1,7 @@
 import React, { useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useUIStore } from '../../stores/uiStore';
+import { registerNativeDismiss } from '../../mobile/nativeBack';
 
 interface ModalProps {
   isOpen: boolean;
@@ -30,6 +31,10 @@ export function Modal({ isOpen, onClose, title, children, maxWidth = 'max-w-md',
       return () => document.removeEventListener('keydown', handleKeyDown);
     }
   }, [isOpen, handleKeyDown]);
+
+  useEffect(() => {
+    if (isOpen) return registerNativeDismiss(onClose);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 

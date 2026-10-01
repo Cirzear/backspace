@@ -1,15 +1,16 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
-import { App } from './App';
-import { startPendingMessageOrchestrator } from './stores/pendingMessageRehydrate';
+import { Capacitor } from '@capacitor/core';
+import { getSelectedMobileOrigin } from './platform/instanceRuntime';
+import { initializeSessionStorage } from './platform/sessionStorage';
+import { InstanceSelectionPage } from './mobile/InstanceSelectionPage';
+import { StartupError } from './mobile/StartupError';
 import i18n, { initI18n } from './i18n';
 import './styles/globals.css';
 import { initializeInterfaceScale } from './platform/interfaceScale';
 import { loadDiscordEmojiAliases } from './utils/emojiShortcodes';
 
-const stopInterfaceScale = initializeInterfaceScale();
-if (import.meta.hot) import.meta.hot.dispose(stopInterfaceScale);
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -118,25 +119,50 @@ class ErrorBoundary extends React.Component<
 const root = document.getElementById('root');
 if (!root) throw new Error('Root element not found');
 
-startPendingMessageOrchestrator();
+const reactRoot = ReactDOM.createRoot(root);
+let blocked = false;
 
-function render(): void {
-  ReactDOM.createRoot(root!).render(
+function showStartupError(cause: unknown): void {
+  blocked = true;
+  const error = cause instanceof Error ? cause : new Error(String(cause));
+  console.error('[bootstrap]', error);
+  reactRoot.render(<StartupError error={error} />);
+}
+
+// Storage writes can fail after startup too. Unmount the app, never continue with
+// an in-memory session that cannot be saved safely on this device.
+window.addEventListener('backspace:session-storage-error', event => {
+  showStartupError((event as CustomEvent<unknown>).detail);
+});
+
+async function bootstrap(): Promise<void> {
+  const stopInterfaceScale = initializeInterfaceScale();
+  if (import.meta.hot) import.meta.hot.dispose(stopInterfaceScale);
+  await Promise.all([initI18n(), loadDiscordEmojiAliases()]);
+  if (blocked) return;
+  if (Capacitor.isNativePlatform()) {
+    const origin = getSelectedMobileOrigin();
+    if (!origin) {
+      reactRoot.render(<React.StrictMode><InstanceSelectionPage /></React.StrictMode>);
+      return;
+    }
+    await initializeSessionStorage(origin);
+  }
+  if (blocked) return;
+  // Session-bound stores read storage at module evaluation. Import neither App
+  // nor the pending-message graph until the chosen instance's storage is ready.
+  const [{ App }, { startPendingMessageOrchestrator }] = await Promise.all([
+    import('./App'), import('./stores/pendingMessageRehydrate'),
+  ]);
+  if (blocked) return;
+  startPendingMessageOrchestrator();
+  reactRoot.render(
     <React.StrictMode>
       <ErrorBoundary>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
+        <BrowserRouter><App /></BrowserRouter>
       </ErrorBoundary>
-    </React.StrictMode>
+    </React.StrictMode>,
   );
 }
 
-// The selected language's catalogs are loaded before the first paint, so
-// nothing flashes English first. English itself is bundled, so if loading a
-// language fails the app still renders, in English, rather than not at all.
-// Discord's emoji shortcode names (a chunk of their own) load alongside, so
-// text renders with them from the first paint; that load never rejects.
-const i18nReady = initI18n()
-  .catch((err) => { console.error('[i18n] Failed to initialise, rendering in English:', err); });
-Promise.all([i18nReady, loadDiscordEmojiAliases()]).finally(render);
+void bootstrap().catch(showStartupError);

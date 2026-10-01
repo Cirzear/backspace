@@ -1,0 +1,18 @@
+{
+  "appId": "io.github.backspace.mobile",
+  "appName": "Backspace",
+  "webDir": "../web/dist-mobile",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": false
+  },
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "disable",
+      "style": "DARK"
+    }
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}

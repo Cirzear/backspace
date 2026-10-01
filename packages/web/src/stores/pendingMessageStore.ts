@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core';
 import { create } from 'zustand';
 import { persist, type PersistStorage, type StorageValue } from 'zustand/middleware';
 import type { MessageWithUser, Attachment } from '@backspace/shared';
@@ -22,6 +23,7 @@ interface PendingMessageStoreState {
 }
 
 interface PendingMessageStoreActions {
+  resetSession: () => void;
   append: (b: PendingBubble) => void;
   removeByClientId: (channelId: string, clientId: string) => void;
   markFailed: (clientId: string) => void;
@@ -71,6 +73,8 @@ function setBubble(
 // Mirrors composerStore's mapAwareStorage; only the `bubbles` slice is persisted.
 const mapAwareStorage: PersistStorage<Pick<PendingMessageStoreState, 'bubbles'>> = {
   getItem: (name) => {
+    // Android unsent work belongs only to the current signed-in session.
+    if (Capacitor.isNativePlatform()) return null;
     const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(name) : null;
     if (!raw) return null;
     try {
@@ -89,6 +93,7 @@ const mapAwareStorage: PersistStorage<Pick<PendingMessageStoreState, 'bubbles'>>
     }
   },
   setItem: (name, value) => {
+    if (Capacitor.isNativePlatform()) return;
     if (typeof localStorage === 'undefined') return;
     const entries = Array.from(value.state.bubbles.entries());
     const payload = JSON.stringify({ state: { bubbles: entries }, version: value.version });
@@ -99,6 +104,7 @@ const mapAwareStorage: PersistStorage<Pick<PendingMessageStoreState, 'bubbles'>>
     }
   },
   removeItem: (name) => {
+    if (Capacitor.isNativePlatform()) return;
     if (typeof localStorage !== 'undefined') localStorage.removeItem(name);
   },
 };
@@ -107,6 +113,7 @@ export const usePendingMessageStore = create<PendingMessageStore>()(
   persist(
     (set, get) => ({
       bubbles: new Map<string, PendingBubble[]>(),
+      resetSession: () => set({ bubbles: new Map() }),
 
       append: (b) =>
         set((s) => {

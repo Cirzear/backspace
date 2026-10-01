@@ -1,3 +1,4 @@
+import { getHomeOrigin } from '../../platform/instanceRuntime';
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { DirectoryEntry } from '@backspace/shared';
@@ -69,7 +70,7 @@ export function OuterSpaceSection({ query, onConnect }: OuterSpaceSectionProps) 
   // 9): a connection that appears, returns, expires or is disconnected moves
   // its origin between the sections without a refetch of the feed.
   const entries = useMemo(
-    () => dedupeAgainstConnected(feed, [window.location.origin, ...innerOrigins(registry.values(), instances)]),
+    () => dedupeAgainstConnected(feed, [getHomeOrigin(), ...innerOrigins(registry.values(), instances)]),
     [feed, registry, instances],
   );
 

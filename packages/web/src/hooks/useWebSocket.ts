@@ -1,3 +1,4 @@
+import { getWebSocketUrl } from '../platform/instanceRuntime';
 import type { ClientEvent, ServerEvent } from '@backspace/shared';
 import React, { useEffect, useRef } from 'react';
 import { detectClientKind } from '../platform/clientKind';
@@ -56,20 +57,6 @@ function stopHeartbeat(conn: ConnectionState): void {
   }
 }
 
-// ─── WS URL construction ─────────────────────────────────────────────────────
-
-function buildWsUrl(origin: string): string {
-  if (!origin) {
-    // Home instance — derive from current page
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${protocol}//${window.location.host}/ws`;
-  }
-  // Remote instance — derive from origin URL
-  const url = new URL(origin);
-  const protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${url.host}/ws`;
-}
-
 // ─── Call relay helpers ───────────────────────────────────────────────────────
 
 import { buildCallUndeliverableToast } from '../utils/callUndeliverableToast';
@@ -106,7 +93,7 @@ function connectToOrigin(origin: string, token: string): void {
     return;
   }
 
-  const wsUrl = buildWsUrl(origin);
+  const wsUrl = getWebSocketUrl(origin);
   const ws = new WebSocket(wsUrl);
   conn.ws = ws;
 

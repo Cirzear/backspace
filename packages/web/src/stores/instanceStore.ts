@@ -1,3 +1,5 @@
+import { getHomeHostname, getHomeHost, getHomeOrigin } from '../platform/instanceRuntime';
+import { getSessionItem, setSessionItem, removeSessionItem, flushSessionStorage } from '../platform/sessionStorage';
 import { create } from 'zustand';
 import type {
   User,
@@ -55,26 +57,18 @@ function storageKey(userId: string): string {
 // ─── localStorage helpers ────────────────────────────────────────────────────
 
 function loadCachedTokens(userId: string): Record<string, CachedInstanceToken> {
-  try {
-    const scopedKey = storageKey(userId);
-    const raw = localStorage.getItem(scopedKey);
-    if (raw) {
-      return JSON.parse(raw) as Record<string, CachedInstanceToken>;
-    }
+  const scopedKey = storageKey(userId);
+  const raw = getSessionItem(scopedKey);
+  if (raw) return JSON.parse(raw) as Record<string, CachedInstanceToken>;
 
-    // One-time migration: adopt legacy unscoped key if it exists
-    const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
-    if (legacy) {
-      const parsed = JSON.parse(legacy) as Record<string, CachedInstanceToken>;
-      localStorage.setItem(scopedKey, legacy);
-      localStorage.removeItem(LEGACY_STORAGE_KEY);
-      return parsed;
-    }
-
-    return {};
-  } catch {
-    return {};
-  }
+  // One-time migration stays inside the selected platform credential storage.
+  // Corrupt credentials must surface rather than becoming an empty writable cache.
+  const legacy = getSessionItem(LEGACY_STORAGE_KEY);
+  if (!legacy) return {};
+  const parsed = JSON.parse(legacy) as Record<string, CachedInstanceToken>;
+  setSessionItem(scopedKey, legacy);
+  removeSessionItem(LEGACY_STORAGE_KEY);
+  return parsed;
 }
 
 function saveCachedTokens(instances: ConnectedInstance[], userId: string): void {
@@ -89,7 +83,7 @@ function saveCachedTokens(instances: ConnectedInstance[], userId: string): void 
       username: inst.username,
     };
   }
-  localStorage.setItem(storageKey(userId), JSON.stringify(cache));
+  setSessionItem(storageKey(userId), JSON.stringify(cache));
 }
 
 // ─── Network error detection ────────────────────────────────────────────────
@@ -189,7 +183,7 @@ export function normalizeOrigin(url: string): string {
 /** Check whether an origin string refers to the current (home) instance. */
 export function isSelfOrigin(origin: string): boolean {
   try {
-    return normalizeOrigin(origin) === window.location.origin;
+    return normalizeOrigin(origin) === getHomeOrigin();
   } catch {
     return false;
   }
@@ -208,7 +202,7 @@ export function isSelfOrigin(origin: string): boolean {
  */
 export function resolveSessionApiForHome(homeDomain: string): { api: BackspaceApiClient; username: string } | null {
   const primaryUser = useAuthStore.getState().user;
-  if (primaryUser && !primaryUser.homeInstance && window.location.hostname.toLowerCase() === homeDomain) {
+  if (primaryUser && !primaryUser.homeInstance && getHomeHostname().toLowerCase() === homeDomain) {
     return { api, username: primaryUser.username };
   }
   const conn = useInstanceStore.getState().instances.find(
@@ -261,7 +255,7 @@ export async function ensureRemoteCredential(
   const currentUser = useAuthStore.getState().user;
   if (!currentUser) return;
 
-  const trueHomeHost = homeHostOf(currentUser.homeInstance ?? window.location.host);
+  const trueHomeHost = homeHostOf(currentUser.homeInstance ?? getHomeHost());
   if (homeHostOf(instance.origin) === trueHomeHost) return; // home keeps the real password
 
   const remote = instance.user;
@@ -694,8 +688,8 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
     try {
       // Compute the user's true home identity. If we're a federated user
       // (e.g. erin@nova browsing orbit), homeInstance points at the real home,
-      // not window.location.host.
-      const trueHomeHost = currentUser.homeInstance ?? window.location.host;
+      // not getHomeHost().
+      const trueHomeHost = currentUser.homeInstance ?? getHomeHost();
       const bareUsername = currentUser.username.includes('@')
         ? currentUser.username.split('@')[0]!
         : currentUser.username;
@@ -816,6 +810,7 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
         isLoading: false,
       });
       saveCachedTokens(get().instances, currentUser.id);
+      await flushSessionStorage();
 
       // Open WebSocket connection to the remote instance
       connectInstance(origin, response.token);
@@ -867,6 +862,7 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
       });
       const userId = useAuthStore.getState().user?.id;
       if (userId) saveCachedTokens(get().instances, userId);
+      await flushSessionStorage();
 
       // Open WebSocket connection to the remote instance
       connectInstance(origin, response.token);
@@ -1059,7 +1055,7 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
 
     // Build perspective-correct replicated instance lists.
     // Each instance should store references to OTHER instances, never itself.
-    const homeOrigin = window.location.origin;
+    const homeOrigin = getHomeOrigin();
     const homeUsername = currentUser.username.includes('@')
       ? currentUser.username.split('@')[0]!
       : currentUser.username;
@@ -1226,7 +1222,7 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
     // (the home instance of a federated account) moves off this status in the
     // same run, and only `disconnected` would have kept it from being tried.
     for (const [origin] of Object.entries(cached)) {
-      if (origin === window.location.origin) continue;
+      if (origin === getHomeOrigin()) continue;
       if (!registry.has(origin)) {
         registry.set(origin, {
           origin,
@@ -1631,7 +1627,7 @@ setUserIdForOriginResolver((origin: string): string | undefined => {
 // gap and gives one source of truth for the home JWT.
 
 setTokenForOriginResolver((origin: string): string | null => {
-  if (!origin) return localStorage.getItem('backspace_token');
+  if (!origin) return getSessionItem('backspace_token');
   const instance = useInstanceStore.getState().instances.find(i => i.origin === origin);
   return instance?.token ?? null;
 });
@@ -1646,7 +1642,7 @@ setTokenForOriginResolver((origin: string): string | null => {
   const pushOrigins = (instances: ConnectedInstance[]) => {
     if (typeof window === 'undefined' || !window.backspace?.setConnectedOrigins) return;
     const origins = [
-      window.location.origin,
+      getHomeOrigin(),
       ...instances
         .filter(i => i.status === 'connected')
         .map(i => i.origin)

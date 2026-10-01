@@ -1,3 +1,4 @@
+import { getUploadUrl } from '../../utils/assetUrls';
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { DirectoryEntry } from '@backspace/shared';
@@ -62,10 +63,10 @@ export function SpaceCard({
     : null;
 
   const iconUrl = space.icon
-    ? (space.icon.startsWith('http') || space.icon.startsWith('/') ? space.icon : `/api/uploads/${space.icon}`)
+    ? getUploadUrl(space.icon, space._instanceOrigin)
     : null;
   const bannerUrl = space.banner
-    ? (space.banner.startsWith('http') || space.banner.startsWith('/') ? space.banner : `/api/uploads/${space.banner}`)
+    ? getUploadUrl(space.banner, space._instanceOrigin)
     : null;
 
   // Extract dominant colors from icon when no banner is set

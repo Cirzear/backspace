@@ -1,3 +1,4 @@
+import { getHomeHost } from '../platform/instanceRuntime';
 import type { User } from '@backspace/shared';
 
 /**
@@ -60,7 +61,7 @@ export function isSelf(
   if (_knownSelfIds.has(user.id)) return true;
   // Replicated user: homeInstance matches our origin
   if (!user.homeInstance) return false;
-  if (user.homeInstance !== window.location.host) return false;
+  if (user.homeInstance !== getHomeHost()) return false;
   // Username: "erin" or "erin@nova.ddns.net" → base must match
   const { baseName } = parseFederatedUsername(user.username);
   const { baseName: homeBase } = parseFederatedUsername(homeUser.username);
@@ -95,7 +96,7 @@ export function resolveDisplayIdentity(user: User, homeUser: User | null): User 
  *
  * Empty inputs return `''`. Use {@link deliveringHost} when you need the
  * concrete host that an origin represents (which substitutes
- * `window.location.host` for the empty sentinel).
+ * `getHomeHost()` for the empty sentinel).
  */
 /**
  * The host of an origin for a message, or the origin itself when it does
@@ -130,11 +131,11 @@ export function normalizeOriginToHost(input: string | null | undefined): string 
 
 /**
  * Resolve a delivering origin to its concrete host. Substitutes
- * `window.location.host` for the empty-origin sentinel (`''` = our home
+ * `getHomeHost()` for the empty-origin sentinel (`''` = our home
  * connection). All other inputs are normalized via {@link normalizeOriginToHost}.
  */
 export function deliveringHost(origin: string): string {
-  if (origin === '') return typeof window === 'undefined' ? '' : window.location.host;
+  if (origin === '') return typeof window === 'undefined' ? '' : getHomeHost();
   return normalizeOriginToHost(origin);
 }
 
@@ -197,7 +198,7 @@ export function activityKey(subject: PresenceSubject, deliveringOrigin: string):
  *  - `user.homeInstance` is null/empty: the user is native to whatever
  *    instance delivered them. Always a home view.
  *  - `user.homeInstance` is set: home view iff the delivering host equals
- *    the user's home host (with `''` resolving to `window.location.host`).
+ *    the user's home host (with `''` resolving to `getHomeHost()`).
  *
  * Used as the "isHome" tier in the userViews preference rule. Stub views
  * never overwrite home views; home views always upgrade stubs.
@@ -231,7 +232,7 @@ export function isFederationGlobeApplicable(
   const { domain } = parseFederatedUsername(user.username);
   if (!domain) return false;
   if (typeof window === 'undefined') return true; // SSR fallback
-  return domain !== window.location.host;
+  return domain !== getHomeHost();
 }
 
 /**
@@ -259,7 +260,7 @@ export function canonicalUserMatch(
   const bHome = b.homeInstance ?? bBase.domain ?? null;
 
   if (!aHome && !bHome) return true;                    // Both native to home instance
-  if (!aHome) return bHome === window.location.host;     // a native, b federated
-  if (!bHome) return aHome === window.location.host;     // b native, a federated
+  if (!aHome) return bHome === getHomeHost();     // a native, b federated
+  if (!bHome) return aHome === getHomeHost();     // b native, a federated
   return aHome === bHome;                                // Both have explicit homes
 }

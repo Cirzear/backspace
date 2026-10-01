@@ -1,3 +1,4 @@
+import { getUploadUrl } from '../../../utils/assetUrls';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation, Trans } from 'react-i18next';
 import { useFormatters } from '../../../i18n/formatters';
@@ -277,7 +278,7 @@ export function UsersPanel() {
                   {/* Avatar */}
                   <div className={isDeleted ? 'opacity-50' : ''}>
                     <Avatar
-                      src={user.avatar ? api.uploads.url(user.avatar) : null}
+                      src={user.avatar ? getUploadUrl(user.avatar) : null}
                       name={user.displayName || user.username}
                       size={32}
                       avatarColor={user.avatarColor as any}

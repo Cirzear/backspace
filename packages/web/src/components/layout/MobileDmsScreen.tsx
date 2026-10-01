@@ -1,3 +1,4 @@
+import { getUploadUrl } from '../../utils/assetUrls';
 import React, { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useFormatters } from '../../i18n/formatters';
@@ -10,7 +11,6 @@ import { useContextMenuStore } from '../../stores/contextMenuStore';
 import { Avatar } from '../ui/Avatar';
 import { AvatarStack } from '../ui/AvatarStack';
 import { Mascot } from '../ui/Mascot';
-import { resolveAssetUrl } from '../../utils/assetUrls';
 import { useNavigate } from 'react-router-dom';
 import { parseFederatedUsername, isFederationGlobeApplicable, isSelf, userDisplayName } from '../../utils/identity';
 import { useCanonicalUserView } from '../../utils/userViewLookup';
@@ -33,7 +33,7 @@ function MobileFriendBubble({
   // _instanceOrigin lives on TaggedFriend, not on the canonical User. Use the
   // canonical avatar value but source the origin from the original friend.
   const avatarUrl = canonical.avatar
-    ? resolveAssetUrl(canonical.avatar, friend._instanceOrigin) ?? `/api/uploads/${canonical.avatar}`
+    ? getUploadUrl(canonical.avatar, friend._instanceOrigin)
     : null;
   const displayName = userDisplayName(canonical);
 
@@ -110,7 +110,7 @@ function MobileDmRow({
   const preview = formatDmSidebarPreview(dm, authUser ?? null);
   const previewTime = dm.lastMessage?.createdAt;
 
-  const avatarUrl = mainUser?.avatar ? `/api/uploads/${mainUser.avatar}` : null;
+  const avatarUrl = mainUser?.avatar ? getUploadUrl(mainUser.avatar) : null;
 
   return (
     <button

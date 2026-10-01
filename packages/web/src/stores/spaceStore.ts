@@ -1,3 +1,4 @@
+import { getHomeHost, getHomeOrigin } from '../platform/instanceRuntime';
 import type {
   Channel,
   ChannelCategory,
@@ -478,7 +479,7 @@ export const useSpaceStore = create<SpaceState>((set, get, apiStore) => ({
   },
 
   joinByCode: async (inviteCode: string, origin?: string) => {
-    if (origin && typeof window !== 'undefined' && origin === window.location.origin) {
+    if (origin && typeof window !== 'undefined' && origin === getHomeOrigin()) {
       origin = undefined;
     }
     if (origin) {
@@ -862,7 +863,7 @@ export {
  */
 export function resolveUserOrigin(user: { homeInstance?: string | null }): string {
   const host = user.homeInstance;
-  if (!host || host === window.location.host) return '';
+  if (!host || host === getHomeHost()) return '';
   return resolveOriginFromHostname(host);
 }
 

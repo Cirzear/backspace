@@ -9,6 +9,7 @@ installers/
 output/
 *.tar
 packages/web/dist/
+packages/web/dist-mobile/
 packages/server/dist/
 packages/shared/dist/
 packages/desktop/dist/

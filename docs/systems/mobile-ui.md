@@ -1,5 +1,9 @@
 # Mobile & Responsive UI System
 
+Android APK packaging, instance bootstrap, native back handling and session-only
+unsent work are documented in [mobile-android.md](mobile-android.md). The web edge
+swipe is disabled in the native container; Android back uses NativeLifecycle.
+
 Source files:
 - `packages/web/src/components/layout/MobileShell.tsx` — Root mobile container: three tabs, screen stack, swipe gesture, browser history sync
 - `packages/web/src/components/layout/MobileScreenStack.tsx` — Push/pop animation state machine with CSS slide transitions

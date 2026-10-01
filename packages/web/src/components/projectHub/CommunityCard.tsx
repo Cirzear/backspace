@@ -1,3 +1,4 @@
+import { getHomeOrigin } from '../../platform/instanceRuntime';
 import React, { useCallback, useEffect, useRef, useState, type JSX } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -30,7 +31,7 @@ export type CommunityStatus = 'member' | 'pending' | 'not-member';
  * `new URL(x).origin` on both sides, so a trailing slash or a differently
  * cased host does not defeat the match; the stores tag the home instance with
  * `''`, which is read as `homeOrigin` (the caller passes
- * `window.location.origin`). A target whose origin does not parse matches
+ * `getHomeOrigin()`). A target whose origin does not parse matches
  * nothing. Membership wins over a pending request that has not caught up yet.
  */
 export function communityStatus(
@@ -312,7 +313,7 @@ export function CommunityCard(props: { target: CommunityTarget }): JSX.Element {
   const openModal = useUIStore((s) => s.openModal);
   const activeModal = useUIStore((s) => s.activeModal);
 
-  const status = communityStatus(target, window.location.origin, spaces, myRequests);
+  const status = communityStatus(target, getHomeOrigin(), spaces, myRequests);
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
 
   useEffect(() => {
@@ -361,7 +362,7 @@ export function CommunityCard(props: { target: CommunityTarget }): JSX.Element {
       return;
     }
 
-    const homeOrigin = canonicalOrigin(window.location.origin);
+    const homeOrigin = canonicalOrigin(getHomeOrigin());
     const isHomeTarget = homeOrigin !== null && canonicalOrigin(target.origin) === homeOrigin;
     if (isHomeTarget) {
       // exploreStore reaches the home instance only through the '' tag.

@@ -1,4 +1,23 @@
-import { getApiForOrigin } from '../stores/spaceStore';
+import { getApiBaseUrl } from '../platform/instanceRuntime';
+
+/** Resolve upload assets without routing bundled /icons, /sounds or Vite assets remotely. */
+export function getUploadUrl(asset: string, origin = ''): string {
+  const value = asset.trim();
+  // URL parsers ignore control characters in schemes; reject them before checking protocols.
+  if (/[\u0000-\u001f\u007f\\]/.test(value)) throw new Error('Invalid asset URL');
+  const scheme = /^([a-z][a-z\d+.-]*):/i.exec(value)?.[1]?.toLowerCase();
+  if (scheme) {
+    if (!['http', 'https', 'blob', 'data'].includes(scheme)) throw new Error('Unsupported asset URL protocol');
+    return value;
+  }
+  if (value.startsWith('//')) throw new Error('Asset URLs must specify a protocol');
+  if (!value) return value;
+  if (value.startsWith('/api/uploads/')) {
+    return `${getApiBaseUrl(origin)}/uploads/${stripUploadPrefix(value)}`;
+  }
+  if (value.startsWith('/')) return value;
+  return `${getApiBaseUrl(origin)}/uploads/${value}`;
+}
 
 /** Strip /api/uploads/ prefix to get bare filename. No-op for bare filenames and absolute URLs. */
 export function stripUploadPrefix(filename: string): string {
@@ -8,11 +27,11 @@ export function stripUploadPrefix(filename: string): string {
 /**
  * Resolve a relative asset filename to an absolute URL for remote origins.
  * Home-origin filenames are returned as-is (components handle the /api/uploads/ prefix).
- * Already-absolute URLs (starting with 'http') pass through unchanged.
+ * Rendering should use getUploadUrl; normalization preserves the home filename contract.
  */
 export function resolveAssetUrl(filename: string | null | undefined, origin: string): typeof filename {
-  if (!filename || !origin || filename.startsWith('http')) return filename;
-  return getApiForOrigin(origin).uploads.url(stripUploadPrefix(filename));
+  if (!filename || !origin) return filename;
+  return getUploadUrl(filename, origin);
 }
 
 /**

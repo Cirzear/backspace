@@ -6,11 +6,13 @@ import path from 'path';
 import { devCspPreamble } from './src/build/devCsp';
 import { PRECACHE_MAX_FILE_BYTES } from './src/build/precache';
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [
     devCspPreamble(),
     react(),
     VitePWA({
+      // Keep virtual module resolution, but native packages must never register a SW.
+      disable: mode === 'mobile',
       // 'prompt' keeps a new build waiting until SwAutoUpdate applies it, so an
       // update never reloads the page out from under a live voice session.
       registerType: 'prompt',
@@ -45,6 +47,7 @@ export default defineConfig({
       },
     }),
   ],
+  build: { outDir: mode === 'mobile' ? 'dist-mobile' : 'dist' },
   test: {
     globals: true,
     environment: 'jsdom',
@@ -70,4 +73,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

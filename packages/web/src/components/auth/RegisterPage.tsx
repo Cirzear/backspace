@@ -1,3 +1,4 @@
+import { setSessionItem, flushSessionStorage } from '../../platform/sessionStorage';
 import React, { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Trans, useTranslation } from 'react-i18next';
@@ -354,7 +355,7 @@ export function RegisterPage() {
         return urlInviteToken ?? undefined;
       })();
 
-      // Step 1: Register via API — store token in localStorage for API auth,
+      // Step 1: Register via API — store token in platform credential storage for API auth,
       // but NOT in Zustand yet so AuthRedirect doesn't fire prematurely
       const response = await api.auth.register({
         username: username.trim(),
@@ -363,7 +364,8 @@ export function RegisterPage() {
         avatarColor: ac,
         ...(tokenForRegister ? { inviteToken: tokenForRegister } : {}),
       });
-      localStorage.setItem('backspace_token', response.token);
+      setSessionItem('backspace_token', response.token);
+      await flushSessionStorage();
 
       // Step 2: Upload avatar while still on the register page
       let finalUser = response.user;
@@ -379,6 +381,7 @@ export function RegisterPage() {
 
       // Step 3: Activate session — sets Zustand token, triggers AuthRedirect
       initSession(response.token, finalUser);
+      await flushSessionStorage();
 
       if (redirect && redirect.startsWith('/') && !redirect.startsWith('//')) {
         navigate(redirect);

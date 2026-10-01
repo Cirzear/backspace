@@ -1,3 +1,5 @@
+import { getApiBaseUrl } from '../platform/instanceRuntime';
+import { getSessionItem, removeSessionItem, flushSessionStorage } from '../platform/sessionStorage';
 import type { PersonalSticker } from '@backspace/shared/src/stickers';
 import { isErrorCode, type ErrorCode, type ErrorDetails } from '@backspace/shared/src/errors';
 import type {
@@ -939,23 +941,25 @@ export class BackspaceApiClient {
 }
 
 function handleUnauthorized(): void {
-  localStorage.removeItem('backspace_token');
+  removeSessionItem('backspace_token');
   if (
     !window.location.pathname.startsWith('/login') &&
     !window.location.pathname.startsWith('/register')
   ) {
-    window.location.href = '/login';
+    // Reload only after native deletion is durable; the storage adapter reports
+    // failures to the root boundary instead of silently returning to login.
+    void flushSessionStorage().then(() => { window.location.href = '/login'; }).catch(() => {});
   }
 }
 
 export const api = new BackspaceApiClient(
-  '/api',
-  () => localStorage.getItem('backspace_token'),
+  getApiBaseUrl(),
+  () => getSessionItem('backspace_token'),
   handleUnauthorized,
 );
 
 export function createApiClient(origin: string, getToken: () => string | null, onUnauthorized?: () => void): BackspaceApiClient {
-  const baseUrl = origin ? `${origin}/api` : '/api';
+  const baseUrl = getApiBaseUrl(origin);
   return new BackspaceApiClient(baseUrl, getToken, onUnauthorized);
 }
 

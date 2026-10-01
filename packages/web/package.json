@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "vite",
     "build": "node ../../scripts/check-i18n.mjs && tsc && vite build",
+    "build:mobile": "node ../../scripts/check-i18n.mjs && tsc && vite build --mode mobile",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -16,6 +17,8 @@
   },
   "dependencies": {
     "@backspace/shared": "workspace:*",
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/core": "8.5.2",
     "@emoji-mart/data": "^1.2.1",
     "@emoji-mart/react": "^1.1.1",
     "@livekit/components-react": "^2.9.24",

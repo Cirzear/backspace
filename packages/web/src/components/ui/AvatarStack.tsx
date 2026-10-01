@@ -1,3 +1,4 @@
+import { getUploadUrl } from '../../utils/assetUrls';
 import React from 'react';
 import type { User } from '@backspace/shared';
 import { Avatar } from './Avatar';
@@ -61,14 +62,6 @@ const BORDER_CLASS: Record<AvatarStackProps['border'], string> = {
  * visible avatar/initials end up shifted toward the upper-left of the tile.
  */
 const TILE_BORDER_WIDTH = 2;
-
-/** Resolves a bare filename to /api/uploads/, leaves absolute URLs alone. */
-function resolveIconSrc(iconUrl: string): string {
-  if (iconUrl.startsWith('http') || iconUrl.startsWith('blob:') || iconUrl.startsWith('data:') || iconUrl.startsWith('/')) {
-    return iconUrl;
-  }
-  return `/api/uploads/${iconUrl}`;
-}
 
 /** Two-figure people SVG used as the group badge for 0/1-member groups. */
 function GroupBadgeIcon({ size }: { size: number }) {
@@ -148,7 +141,7 @@ export function AvatarStack({ members, size, border, iconUrl }: AvatarStackProps
         style={{ width: size, height: size }}
       >
         <img
-          src={resolveIconSrc(iconUrl)}
+          src={getUploadUrl(iconUrl)}
           alt=""
           loading="lazy"
           className="w-full h-full rounded-full object-cover"

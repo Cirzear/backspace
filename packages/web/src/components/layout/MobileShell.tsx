@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { useTranslation } from 'react-i18next';
 import i18n from '../../i18n';
 import { useUIStore } from '../../stores/uiStore';
@@ -165,7 +166,8 @@ export function MobileShell() {
         popMobileScreen();
       }
     },
-    enabled: mobileStack.length > 0,
+    // Android delivers its own edge-back event through NativeLifecycle.
+    enabled: mobileStack.length > 0 && !Capacitor.isNativePlatform(),
   });
 
   useMobileRouteSync(location.pathname);

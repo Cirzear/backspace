@@ -3,5 +3,27 @@
     "editProfile": "编辑个人资料",
     "homeInstance": "主实例：{{domain}}",
     "logOutConfirm": "确定要退出登录吗？"
+  },
+  "instance": {
+    "title": "选择实例",
+    "description": "连接到你信任的 Backspace 服务器。",
+    "address": "实例地址",
+    "httpsHelp": "请输入完整 HTTPS 源地址，例如 https://chat.example.com。不支持 HTTP 或无效证书。",
+    "check": "检查实例",
+    "checking": "正在检查…",
+    "confirm": "使用此实例",
+    "connectionError": "无法验证实例，请检查地址、网络连接及 HTTPS 证书。",
+    "invalidOrigin": "请输入完整 HTTPS 源地址，不含凭据、路径、查询参数或片段。",
+    "httpError": "实例返回 HTTP {{status}}。",
+    "invalidResponse": "服务器未返回有效的 Backspace 实例信息。",
+    "sessionHelp": "未发送的草稿和传输仅保留在本次会话中。",
+    "selected": "实例：{{host}}",
+    "change": "更换实例",
+    "logoutRequired": "更换实例前请先退出登录。"
+  },
+  "startup": {
+    "title": "无法启动 Backspace",
+    "description": "启动或安全会话存储失败。为保护会话，应用已被阻止继续运行。",
+    "reload": "重新加载"
   }
 }

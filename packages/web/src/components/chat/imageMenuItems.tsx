@@ -1,3 +1,4 @@
+import { getHomeOrigin } from '../../platform/instanceRuntime';
 import { stickerUrl } from '@backspace/shared/src/stickers';
 import type { ContextMenuAction, ContextMenuItem } from '../../stores/contextMenuStore';
 import { saveImage, copyImageToClipboard } from '../../utils/imageActions';
@@ -17,9 +18,9 @@ interface ImageMenuParams {
 function collectStickerItem(source: string, name: string): ContextMenuAction | null {
   const sticker = stickerUrl(source);
   let url: URL;
-  try { url = new URL(sticker ?? source, window.location.origin); }
+  try { url = new URL(sticker ?? source, getHomeOrigin()); }
   catch { return null; }
-  const localUpload = url.origin === window.location.origin
+  const localUpload = url.origin === getHomeOrigin()
     && /^\/api\/uploads\/[^/]+$/.test(url.pathname) && !url.search && !url.hash;
   if (!sticker && !localUpload) return null;
 

@@ -1,3 +1,5 @@
+import { getHomeHost } from '../../platform/instanceRuntime';
+import { getUploadUrl } from '../../utils/assetUrls';
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { User } from '@backspace/shared';
@@ -533,7 +535,7 @@ function AddFriendTab({
   // Bare handle gets the home host appended for display only — submission
   // still uses the raw trimmed query.
   const directAddDisplay = directAt === -1
-    ? `${trimmedQuery}@${window.location.host}`
+    ? `${trimmedQuery}@${getHomeHost()}`
     : trimmedQuery;
 
   // Direct Add handler
@@ -699,10 +701,10 @@ function UserDiscoverCard({
     : null;
 
   const avatarUrl = user.avatar
-    ? (user.avatar.startsWith('http') || user.avatar.startsWith('/') ? user.avatar : `/api/uploads/${user.avatar}`)
+    ? getUploadUrl(user.avatar, user._instanceOrigin)
     : null;
   const bannerUrl = user.banner
-    ? (user.banner.startsWith('http') || user.banner.startsWith('/') ? user.banner : `/api/uploads/${user.banner}`)
+    ? getUploadUrl(user.banner, user._instanceOrigin)
     : null;
 
   const handleSendRequest = async () => {

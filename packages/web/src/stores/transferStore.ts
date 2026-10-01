@@ -1,3 +1,6 @@
+import { Capacitor } from '@capacitor/core';
+import { getHomeOrigin } from '../platform/instanceRuntime';
+import { getUploadUrl } from '../utils/assetUrls';
 import { create } from 'zustand';
 import { persist, type PersistStorage, type StorageValue } from 'zustand/middleware';
 import { Upload, type UploadOptions } from 'tus-js-client';
@@ -64,6 +67,7 @@ interface TransferStoreState {
 }
 
 interface TransferStoreActions {
+  resetSession: () => void;
   createTransfer: (input: CreateTransferInput) => string;
   setState_: (id: string, state: TransferState) => void;
   updateProgress: (id: string, loaded: number) => void;
@@ -104,11 +108,14 @@ const liveUploadFiles = new Map<string, Blob>();
 
 // Live download AbortControllers — keyed by transferId. Not serializable, never persisted.
 const liveDownloads = new Map<string, AbortController>();
+let sessionGeneration = 0;
 
 // Custom storage that serializes Map<string, Transfer> as an array of entries.
 // Only the `transfers` slice is persisted; partialize controls which entries.
 const mapAwareStorage: PersistStorage<Pick<TransferStoreState, 'transfers'>> = {
   getItem: (name) => {
+    // Android unsent work belongs only to the current signed-in session.
+    if (Capacitor.isNativePlatform()) return null;
     const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(name) : null;
     if (!raw) return null;
     try {
@@ -122,6 +129,7 @@ const mapAwareStorage: PersistStorage<Pick<TransferStoreState, 'transfers'>> = {
     }
   },
   setItem: (name, value) => {
+    if (Capacitor.isNativePlatform()) return;
     if (typeof localStorage === 'undefined') return;
     const entries = Array.from(value.state.transfers.entries());
     const payload = JSON.stringify({ state: { transfers: entries }, version: value.version });
@@ -132,6 +140,7 @@ const mapAwareStorage: PersistStorage<Pick<TransferStoreState, 'transfers'>> = {
     }
   },
   removeItem: (name) => {
+    if (Capacitor.isNativePlatform()) return;
     if (typeof localStorage !== 'undefined') localStorage.removeItem(name);
   },
 };
@@ -231,6 +240,19 @@ export const useTransferStore = create<TransferStore>()(
         });
       },
 
+      resetSession: () => {
+        // Invalidate work waiting on file/permission promises before abort callbacks run.
+        sessionGeneration += 1;
+        for (const upload of liveUploads.values()) {
+          void upload.abort(false).catch((error: unknown) => console.error('[transferStore] Session upload abort failed', error));
+        }
+        for (const controller of liveDownloads.values()) controller.abort();
+        liveUploads.clear();
+        liveDownloads.clear();
+        liveUploadFiles.clear();
+        set({ transfers: new Map(), hasInMemoryFile: new Set() });
+      },
+
       startUpload: async (file, opts) => {
         const token = getTokenForOrigin(opts.origin ?? '');
         const user = useAuthStore.getState().user;
@@ -254,6 +276,8 @@ export const useTransferStore = create<TransferStore>()(
 
         const tusOpts: UploadOptions = {
           endpoint,
+          // Native restart deliberately does not restore uploads or tus fingerprints.
+          storeFingerprintForResuming: !Capacitor.isNativePlatform(),
           retryDelays: [0, 1000, 3000, 5000, 10_000],
           metadata: {
             filename: fileLike.name,
@@ -345,6 +369,7 @@ export const useTransferStore = create<TransferStore>()(
       },
 
       resumeUpload: async (id) => {
+        const generation = sessionGeneration;
         const t = get().get(id);
         if (!t || t.type !== 'upload') return;
 
@@ -371,6 +396,8 @@ export const useTransferStore = create<TransferStore>()(
             }
           }
         }
+
+        if (generation !== sessionGeneration) return;
 
         if (!blob) {
           // No in-memory File (post-reload) AND no FS handle to reacquire bytes from.
@@ -420,6 +447,8 @@ export const useTransferStore = create<TransferStore>()(
 
         const tusOpts: UploadOptions = {
           endpoint: tusEndpoint(t.origin),
+          // Native restart deliberately does not restore uploads or tus fingerprints.
+          storeFingerprintForResuming: !Capacitor.isNativePlatform(),
           retryDelays: [0, 1000, 3000, 5000, 10_000],
           chunkSize: 5 * 1024 * 1024,
           headers: { Authorization: `Bearer ${token}` },
@@ -475,7 +504,10 @@ export const useTransferStore = create<TransferStore>()(
         upload.start();
       },
 
-      startDownload: async (url, opts) => {
+      startDownload: async (source, opts) => {
+        // Persist the server URL, never the bundled WebView origin, for resumable downloads.
+        const url = new URL(getUploadUrl(source), getHomeOrigin()).href;
+        const generation = sessionGeneration;
         const fileLike = {
           name: opts.filename,
           size: opts.size ?? 0,
@@ -516,6 +548,7 @@ export const useTransferStore = create<TransferStore>()(
               liveDownloads.delete(id);
               return id;
             }
+            if (generation !== sessionGeneration) return id;
             const handleId = `dl-${id}`;
             await putHandle(handleId, handle);
             // Persist the handle key on the transfer.
@@ -563,6 +596,7 @@ export const useTransferStore = create<TransferStore>()(
               loaded += value.byteLength;
               if (total) get().updateProgress(id, loaded);
             }
+            if (generation !== sessionGeneration) return id;
             const blob = new Blob(chunks as BlobPart[], { type: fileLike.mimetype });
             const objUrl = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -609,6 +643,7 @@ export const useTransferStore = create<TransferStore>()(
       },
 
       resumeDownload: async (id) => {
+        const generation = sessionGeneration;
         const t = get().get(id);
         if (!t || t.type !== 'download' || !t.sourceUrl) return;
         if (!t.destFileHandleId) {
@@ -629,16 +664,22 @@ export const useTransferStore = create<TransferStore>()(
           getFile?: () => Promise<File>;
           createWritable?: (opts: { keepExistingData: boolean }) => Promise<FileSystemWritableFileStream>;
         };
+        if (generation !== sessionGeneration) return;
         const fileNow = await handleAny.getFile!();
+        if (generation !== sessionGeneration) return;
         const offset = fileNow.size;
         const writable = await handleAny.createWritable!({ keepExistingData: true });
         await (writable as unknown as { seek: (pos: number) => Promise<void> }).seek(offset);
 
+        if (generation !== sessionGeneration) {
+          await writable.abort();
+          return;
+        }
         const controller = new AbortController();
         liveDownloads.set(id, controller);
         get().setState_(id, 'active');
         try {
-          const resp = await fetch(t.sourceUrl, {
+          const resp = await fetch(new URL(getUploadUrl(t.sourceUrl), getHomeOrigin()).href, {
             signal: controller.signal,
             headers: { Range: `bytes=${offset}-` },
           });

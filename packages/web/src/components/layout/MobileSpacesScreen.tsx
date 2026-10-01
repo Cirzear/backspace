@@ -1,3 +1,5 @@
+import { getHomeOrigin } from '../../platform/instanceRuntime';
+import { getUploadUrl } from '../../utils/assetUrls';
 import { notificationMenuItems } from '../notifications/notificationMenuItems';
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -346,7 +348,7 @@ export function MobileSpacesScreen() {
         onClick: async () => {
           try {
             const code = await useSpaceStore.getState().generateInvite(spaceId);
-            const origin = (space as TaggedSpace)._instanceOrigin || window.location.origin;
+            const origin = (space as TaggedSpace)._instanceOrigin || getHomeOrigin();
             // Match the public join route used by the invite modal.
             const url = `${origin}/join/${code}`;
             await navigator.clipboard.writeText(url);
@@ -687,9 +689,7 @@ export function MobileSpacesScreen() {
           const isSelected = space.id === selectedSpaceId;
           const hasUnread = spaceHasUnread(space.id);
           const iconUrl = space.icon
-            ? (space.icon.startsWith('http') || space.icon.startsWith('/')
-                ? space.icon
-                : `/api/uploads/${space.icon}`)
+            ? getUploadUrl(space.icon, space._instanceOrigin)
             : null;
           const grad = getSpaceGradient(space.id, space.name, space.avatarColor);
 

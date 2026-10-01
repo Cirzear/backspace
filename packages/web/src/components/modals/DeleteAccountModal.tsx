@@ -1,3 +1,4 @@
+import { removeSessionItem, flushSessionStorage } from '../../platform/sessionStorage';
 import { useState, useEffect } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { useAuthStore } from '../../stores/authStore';
@@ -89,8 +90,10 @@ export function DeleteAccountModal({ isOpen, onClose }: DeleteAccountModalProps)
   useEffect(() => {
     if (deletionComplete && step === 'complete') {
       const timer = setTimeout(() => {
-        localStorage.removeItem('backspace_token');
-        window.location.href = '/login';
+        removeSessionItem('backspace_token');
+        // Do not reload until native credential deletion is durable. The adapter
+        // reports persistence errors to the root boundary; a failure must stay here.
+        void flushSessionStorage().then(() => { window.location.href = '/login'; }).catch(() => {});
       }, 3000);
       return () => clearTimeout(timer);
     }

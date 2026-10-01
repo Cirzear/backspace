@@ -1,3 +1,4 @@
+import { getHomeOrigin } from '../../platform/instanceRuntime';
 import { stickerUrl } from '@backspace/shared/src/stickers';
 import { StickerMessage } from './StickerMessage';
 import { insertComposerMention } from './useComposerMention';
@@ -323,13 +324,13 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
       // currentSrc is absolute; attUrlOf may be relative — compare via URL parse.
       let mediaPath: string;
       try {
-        mediaPath = new URL(mediaSrc, window.location.origin).pathname;
+        mediaPath = new URL(mediaSrc, getHomeOrigin()).pathname;
       } catch { mediaPath = mediaSrc; }
       return persistedAttachments.find((att) => {
         if (!att.mimetype.startsWith(`${kind}/`)) return false;
         const attRaw = attUrlOf(att.filename);
         let attPath: string;
-        try { attPath = new URL(attRaw, window.location.origin).pathname; } catch { attPath = attRaw; }
+        try { attPath = new URL(attRaw, getHomeOrigin()).pathname; } catch { attPath = attRaw; }
         return attPath === mediaPath;
       }) ?? null;
     };

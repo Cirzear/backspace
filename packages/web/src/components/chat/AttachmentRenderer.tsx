@@ -1,3 +1,4 @@
+import { getUploadUrl } from '../../utils/assetUrls';
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { Attachment } from '@backspace/shared';
@@ -46,8 +47,7 @@ const BROWSER_SUPPORTS_HEVC: boolean = (() => {
  * exported so right-click menus can use it without duplicating the rule.
  */
 export function attUrlOf(filename: string): string {
-  if (filename.startsWith('http') || filename.startsWith('/')) return filename;
-  return `/api/uploads/${filename}`;
+  return getUploadUrl(filename);
 }
 
 interface VideoAttachmentProps {
@@ -172,9 +172,7 @@ export function AttachmentRenderer({ attachment }: AttachmentRendererProps) {
   const attUrl = attUrlOf(attachment.filename);
 
   const thumbUrl = attachment.thumbnailFilename
-    ? attachment.thumbnailFilename.startsWith('http') || attachment.thumbnailFilename.startsWith('/')
-      ? attachment.thumbnailFilename
-      : `/api/uploads/${attachment.thumbnailFilename}`
+    ? getUploadUrl(attachment.thumbnailFilename)
     : null;
 
   const { mimetype, originalName, size } = attachment;

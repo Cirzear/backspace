@@ -1,3 +1,5 @@
+import { getHomeHostname } from '../../../platform/instanceRuntime';
+import { getUploadUrl } from '../../../utils/assetUrls';
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { selectMyChosenStatus, useAuthStore } from '../../../stores/authStore';
@@ -116,7 +118,7 @@ export function AccountPanel() {
     try {
       // Target domain = THIS instance (where the detached account lives).
       // Portless hostname to match the server's extractDomain contract.
-      const { token } = await homeConnection.api.auth.attachProof(window.location.hostname);
+      const { token } = await homeConnection.api.auth.attachProof(getHomeHostname());
       const res = await api.users.reattach({ token });
       useAuthStore.getState().setUser(res.user);
       // Re-attach reconciled this (home) account's 1-on-1 DM federatedIds on the
@@ -151,13 +153,13 @@ export function AccountPanel() {
 
   // Compute banner display
   const currentBannerUrl = user.banner
-    ? (user.banner.startsWith('http') ? user.banner : api.uploads.url(user.banner))
+    ? getUploadUrl(user.banner)
     : null;
   const displayBannerSrc = bannerPreview ?? (bannerFilename === '' ? null : currentBannerUrl);
 
   // Compute avatar display
   const currentAvatarSrc = user.avatar
-    ? (user.avatar.startsWith('http') ? user.avatar : api.uploads.url(user.avatar))
+    ? getUploadUrl(user.avatar)
     : null;
   const displayAvatarSrc = avatarPreview ?? (avatarFilename === '' ? null : currentAvatarSrc);
 

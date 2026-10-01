@@ -1,3 +1,4 @@
+import { getHomeHost } from '../../platform/instanceRuntime';
 import React, { useEffect, useRef, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
@@ -101,7 +102,7 @@ function ConnectAndJoinDialog({ entry }: { entry: DirectoryEntry }) {
   const [error, setError] = useState('');
 
   const host = hostOf(entry.origin);
-  const home = user?.homeInstance || window.location.host;
+  const home = user?.homeInstance || getHomeHost();
   const isRequest = entry.visibility === 'request';
   const skipsPassword = probe.status === 'ready' && probe.connected;
 

@@ -113,6 +113,11 @@ export function startPendingMessageOrchestrator(): void {
 const sentClientIds = new Set<string>();
 
 async function deferredSend(b: PendingBubble, attempt = 0): Promise<void> {
+  // A session reset removes the bubble while an earlier request can still settle.
+  // Never retry that request using a new session's routing or credentials.
+  const stillPending = usePendingMessageStore.getState().bubbles.get(b.channelId)
+    ?.some((pending) => pending.clientId === b.clientId);
+  if (!stillPending) return;
   const transfers = useTransferStore.getState().transfers;
   const attachmentIds = b.transferIds
     .map((tid) => transfers.get(tid)?.attachmentId)
