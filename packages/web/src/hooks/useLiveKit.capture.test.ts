@@ -1,7 +1,8 @@
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Room, RoomEvent, DisconnectReason, ConnectionState, Track, TrackEvent } from 'livekit-client';
-import { useLiveKit } from './useLiveKit';
+import { useLiveKit, suspendWebMicrophoneForNative } from './useLiveKit';
+import { republishMicrophone } from './liveKitMicrophone';
 import { useVoiceStore } from '../stores/voiceStore';
 import { useSettingsStore } from '../stores/settingsStore';
 
@@ -13,7 +14,7 @@ const mocks = vi.hoisted(() => ({
     setVoiceProcessing: vi.fn(), setRnnoiseEnabled: vi.fn(),
     setInputDevice: vi.fn(), setInputVolume: vi.fn(),
     onResumed: vi.fn(() => vi.fn()), onInputTrackEnded: vi.fn(() => vi.fn()),
-    getStreamGeneration: () => 1, getFreshTrack: () => null,
+    getStreamGeneration: () => 1, getFreshTrack: vi.fn<() => MediaStreamTrack | null>(() => null),
   },
   scheduleScreenShareOverdrive: vi.fn(),
   syncScreenShareAudio: vi.fn(),
@@ -364,5 +365,70 @@ describe('the instance hosting the call', () => {
     await act(async () => { useSettingsStore.setState({ streamingLimitsByOrigin: { [REMOTE]: limits(3000) } }); });
 
     expect(mocks.applyOverdrive).toHaveBeenLastCalledWith(room, Track.Source.ScreenShare, expect.objectContaining({ maxBitrate: 3_000_000 }));
+  });
+});
+
+
+describe('native microphone handoff', () => {
+  it('unpublishes and stops the Web clone, releases capture, then restores the pipeline', async () => {
+    const { result } = renderHook(() => useLiveKit());
+    await act(async () => { await result.current.connect('channel'); });
+    const local = result.current.room!.localParticipant;
+    const track = { stop: vi.fn(), mediaStreamTrack: { readyState: 'live' } };
+    const publication = { source: Track.Source.Microphone, track };
+    const publications = vi.spyOn(local, 'getTrackPublications').mockReturnValue([publication] as never);
+    const unpublish = vi.spyOn(local, 'unpublishTrack').mockImplementation(async () => {
+      publications.mockReturnValue([]);
+      return undefined;
+    });
+    mocks.audio.setInputDevice.mockClear();
+    await act(async () => { useVoiceStore.setState({ nativeVoiceActive: true }); });
+    expect(unpublish).toHaveBeenCalledWith(track, true);
+    expect(track.stop).toHaveBeenCalledOnce();
+    expect(mocks.audio.releaseInputStream).toHaveBeenCalledOnce();
+    expect(mocks.audio.setInputDevice).not.toHaveBeenCalled();
+    await act(async () => { useVoiceStore.setState({ inputVolume: 70, rnnoiseEnabled: false }); });
+    expect(mocks.audio.setInputDevice).not.toHaveBeenCalled();
+    await act(async () => { useVoiceStore.setState({ nativeVoiceActive: false }); });
+    expect(mocks.audio.setInputDevice).toHaveBeenCalled();
+    expect(mocks.audio.setInputVolume).toHaveBeenLastCalledWith(70);
+  });
+
+  it('does not publish a late Web acquisition after native takeover begins', async () => {
+    let finish!: () => void;
+    mocks.audio.setInputDevice.mockReturnValueOnce(new Promise<void>(resolve => { finish = resolve; }));
+    const { result } = renderHook(() => useLiveKit());
+    await act(async () => { await result.current.connect('channel'); });
+    await act(async () => { useVoiceStore.setState({ nativeVoiceActive: true }); });
+    await act(async () => { finish(); });
+    expect(mocks.audio.setInputVolume).not.toHaveBeenCalled();
+    expect(mocks.audio.getFreshTrack).not.toHaveBeenCalled();
+  });
+
+  it('awaits and withdraws a publish already in flight before allowing native to start', async () => {
+    const room = new Room();
+    const track = { stop: vi.fn() } as unknown as MediaStreamTrack;
+    mocks.audio.getFreshTrack.mockReturnValueOnce(track);
+    let finish!: () => void;
+    vi.spyOn(room.localParticipant, 'publishTrack').mockImplementation(() => new Promise(resolve => {
+      finish = () => resolve({} as never);
+    }));
+    const unpublish = vi.spyOn(room.localParticipant, 'unpublishTrack').mockResolvedValue(undefined);
+    let current = true;
+    const publishing = republishMicrophone(room, { current: 0 }, () => current);
+    await Promise.resolve();
+    current = false;
+    const suspending = suspendWebMicrophoneForNative(room);
+    const completed = vi.fn();
+    void suspending.then(completed);
+    await Promise.resolve();
+    expect(completed).not.toHaveBeenCalled();
+    expect(mocks.audio.releaseInputStream).toHaveBeenCalled();
+    finish();
+    await publishing;
+    await suspending;
+    expect(unpublish).toHaveBeenCalledWith(track, true);
+    expect(track.stop).toHaveBeenCalled();
+    expect(completed).toHaveBeenCalledOnce();
   });
 });

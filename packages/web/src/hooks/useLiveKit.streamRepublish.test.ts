@@ -2,7 +2,8 @@ import { act, cleanup, render, renderHook } from '@testing-library/react';
 import { createElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Room, RoomEvent, DisconnectReason, Track } from 'livekit-client';
-import { useLiveKit } from './useLiveKit';
+import { useLiveKit, deriveGridTiles, setStreamSubscription } from './useLiveKit';
+import { getNativeHelper } from './liveKitParticipants';
 import { useVoiceStore } from '../stores/voiceStore';
 import { useAuthStore } from '../stores/authStore';
 import { STREAM_REPUBLISH_WINDOW_MS } from '../utils/streamRepublish';
@@ -19,6 +20,7 @@ import type { User } from '@backspace/shared';
 
 const mocks = vi.hoisted(() => ({
   token: vi.fn(),
+  syncSpeaking: vi.fn(),
   connect: vi.fn(), disconnect: vi.fn(),
   audio: {
     releaseInputStream: vi.fn(), resumeContext: vi.fn(),
@@ -43,7 +45,7 @@ vi.mock('livekit-client', async importOriginal => {
 });
 vi.mock('../audio/AudioManager', () => ({ AudioManager: { getInstance: () => mocks.audio } }));
 vi.mock('../audio/SpeakingDetector', () => ({
-  SpeakingDetector: { getInstance: () => ({ clear: vi.fn(), syncTracks: vi.fn() }) },
+  SpeakingDetector: { getInstance: () => ({ clear: vi.fn(), syncTracks: mocks.syncSpeaking }) },
 }));
 vi.mock('./useWebSocket', () => ({ wsSend: vi.fn() }));
 vi.mock('../utils/voice', () => ({ broadcastVoiceStatus: vi.fn(), clearSpaceVoiceForDmCall: vi.fn() }));
@@ -59,7 +61,7 @@ const SHARER = 'bob:Bob';
 interface FakePublication {
   source: Track.Source;
   trackSid: string;
-  track: undefined;
+  track: { mediaStreamTrack: MediaStreamTrack } | undefined;
   isMuted: boolean;
   isSubscribed: boolean;
   setSubscribed: ReturnType<typeof vi.fn>;
@@ -71,7 +73,8 @@ function makePublication(source: Track.Source, trackSid: string): FakePublicatio
 
 function makeSharer(room: Room, identity = SHARER) {
   const trackPublications = new Map<string, FakePublication>();
-  const participant = { identity, trackPublications, isMicrophoneEnabled: true, isCameraEnabled: false };
+  const participant = { identity, trackPublications, isMicrophoneEnabled: true, isCameraEnabled: false,
+    metadata: '', permissions: { canUpdateMetadata: false } };
   (room.remoteParticipants as Map<string, unknown>).set(identity, participant);
   return participant;
 }
@@ -440,5 +443,138 @@ describe('viewer-side cues across a republish', () => {
     unpublish(room, sharer, first);
 
     expect(cuesPlayed()).toEqual(['stream_ended']);
+  });
+});
+
+
+describe('native helpers are publications of a single room owner', () => {
+  function helper(room: Room, purpose: 'screen-share' | 'native-voice', ownerIdentity = SHARER) {
+    const participant = makeSharer(room, `random-${purpose}`);
+    participant.metadata = JSON.stringify({ purpose, ownerIdentity });
+    act(() => { room.emit(RoomEvent.ParticipantConnected, participant as never); });
+    return participant;
+  }
+
+  function audio(room: Room, participant: Sharer, source = Track.Source.Microphone) {
+    const publication = makePublication(source, `audio-${source}`);
+    const track = { id: `${participant.identity}-${source}`, readyState: 'live' } as MediaStreamTrack;
+    publication.track = { mediaStreamTrack: track };
+    publication.isSubscribed = true;
+    participant.trackPublications.set(publication.trackSid, publication);
+    act(() => { room.emit(RoomEvent.TrackPublished, publication as never, participant as never); });
+    return { publication, track };
+  }
+
+  it('folds random screen/voice identities into one card and owner-keyed speaking source', async () => {
+    const room = await connectedRoom();
+    const owner = makeSharer(room);
+    audio(room, owner);
+    const screen = helper(room, 'screen-share');
+    const mic = helper(room, 'native-voice');
+    const nativeMic = audio(room, mic);
+    publish(room, screen, 'screen');
+    expect(useVoiceStore.getState().participants).toHaveLength(1);
+    const participant = useVoiceStore.getState().participants[0]!;
+    expect(participant).toMatchObject({ identity: SHARER, userId: 'bob', screenPublisherIdentity: screen.identity,
+      voicePublisherIdentity: mic.identity, audioTrack: nativeMic.track, isScreenSharing: true });
+    expect(deriveGridTiles([participant]).map(t => t.kind)).toEqual(['user', 'stream']);
+    expect(mocks.syncSpeaking).toHaveBeenLastCalledWith([expect.objectContaining({ identity: SHARER, audioTrack: nativeMic.track })]);
+  });
+
+  it('subscribes screen sources via the helper while watch and volume keep the owner id', async () => {
+    const room = await connectedRoom();
+    makeSharer(room);
+    const screen = helper(room, 'screen-share');
+    const video = publish(room, screen, 'video');
+    const sound = audio(room, screen, Track.Source.ScreenShareAudio).publication;
+    useVoiceStore.getState().watchStream('bob');
+    useVoiceStore.getState().setStreamVolume('bob', 140);
+    const participant = useVoiceStore.getState().participants[0]!;
+    setStreamSubscription(room, participant.screenPublisherIdentity!, true);
+    expect(video.setSubscribed).toHaveBeenLastCalledWith(true);
+    expect(sound.setSubscribed).toHaveBeenLastCalledWith(true);
+    expect(useVoiceStore.getState().streamVolumes.get('bob')).toBe(140);
+    leave(room, screen);
+    expect(useVoiceStore.getState().watchingStreams.has('bob')).toBe(false);
+    expect(useVoiceStore.getState().streamVolumes.has('bob')).toBe(false);
+  });
+
+  it('does not produce helper ghosts before the owner joins or after it leaves', async () => {
+    const room = await connectedRoom();
+    const screen = helper(room, 'screen-share');
+    const mic = helper(room, 'native-voice');
+    const voice = audio(room, mic).publication;
+    publish(room, screen, 'video');
+    expect(useVoiceStore.getState().participants).toEqual([]);
+    expect(voice.setSubscribed).toHaveBeenLastCalledWith(false);
+    const owner = makeSharer(room);
+    act(() => { room.emit(RoomEvent.ParticipantConnected, owner as never); });
+    expect(useVoiceStore.getState().participants).toHaveLength(1);
+    leave(room, owner);
+    expect(useVoiceStore.getState().participants).toEqual([]);
+    expect(voice.setSubscribed).toHaveBeenLastCalledWith(false);
+  });
+
+  it('does not erase owner status, watchers, or play join/leave cues for helpers', async () => {
+    const room = await connectedRoom();
+    const owner = makeSharer(room);
+    audio(room, owner);
+    useAuthStore.setState({ user: { id: 'me', status: 'online' } as User });
+    vi.useFakeTimers();
+    render(createElement(SoundController));
+    act(() => { vi.advanceTimersByTime(1000); });
+    mocks.audio.playSound.mockClear();
+    const clearStatus = vi.spyOn(useVoiceStore.getState(), 'clearVoiceUserStatus');
+    const evict = vi.spyOn(useVoiceStore.getState(), 'evictWatcher');
+    const mic = helper(room, 'native-voice');
+    audio(room, mic);
+    leave(room, mic);
+    expect(useVoiceStore.getState().participants).toHaveLength(1);
+    expect(clearStatus).not.toHaveBeenCalled();
+    expect(evict).not.toHaveBeenCalled();
+    expect(mocks.audio.playSound).not.toHaveBeenCalled();
+  });
+
+  it('resolves a federated helper through owner membership, never its random identity', async () => {
+    mocks.space.dmChannels = [{ id: 'dm', members: [{ id: 'local-bob', homeUserId: 'bob' }] }];
+    useVoiceStore.setState({ activeDmCall: { dmChannelId: 'dm' } as never });
+    const room = await connectedRoom();
+    makeSharer(room);
+    const screen = helper(room, 'screen-share');
+    publish(room, screen, 'video');
+    expect(useVoiceStore.getState().participants[0]?.userId).toBe('local-bob');
+    useVoiceStore.getState().watchStream('local-bob');
+    const sound = audio(room, screen, Track.Source.ScreenShareAudio).publication;
+    sound.isSubscribed = false;
+    act(() => { room.emit(RoomEvent.TrackPublished, sound as never, screen as never); });
+    expect(sound.setSubscribed).toHaveBeenLastCalledWith(true);
+    leave(room, screen);
+    expect(useVoiceStore.getState().watchingStreams.size).toBe(0);
+  });
+
+  it('keeps own helper local, previews its screen without loopback, and analyses its MIC', async () => {
+    const room = await connectedRoom();
+    Object.defineProperty(room.localParticipant, 'identity', { value: 'remote-self:Me', configurable: true });
+    useVoiceStore.setState({ nativeVoiceActive: true });
+    const screen = helper(room, 'screen-share', room.localParticipant.identity);
+    const mic = helper(room, 'native-voice', room.localParticipant.identity);
+    const nativeMic = audio(room, mic);
+    const video = publish(room, screen, 'video');
+    const sound = audio(room, screen, Track.Source.ScreenShareAudio).publication;
+    expect(video.setSubscribed).toHaveBeenLastCalledWith(true);
+    expect(sound.setSubscribed).toHaveBeenLastCalledWith(false);
+    expect(useVoiceStore.getState().watchingStreams.has('remote-self')).toBe(true);
+    expect(useVoiceStore.getState().participants[0]).toMatchObject({ isLocal: true, identity: 'remote-self:Me' });
+    expect(mocks.syncSpeaking).toHaveBeenLastCalledWith([expect.objectContaining({
+      identity: 'remote-self:Me', isLocal: false, audioTrack: nativeMic.track,
+    })]);
+  });
+
+  it('rejects writable metadata and identity-prefix spoofing', () => {
+    const metadata = JSON.stringify({ purpose: 'screen-share', ownerIdentity: SHARER });
+    expect(getNativeHelper({ identity: 'random', metadata, permissions: { canUpdateMetadata: true } } as never)).toBeNull();
+    expect(getNativeHelper({ identity: 'screen-share:bob', metadata: '', permissions: { canUpdateMetadata: false } } as never)).toBeNull();
+    expect(getNativeHelper({ identity: 'random', metadata, permissions: { canUpdateMetadata: false } } as never))
+      .toEqual({ purpose: 'screen-share', ownerIdentity: SHARER });
   });
 });

@@ -19,9 +19,7 @@ import { getApiForOrigin, getChannelOrigin, getMyUserIdForOrigin, useSpaceStore 
 import { refreshStreamHostLimits, useStreamHostLimits } from '../utils/streamHostLimits';
 import { wsSend } from './useWebSocket';
 import { useVoiceStore, type VoiceConnectionQuality } from '../stores/voiceStore';
-import { useAuthStore } from '../stores/authStore';
 import { useUIStore } from '../stores/uiStore';
-import type { User } from '@backspace/shared';
 import { broadcastVoiceStatus, clearSpaceVoiceForDmCall } from '../utils/voice';
 import { consumeIntentionalCameraOff, markIntentionalCameraOff } from '../utils/voiceActions';
 import { AudioManager } from '../audio/AudioManager';
@@ -43,6 +41,14 @@ import { isStreamRepublish, parseStreamWatch } from '../utils/streamWatchProtoco
 import { StreamRepublishTracker } from '../utils/streamRepublish';
 import { getMediaStreamTrack } from '../utils/livekitInternals';
 import { deactivate as deactivateHwOverdrive } from '../utils/hwOverdrive';
+import {
+  collectParticipants, getNativeHelper, getParticipantOwnerIdentity, parseIdentity,
+  resolveParticipantUserId, speakingParticipants, syncRemoteSubscriptions,
+} from './liveKitParticipants';
+import { republishMicrophone, suspendWebMicrophoneForNative } from './liveKitMicrophone';
+export { deriveGridTiles, parseIdentity } from './liveKitParticipants';
+export type { ParticipantInfo, UserTile, StreamTile, GridTile } from './liveKitParticipants';
+export { suspendWebMicrophoneForNative } from './liveKitMicrophone';
 
 let _activeRoom: Room | null = null;
 /**
@@ -72,71 +78,6 @@ export function getActiveRoom(): Room | null {
   return _activeRoom;
 }
 
-export interface ParticipantInfo {
-  identity: string;
-  userId: string;
-  username: string;
-  homeUserId: string | null;
-  isMuted: boolean;
-  isDeafened: boolean;
-  isCameraOn: boolean;
-  isScreenSharing: boolean;
-  isLocal: boolean;
-  audioTrack: MediaStreamTrack | null;
-  videoTrack: MediaStreamTrack | null;
-  screenTrack: MediaStreamTrack | null;
-  screenAudioTrack: MediaStreamTrack | null;
-  lkVideoTrack: Track | null;   // LiveKit Track for attach/detach (adaptive stream)
-  lkScreenTrack: Track | null;  // LiveKit Track for attach/detach (adaptive stream)
-  cachedUser: User | null;   // Hydrated User from member lookup, carried forward across space switches
-}
-
-export interface UserTile {
-  kind: 'user';
-  key: string;                        // participant.identity
-  participant: ParticipantInfo;
-  videoTrack: MediaStreamTrack | null; // camera only
-  audioTrack: MediaStreamTrack | null; // mic
-  lkVideoTrack: Track | null;         // LiveKit Track for attach/detach
-}
-
-export interface StreamTile {
-  kind: 'stream';
-  key: string;                        // `${identity}:stream`
-  participant: ParticipantInfo;
-  screenTrack: MediaStreamTrack | null;
-  screenAudioTrack: MediaStreamTrack | null;
-  lkScreenTrack: Track | null;        // LiveKit Track for attach/detach
-}
-
-export type GridTile = UserTile | StreamTile;
-
-export function deriveGridTiles(participants: ParticipantInfo[]): GridTile[] {
-  const tiles: GridTile[] = [];
-  for (const p of participants) {
-    const hasLiveVideo = p.isCameraOn && p.videoTrack?.readyState === 'live';
-    tiles.push({
-      kind: 'user',
-      key: p.identity,
-      participant: p,
-      videoTrack: hasLiveVideo ? p.videoTrack : null,
-      audioTrack: p.audioTrack,
-      lkVideoTrack: hasLiveVideo ? p.lkVideoTrack : null,
-    });
-    if (p.isScreenSharing) {
-      tiles.push({
-        kind: 'stream',
-        key: `${p.identity}:stream`,
-        participant: p,
-        screenTrack: p.screenTrack,
-        screenAudioTrack: p.screenAudioTrack,
-        lkScreenTrack: p.lkScreenTrack,
-      });
-    }
-  }
-  return tiles;
-}
-
 export function setStreamSubscription(room: Room | null, targetIdentity: string, subscribed: boolean) {
   if (!room) return;
   const rp = room.remoteParticipants.get(targetIdentity);
@@ -159,29 +100,6 @@ export function setCameraSubscription(room: Room | null, targetIdentity: string,
   });
 }
 
-export function parseIdentity(identity: string): { userId: string; username: string } {
-  const parts = identity.split(':');
-  return { userId: parts[0] ?? identity, username: parts[1] ?? identity };
-}
-
-/**
- * The userId this client knows a LiveKit participant by. In a federated DM call
- * the identity carries the member's home id, which is resolved to the DM
- * member's local id; otherwise it is the identity's own id. `updateParticipants`
- * lists participants under it, and stream state (`watchingStreams`, stream
- * volume and mute) is keyed by it, since `StreamTile` watches by the listed id.
- * Reads only the DM membership, never the participant list, so it still
- * resolves while a participant who is leaving has already been dropped from it.
- */
-function resolveParticipantUserId(identity: string): string {
-  const rawId = parseIdentity(identity).userId;
-  const activeDmCall = useVoiceStore.getState().activeDmCall;
-  if (!activeDmCall) return rawId;
-  const dmChannel = useSpaceStore.getState().dmChannels.find((d) => d.id === activeDmCall.dmChannelId);
-  const match = dmChannel?.members.find((m) => m.homeUserId === rawId || m.id === rawId);
-  return match?.id ?? rawId;
-}
-
 /** A remote screen share ended: drop the watch and the per-stream audio settings. */
 function endRemoteStream(identity: string): void {
   const userId = resolveParticipantUserId(identity);
@@ -197,49 +115,6 @@ let _connectGeneration = 0;
 function destroyRoom(room: Room | null): Promise<void> | void {
   if (!room) return;
   return room.disconnect();
-}
-
-/**
- * Ensures a fresh microphone track from the AudioManager pipeline is published
- * to the supplied room. If the existing publication is already current (live
- * MediaStreamTrack matching the latest AudioManager streamGeneration), this is
- * a no-op apart from un-muting. Otherwise the stale track is unpublished and a
- * cloned destination-node track is published in its place.
- *
- * Extracted from the syncMic effect so the input-track-loss recovery path can
- * call it directly — without relying on syncMic's React dep array catching a
- * change that never re-renders the hook.
- */
-async function republishMicrophone(r: Room, lastMicGenRef: { current: number }): Promise<void> {
-  const audioManager = AudioManager.getInstance();
-  const currentGen = audioManager.getStreamGeneration();
-
-  const micPub = r.localParticipant.getTrackPublications()
-    .find(p => p.source === Track.Source.Microphone);
-
-  if (micPub?.track) {
-    // Track already published — check if it's still current
-    if (micPub.track.mediaStreamTrack?.readyState === 'live' && lastMicGenRef.current === currentGen) {
-      // Current and live — just unmute if needed
-      if (micPub.isMuted) {
-        await r.localParticipant.setMicrophoneEnabled(true);
-      }
-      return;
-    }
-    // Track is stale (device or constraint change) — replace it
-    await r.localParticipant.unpublishTrack(micPub.track as LocalAudioTrack);
-  }
-
-  // Publish fresh track from AudioManager pipeline
-  const audioTrack = audioManager.getFreshTrack();
-  if (!audioTrack) return;
-
-  console.log('[LiveKit] Publishing fresh microphone track (gen:', currentGen, ')');
-  await r.localParticipant.publishTrack(audioTrack, {
-    name: 'microphone',
-    source: Track.Source.Microphone,
-  });
-  lastMicGenRef.current = currentGen;
 }
 
 export function useLiveKit() {
@@ -271,125 +146,35 @@ export function useLiveKit() {
   const inputDeviceId = useVoiceStore((s) => s.inputDeviceId);
   const cameraDeviceId = useVoiceStore((s) => s.cameraDeviceId);
   const micPermissionDenied = useVoiceStore((s) => s.micPermissionDenied);
+  const nativeVoiceActive = useVoiceStore((s) => s.nativeVoiceActive);
   const echoCancellation = useVoiceStore((s) => s.echoCancellation);
   const noiseSuppression = useVoiceStore((s) => s.noiseSuppression);
   const autoGainControl = useVoiceStore((s) => s.autoGainControl);
   const rnnoiseEnabled = useVoiceStore((s) => s.rnnoiseEnabled);
 
   const lastMicGenRef = useRef(0);
+  const nativeSpeakingRef = useRef(false);
 
   const updateParticipants = useCallback(() => {
     const r = roomRef.current;
     if (!r) return;
 
-    // Carry-forward: snapshot previous participants for cachedUser preservation
-    const prevParticipants = useVoiceStore.getState().participants;
-    const prevCacheMap = new Map<string, User | null>();
-    for (const prev of prevParticipants) {
-      prevCacheMap.set(prev.identity, prev.cachedUser);
+    const participants = collectParticipants(r, republishRef.current);
+    useVoiceStore.getState().setParticipants(participants);
+    const nativeSpeaking = participants.some(p => p.isLocal && (useVoiceStore.getState().nativeVoiceActive
+      || (p.voicePublisherIdentity && p.voicePublisherIdentity !== p.identity)));
+    if (nativeSpeaking !== nativeSpeakingRef.current) {
+      // SpeakingDetector normally keeps the local analyser outside its remote map.
+      // Reset when the same owner switches sides so a native analyser cannot survive restoration.
+      SpeakingDetector.getInstance().clear();
+      nativeSpeakingRef.current = nativeSpeaking;
     }
-
-    const allParticipants: ParticipantInfo[] = [];
-    const processParticipant = (p: Participant, isLocal: boolean) => {
-      if (!p.identity) return;
-      const { username } = parseIdentity(p.identity);
-      const userId = resolveParticipantUserId(p.identity);
-
-      const memberMatch = useSpaceStore.getState().members.find(m => m.userId === userId);
-      let cachedUser: User | null;
-      let homeUserId: string | null;
-
-      if (memberMatch) {
-        // Fresh data available — use and update cache
-        cachedUser = memberMatch.user as User;
-        homeUserId = memberMatch.user.homeUserId ?? null;
-      } else if (isLocal) {
-        // Local user safety net — authStore is always available
-        cachedUser = useAuthStore.getState().user;
-        homeUserId = cachedUser?.homeUserId ?? null;
-      } else {
-        // Space switched — carry forward from previous cycle
-        cachedUser = prevCacheMap.get(p.identity) ?? null;
-        homeUserId = cachedUser?.homeUserId ?? null;
-      }
-      let audioTrack: MediaStreamTrack | null = null;
-      let videoTrack: MediaStreamTrack | null = null;
-      let screenTrack: MediaStreamTrack | null = null;
-      let screenAudioTrack: MediaStreamTrack | null = null;
-      let lkVideoTrack: Track | null = null;
-      let lkScreenTrack: Track | null = null;
-      let hasScreenSharePublication = false;
-      let hasCameraPublication = false;
-      p.trackPublications.forEach((pub) => {
-        // Detect screen share publication even if unsubscribed
-        if (pub.source === Track.Source.ScreenShare) hasScreenSharePublication = true;
-        // Detect camera publication even if unsubscribed (for unwatched cameras)
-        if (pub.source === Track.Source.Camera) hasCameraPublication = true;
-
-        const track = pub.track;
-        if (!track) return;
-        // Strict check: Track must be subscribed AND not muted to be considered "active"
-        if (pub.isMuted) return;
-        if (!isLocal && !pub.isSubscribed) return;
-
-        const mt = track.mediaStreamTrack;
-        if (!mt || mt.readyState !== 'live') return;
-
-        if (pub.source === Track.Source.Microphone) audioTrack = mt;
-        else if (pub.source === Track.Source.Camera && p.isCameraEnabled) { videoTrack = mt; lkVideoTrack = track; }
-        else if (pub.source === Track.Source.ScreenShare) { screenTrack = mt; lkScreenTrack = track; }
-        else if (pub.source === Track.Source.ScreenShareAudio) screenAudioTrack = mt;
-      });
-
-      const userState = useVoiceStore.getState().voiceUserStates.get(userId);
-      let isPartDeafened = false;
-      let isPartMuted = !p.isMicrophoneEnabled;
-
-      if (isLocal) {
-        // Compute effective state: user intent || server enforcement
-        const vs = useVoiceStore.getState();
-        const cvId = vs.currentVoiceChannelId;
-        const localOrigin = cvId ? getChannelOrigin(cvId) : '';
-        const localMyId = cvId ? getMyUserIdForOrigin(localOrigin) : undefined;
-        const localSpaceId = cvId ? useSpaceStore.getState().channelToSpaceMap.get(cvId) : null;
-        const localKey = (localSpaceId && localMyId) ? `${localSpaceId}:${localMyId}` : '';
-        isPartMuted = vs.isMuted || vs.spaceMutedUserIds.has(localKey) || vs.permissionMutedUserIds.has(localKey);
-        isPartDeafened = vs.isDeafened || vs.spaceDeafenedUserIds.has(localKey);
-      } else {
-        isPartDeafened = userState?.isDeafened ?? useVoiceStore.getState().deafenedUserIds.has(userId);
-        if (userState) isPartMuted = userState.isMuted;
-      }
-
-      allParticipants.push({
-        identity: p.identity,
-        userId,
-        username,
-        homeUserId,
-        cachedUser,
-        isMuted: isPartMuted,
-        isDeafened: isPartDeafened,
-        isCameraOn: hasCameraPublication && p.isCameraEnabled, // True even when unsubscribed
-        // True even when unsubscribed, and across a sharer's announced
-        // republish, so the gap between the two publications is not a share
-        // ending and starting again (no tile loss, no stream_ended/started cue).
-        isScreenSharing: hasScreenSharePublication
-          || (!isLocal && (republishRef.current?.isBridging(p.identity) ?? false)),
-        isLocal,
-        audioTrack,
-        videoTrack,
-        screenTrack,
-        screenAudioTrack,
-        lkVideoTrack,
-        lkScreenTrack,
-      });
-    };
-    processParticipant(r.localParticipant, true);
-    r.remoteParticipants.forEach((p) => processParticipant(p, false));
-    useVoiceStore.getState().setParticipants(allParticipants);
-    SpeakingDetector.getInstance().syncTracks(allParticipants);
+    SpeakingDetector.getInstance().syncTracks(speakingParticipants(participants));
   }, []);
 
   const handleDataReceived = useCallback((payload: Uint8Array, participant?: RemoteParticipant) => {
+    // Helpers cannot impersonate owner control messages; the Web owner retains data control.
+    if (participant && getNativeHelper(participant)) return;
     // Try the stream_watch protocol first (typed parser; returns null on non-matches).
     if (participant) {
       const sw = parseStreamWatch(payload);
@@ -426,7 +211,7 @@ export function useLiveKit() {
     if (!r || !isConnected) return;
 
     let cancelled = false;
-    const isCurrentRoom = () => !cancelled && roomRef.current === r;
+    const isCurrentRoom = () => !cancelled && roomRef.current === r && !useVoiceStore.getState().nativeVoiceActive;
 
     // Compute effective mute/deafen: user intent || server enforcement
     const vs = useVoiceStore.getState();
@@ -440,7 +225,11 @@ export function useLiveKit() {
 
     const syncMic = async () => {
       try {
-        if (!isCurrentRoom()) return;
+        if (cancelled || roomRef.current !== r) return;
+        if (useVoiceStore.getState().nativeVoiceActive) {
+          await suspendWebMicrophoneForNative(r);
+          return;
+        }
         const audioManager = AudioManager.getInstance();
 
         // Sync voice processing settings to AudioManager
@@ -496,7 +285,7 @@ export function useLiveKit() {
         }
         if (!isCurrentRoom()) return;
         audioManager.setInputVolume(inputVolume);
-        await republishMicrophone(r, lastMicGenRef);
+        await republishMicrophone(r, lastMicGenRef, isCurrentRoom);
       } catch (err) {
         console.error('[LiveKit] Failed to sync mic state:', err);
       }
@@ -513,20 +302,21 @@ export function useLiveKit() {
       cancelled = true;
       unsubscribeResume();
     };
-  }, [isMuted, isDeafened, spaceMutedUserIds, spaceDeafenedUserIds, permissionMutedUserIds, inputDeviceId, inputVolume, isConnected, echoCancellation, noiseSuppression, autoGainControl, rnnoiseEnabled, micPermissionDenied]);
+  }, [isMuted, isDeafened, spaceMutedUserIds, spaceDeafenedUserIds, permissionMutedUserIds, inputDeviceId, inputVolume, isConnected, echoCancellation, noiseSuppression, autoGainControl, rnnoiseEnabled, micPermissionDenied, nativeVoiceActive]);
 
   // Subscribe to upstream-input-track-end events from AudioManager whenever a
   // room is connected. The published mic track is a clone of a WebAudio
   // destination node and never ends on hardware loss; only the upstream
   // getUserMedia track does. AudioManager owns that signal — we react to it.
   useEffect(() => {
-    if (!isConnected) return;
+    if (!isConnected || nativeVoiceActive) return;
     const am = AudioManager.getInstance();
     const subscriberRoom = roomRef.current;
+    const isCurrentInput = () => roomRef.current === subscriberRoom && !useVoiceStore.getState().nativeVoiceActive;
 
     const unsubscribe = am.onInputTrackEnded(async () => {
       // Room was replaced or torn down between event emission and handler run.
-      if (roomRef.current !== subscriberRoom || !subscriberRoom) return;
+      if (!isCurrentInput() || !subscriberRoom) return;
 
       const deviceId = useVoiceStore.getState().inputDeviceId;
       let copy = 'Microphone could not be restored';
@@ -542,11 +332,11 @@ export function useLiveKit() {
         probe.getTracks().forEach(t => t.stop());
 
         // Probe succeeded — device is back. Re-acquire and force a republish.
-        if (roomRef.current !== subscriberRoom) return;
+        if (!isCurrentInput()) return;
         try {
           await am.setInputDevice(deviceId);
-          if (roomRef.current !== subscriberRoom) return;
-          await republishMicrophone(subscriberRoom, lastMicGenRef);
+          if (!isCurrentInput()) return;
+          await republishMicrophone(subscriberRoom, lastMicGenRef, isCurrentInput);
           return;
         } catch {
           // copy already holds 'Microphone could not be restored'
@@ -569,12 +359,12 @@ export function useLiveKit() {
         }
       }
 
-      if (roomRef.current !== subscriberRoom) return;
+      if (!isCurrentInput()) return;
       useUIStore.getState().addToast(copy, 'warning');
     });
 
     return () => { unsubscribe(); };
-  }, [isConnected]);
+  }, [isConnected, nativeVoiceActive]);
 
   // Hot-swap the camera source when cameraDeviceId changes mid-call.
   // Compares against the published track's actual deviceId (getSettings().deviceId)
@@ -739,8 +529,21 @@ export function useLiveKit() {
       let initialConnectPending = true;
 
       const guardedUpdate = () => { if (roomRef.current === newRoom) updateParticipants(); };
-      newRoom.on(RoomEvent.ParticipantConnected, (participant) => {
+      const syncSubscriptions = () => {
         guardedUpdate();
+        if (roomRef.current === newRoom) syncRemoteSubscriptions(newRoom);
+      };
+      const endParticipantScreen = (participant: Participant) => {
+        const ownerIdentity = getParticipantOwnerIdentity(participant);
+        const owner = useVoiceStore.getState().participants.find(p => p.identity === ownerIdentity);
+        // A retiring helper cannot end a replacement helper's stream.
+        if (owner?.isScreenSharing && owner.screenPublisherIdentity !== participant.identity) return;
+        endRemoteStream(ownerIdentity);
+      };
+      newRoom.on(RoomEvent.ParticipantConnected, (participant) => {
+        if (roomRef.current !== newRoom) return;
+        syncSubscriptions();
+        if (getNativeHelper(participant)) return;
         // Notify new participant of our effective deafen state
         const vsConn = useVoiceStore.getState();
         const cvIdConn = vsConn.currentVoiceChannelId;
@@ -757,14 +560,19 @@ export function useLiveKit() {
           ).catch(() => { });
         }
       });
-      newRoom.on(RoomEvent.ParticipantDisconnected, (participant: RemoteParticipant) => {
+      newRoom.on(RoomEvent.ParticipantDisconnected, (participant: Participant) => {
+        if (roomRef.current !== newRoom) return;
+        const helper = getNativeHelper(participant);
+        if (helper) {
+          if (helper.purpose === 'screen-share') endParticipantScreen(participant);
+          syncSubscriptions();
+          return; // Helper loss must never clear the owner's WS status or watcher identity.
+        }
         useVoiceStore.getState().evictWatcher(participant.identity);
-        // Left between a republish's two publications: its share ends with it.
-        if (republishRef.current?.cancel(participant.identity)) endRemoteStream(participant.identity);
-        guardedUpdate();
-        // Clean up stale WS-based voice status for the departed participant
-        const { userId } = parseIdentity(participant.identity);
-        useVoiceStore.getState().clearVoiceUserStatus(userId);
+        republishRef.current?.cancel(participant.identity);
+        endRemoteStream(participant.identity);
+        useVoiceStore.getState().clearVoiceUserStatus(resolveParticipantUserId(participant.identity));
+        syncSubscriptions();
       });
       newRoom.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
         // LiveKit auto-attaches a hidden <audio> element for subscribed audio tracks.
@@ -859,8 +667,14 @@ export function useLiveKit() {
       });
       newRoom.on(RoomEvent.TrackMuted, guardedUpdate);
       newRoom.on(RoomEvent.TrackUnmuted, guardedUpdate);
-      newRoom.on(RoomEvent.ParticipantMetadataChanged, guardedUpdate);
+      newRoom.on(RoomEvent.ParticipantMetadataChanged, syncSubscriptions);
+      newRoom.on(RoomEvent.ParticipantPermissionsChanged, syncSubscriptions);
       newRoom.on(RoomEvent.TrackPublished, (publication: RemoteTrackPublication, participant: RemoteParticipant) => {
+        if (roomRef.current !== newRoom) return;
+        if (getNativeHelper(participant)) {
+          syncSubscriptions();
+          return;
+        }
         if (
           publication.source !== Track.Source.ScreenShare &&
           publication.source !== Track.Source.ScreenShareAudio
@@ -881,16 +695,17 @@ export function useLiveKit() {
             publication.setSubscribed(true);
           }
         }
-        guardedUpdate();
+        syncSubscriptions();
       });
       newRoom.on(RoomEvent.TrackUnpublished, (publication: RemoteTrackPublication, participant: RemoteParticipant) => {
+        if (roomRef.current !== newRoom) return;
         // An announced republish keeps the watch and the stream's audio
         // settings for the next publication; anything else ends the share.
         if (
           publication.source === Track.Source.ScreenShare
           && !republishRef.current?.bridgeRemoval(participant.identity)
         ) {
-          endRemoteStream(participant.identity);
+          endParticipantScreen(participant);
         }
         guardedUpdate();
       });
@@ -926,8 +741,8 @@ export function useLiveKit() {
             if (connectedChannelRef.current) {
               registerWithServer();
             }
-            updateParticipants();
-            if (useVoiceStore.getState().isScreenSharing) {
+            syncSubscriptions();
+            if (useVoiceStore.getState().isScreenSharing && !useVoiceStore.getState().nativeVoiceActive) {
               scheduleScreenShareOverdrive(newRoom);
             }
           }
@@ -981,17 +796,8 @@ export function useLiveKit() {
 
       updateParticipants();
 
-      // Subscribe to non-screen-share tracks from existing participants (safety net)
-      newRoom.remoteParticipants.forEach((rp) => {
-        rp.trackPublications.forEach((pub) => {
-          if (
-            pub.source !== Track.Source.ScreenShare &&
-            pub.source !== Track.Source.ScreenShareAudio
-          ) {
-            (pub as RemoteTrackPublication).setSubscribed(true);
-          }
-        });
-      });
+      // Existing helpers follow the same owner/watch rules as publications arriving later.
+      syncRemoteSubscriptions(newRoom);
 
       // Initial mute state check
       const { isMuted: wasMuted, isDeafened: wasDeafened } = useVoiceStore.getState();
@@ -1051,7 +857,7 @@ export function useLiveKit() {
 
   useEffect(() => {
     updateParticipants();
-  }, [voiceUserStates, isMuted, isDeafened, spaceMutedUserIds, spaceDeafenedUserIds, permissionMutedUserIds, updateParticipants]);
+  }, [voiceUserStates, isMuted, isDeafened, spaceMutedUserIds, spaceDeafenedUserIds, permissionMutedUserIds, nativeVoiceActive, updateParticipants]);
 
   useEffect(() => {
     if (!room) return;
@@ -1060,7 +866,8 @@ export function useLiveKit() {
     let superseded = false;
     const updateActiveTracks = async () => {
       if (superseded) return;
-      if (isScreenSharing) {
+      if (isScreenSharing && !nativeVoiceActive) {
+        // Native encoding/audio updates are owned by the bridge, not this Web publisher.
         // System Audio first: a toggle change publishes or withdraws only the
         // audio track, never the video.
         await syncScreenShareAudio(room);
@@ -1095,7 +902,7 @@ export function useLiveKit() {
     };
     _activeTrackUpdate = _activeTrackUpdate.then(updateActiveTracks).catch(() => {});
     return () => { superseded = true; };
-  }, [room, screenShareConfig, streamHostLimits, isScreenSharing, isCameraOn]);
+  }, [room, screenShareConfig, streamHostLimits, isScreenSharing, isCameraOn, nativeVoiceActive]);
 
   useEffect(() => {
     return () => {

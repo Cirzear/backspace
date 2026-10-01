@@ -49,6 +49,8 @@ interface VoiceState {
   isDeafened: boolean;
   isCameraOn: boolean;
   isScreenSharing: boolean;
+  /** Native owns microphone capture/playback until its complete teardown. Never persisted. */
+  nativeVoiceActive: boolean;
   /**
    * Origin of the instance that issued the current LiveKit token (`''` = home),
    * recorded by `useLiveKit.connect`. That instance hosts the room, so its
@@ -237,6 +239,7 @@ export const useVoiceStore = create<VoiceState>()(
       isDeafened: false,
       isCameraOn: false,
       isScreenSharing: false,
+      nativeVoiceActive: false,
       screenShareAudio: null,
       livekitHostOrigin: '',
       micPermissionDenied: false,
@@ -396,9 +399,13 @@ export const useVoiceStore = create<VoiceState>()(
 
       setIncomingCall: (call) => set({ incomingCall: call }),
       setOutgoingCall: (call) => set({ outgoingCall: call }),
-      setActiveDmCall: (call) => set({ activeDmCall: call }),
+      setActiveDmCall: (call) => set(call
+        ? { activeDmCall: call }
+        : { activeDmCall: null, federatedCallToken: null, federatedCallUrl: null, federatedCallId: null, callOrigin: null }),
       setFederatedCallData: (token, url) => set({ federatedCallToken: token, federatedCallUrl: url }),
-      clearFederatedCallData: () => set({ federatedCallToken: null, federatedCallUrl: null, federatedCallId: null, callOrigin: null }),
+      // Token consumption is not call termination: screen-token and dm_call_end
+      // still need the issuing origin and federated locator after room.connect().
+      clearFederatedCallData: () => set({ federatedCallToken: null, federatedCallUrl: null }),
       setFederatedCallId: (id) => set({ federatedCallId: id }),
       setCallOrigin: (origin) => set({ callOrigin: origin }),
 
@@ -452,7 +459,11 @@ export const useVoiceStore = create<VoiceState>()(
 
       setCurrentVoiceChannel: (channelId) => set({ 
         currentVoiceChannelId: channelId,
-        activeDmCall: null // Clear active DM call when joining a server channel
+        activeDmCall: null, // Clear DM routing when joining a space channel.
+        federatedCallToken: null,
+        federatedCallUrl: null,
+        federatedCallId: null,
+        callOrigin: null,
       }),
 
       setParticipants: (participants) => set({ participants }),

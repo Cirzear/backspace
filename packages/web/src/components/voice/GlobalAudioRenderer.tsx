@@ -67,6 +67,7 @@ function AudioTrackElement({
  */
 export function GlobalAudioRenderer() {
   const participants = useVoiceStore((s) => s.participants);
+  const nativeVoiceActive = useVoiceStore((s) => s.nativeVoiceActive);
   const isDeafenedIntent = useVoiceStore((s) => s.isDeafened);
   const spaceDeafenedUserIds = useVoiceStore((s) => s.spaceDeafenedUserIds);
   const currentVoiceChannelId = useVoiceStore((s) => s.currentVoiceChannelId);
@@ -89,14 +90,18 @@ export function GlobalAudioRenderer() {
   // Determine if someone is currently speaking (for stream attenuation)
   const someoneIsSpeaking = participants.some((p) => !p.isLocal && speakingParticipantIds.has(p.identity));
 
-  // Only render audio for remote participants
-  const remoteParticipants = participants.filter((p) => !p.isLocal);
+  // A local native MIC also needs Chrome's muted keepalive for speaking analysis;
+  // its owner remains local, so its playback gain is unconditionally zero.
+  const audioParticipants = participants.filter((p) => !p.isLocal
+    || (p.voicePublisherIdentity && p.voicePublisherIdentity !== p.identity));
 
   return (
     <>
-      {remoteParticipants.map((p: ParticipantInfo) => {
+      {audioParticipants.map((p: ParticipantInfo) => {
         const micVolume = participantVolumes.get(p.userId) ?? 100;
-        const isMicMuted = participantMutes.get(p.userId) ?? false;
+        // Native receives MIC only. Keep Web's analyser/Chrome keepalive alive but
+        // suppress duplicate playback; watched screen audio still belongs to Web.
+        const isMicMuted = p.isLocal || nativeVoiceActive || (participantMutes.get(p.userId) ?? false);
         const streamVol = streamVolumes.get(p.userId) ?? 100;
         const isStreamMuted = streamMutes.get(p.userId) ?? false;
 
@@ -118,7 +123,7 @@ export function GlobalAudioRenderer() {
             )}
 
             {/* Screen share audio — only when user opted in to watch */}
-            {p.screenAudioTrack && watchingStreams.has(p.userId) && (
+            {!p.isLocal && p.screenAudioTrack && watchingStreams.has(p.userId) && (
               <AudioTrackElement
                 track={p.screenAudioTrack}
                 globalVolume={outputVolume}

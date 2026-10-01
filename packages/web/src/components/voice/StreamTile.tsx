@@ -5,7 +5,9 @@ import { Avatar } from '../ui/Avatar';
 import { useVoiceStore } from '../../stores/voiceStore';
 import { useContextMenuStore, type ContextMenuItem } from '../../stores/contextMenuStore';
 import { getActiveRoom, setStreamSubscription } from '../../hooks/useLiveKit';
-import { stopScreenShare, changeScreenShare, effectiveScreenShareConfig } from '../../utils/screenShare';
+import { changeScreenShare, effectiveScreenShareConfig } from '../../utils/screenShare';
+import { handleScreenShareAction } from '../../utils/voiceActions';
+import { openScreenShareSetup } from '../../stores/screenShareSetupStore';
 import { useStreamHostLimits } from '../../utils/streamHostLimits';
 import { DEFAULT_STREAMING_LIMITS } from '../../stores/settingsStore';
 import { encodeStreamWatch } from '../../utils/streamWatchProtocol';
@@ -209,6 +211,9 @@ export function StreamTile({ tile, large, stats }: StreamTileProps) {
 
   const { participant } = tile;
   const isLocal = participant.isLocal;
+  const screenPublisherIdentity = participant.screenPublisherIdentity ?? participant.identity;
+  // A local native share is received from its helper, not sent by the Web owner.
+  const isWebPublisher = isLocal && screenPublisherIdentity === participant.identity;
   const userId = participant.userId;
   const avatarUserId = participant.homeUserId ?? userId;
   const { displayName, avatar, user } = useVoiceParticipantMeta(participant);
@@ -216,7 +221,7 @@ export function StreamTile({ tile, large, stats }: StreamTileProps) {
   const isWatching = watchingStreams.has(userId);
   const voiceConnectionStatus = useVoiceStore((s) => s.voiceConnectionStatus);
   const localConnectionQuality = useVoiceStore((s) => s.connectionQuality);
-  const publisherConnectionQuality = useVoiceStore((s) => s.connectionQualities.get(participant.identity) ?? 'unknown');
+  const publisherConnectionQuality = useVoiceStore((s) => s.connectionQualities.get(screenPublisherIdentity) ?? 'unknown');
 
   const liveScreenTrack = tile.screenTrack?.readyState === 'live' ? tile.screenTrack : null;
   const liveLkScreenTrack = liveScreenTrack ? tile.lkScreenTrack : null;
@@ -228,19 +233,19 @@ export function StreamTile({ tile, large, stats }: StreamTileProps) {
 
   const screenStat = stats?.videoTracks.find((track) =>
     track.source === 'screen_share'
-    && (isLocal
+    && (isWebPublisher
       ? track.direction === 'send'
       // Matched on LiveKit identity, never on username: a replicated federated
       // user can share a username with a local one, and matching by name would
       // attribute one participant's degradation to the other.
-      : track.direction === 'recv' && track.participantIdentity === participant.identity),
+      : track.direction === 'recv' && track.participantIdentity === screenPublisherIdentity),
   );
   const healthCandidate = classifyStreamHealth({
     reconnecting: voiceConnectionStatus === 'reconnecting',
-    isLocal,
+    isLocal: isWebPublisher,
     publisherConnectionQuality,
     localConnectionQuality,
-    outboundReason: isLocal ? screenStat?.qualityLimitation ?? null : null,
+    outboundReason: isWebPublisher ? screenStat?.qualityLimitation ?? null : null,
     packetLoss: screenStat?.packetLoss ?? null,
     jitter: screenStat?.jitter ?? null,
     freezeCountDelta: screenStat?.freezeCountDelta ?? null,
@@ -311,12 +316,7 @@ export function StreamTile({ tile, large, stats }: StreamTileProps) {
             React.createElement('path', { d: 'M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h7v2H8v2h8v-2h-2v-2h7c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z' }),
             React.createElement('line', { x1: 4, y1: 4, x2: 20, y2: 20, stroke: 'currentColor', strokeWidth: 2 }),
           ),
-          onClick: async () => {
-            const room = getActiveRoom();
-            if (room) {
-              await stopScreenShare(room);
-            }
-          },
+          onClick: () => handleScreenShareAction(),
         });
         items.push({
           key: 'change-stream',
@@ -326,6 +326,12 @@ export function StreamTile({ tile, large, stats }: StreamTileProps) {
             React.createElement('path', { d: 'M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z' }),
           ),
           onClick: async () => {
+            if (!isWebPublisher) {
+              await handleScreenShareAction();
+              // A failed native stop keeps ownership; never open a second capture.
+              if (!useVoiceStore.getState().nativeVoiceActive) openScreenShareSetup();
+              return;
+            }
             const room = getActiveRoom();
             if (room) {
               await changeScreenShare(room);
@@ -341,7 +347,7 @@ export function StreamTile({ tile, large, stats }: StreamTileProps) {
       } else {
         // Remote stream: watch/unwatch, mute, volume, attenuation
         const currentIsWatching = useVoiceStore.getState().watchingStreams.has(userId);
-        const identity = participant.identity;
+        const identity = screenPublisherIdentity;
 
         if (currentIsWatching) {
           items.push({
@@ -406,14 +412,14 @@ export function StreamTile({ tile, large, stats }: StreamTileProps) {
 
       openContextMenu({ x: e.clientX, y: e.clientY }, items);
     },
-    [isLocal, userId, participant.identity, openContextMenu, t],
+    [isLocal, isWebPublisher, userId, screenPublisherIdentity, openContextMenu, t],
   );
 
   const handleWatch = useCallback(() => {
     useVoiceStore.getState().watchStream(userId);
-    setStreamSubscription(getActiveRoom(), participant.identity, true);
+    setStreamSubscription(getActiveRoom(), screenPublisherIdentity, true);
     handleViewerWatchToggle(userId, true);
-  }, [userId, participant.identity]);
+  }, [userId, screenPublisherIdentity]);
 
   const hasVideo = liveScreenTrack !== null;
 
