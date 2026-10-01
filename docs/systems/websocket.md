@@ -2,7 +2,7 @@
 
 Endpoint: `GET /ws` (upgrade to WebSocket)
 Transport: JSON messages over WebSocket
-Source: `packages/server/src/ws/handler.ts`, `packages/server/src/ws/events.ts`
+Source: `packages/server/src/ws/handler.ts` (transport/auth), `packages/server/src/ws/events.ts` (dispatch, messages, presence and read state), `packages/server/src/ws/reactionEvents.ts` (space/DM reactions), `packages/server/src/ws/voiceEvents.ts` (voice membership, permissions and moderation), `packages/server/src/ws/dmCallEvents.ts` (DM calls and federation signaling). `events.ts` re-exports the established voice-permission and call-relay entry points; DM calls use `voiceEvents.ts`'s shared room-leave broadcast without a reverse module dependency.
 
 ---
 
