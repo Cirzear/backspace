@@ -8,7 +8,7 @@ Source files:
 - `packages/web/src/components/chat/FriendsPage.tsx` -- Friends page UI: tabs (Online/All/Pending/Add Friend/Activity), discover grid, search
 - `packages/web/src/components/modals/UserProfileModal.tsx` -- Profile modal with friendship actions and mutual display
 - `packages/web/src/utils/mutuals.ts` -- Cross-instance mutual friend/space loading with dedup
-- `packages/web/src/utils/identity.ts` -- Federated identity helpers (parseFederatedUsername, isSelf, canonicalUserMatch)
+- `packages/web/src/utils/identity.ts` -- Federated identity helpers (parseFederatedUsername, userKey, isMine; see `client-federation.md` section 5)
 - `packages/web/src/hooks/useWebSocket.ts` -- WS event handlers for social events (friend_request_received, etc.)
 - `packages/server/src/routes/federation.ts` -- Inbound friend relay event processors (5 functions)
 - `packages/server/src/utils/federationOutbox.ts` -- `buildFriendContextId()`, `getFriendEventTargets()`
@@ -527,7 +527,7 @@ All handlers also update `discoverStore` relationship state via lazy import.
 | WS Event | Store Method | Effect |
 |----------|-------------|--------|
 | `presence_update` | `updateFriendPresence(userId, status)` | Updates `status` on matching friend by ID (all origins). Server broadcasts to friends + DM co-members + space co-members (`collectProfileBroadcastTargetIds`). For federated friends, status is projected by the home instance via S2S `presence_update` relay (see `federation.md` §10 — Presence Sync) and broadcast to the same recipient set on the receiving instance. |
-| `user_updated` | `updateFriendProfile(user)` | Updates displayName, avatar, banner, accentColor, avatarColor, bio, customStatus, status on matching friend by ID |
+| `user_updated` | `updateFriendProfile(user, origin)` | Updates displayName, avatar, banner, accentColor, avatarColor, bio, customStatus, status (`profileFieldsOf`) on the friend rows the event is about (`userUpdateReach`, `identity.ts`): the issuing instance's row with that id, and other instances' rows of the same person when the event is their home's row. Never a friend on another instance who only has the same id. With `isDeleted`, `removeDeletedUser(user, origin)` drops the friend rows and pending requests it is about by the same rule (client-federation.md §5) |
 
 ---
 
@@ -612,21 +612,9 @@ Source: `packages/web/src/utils/identity.ts`
 
 Splits `"erin@nova.ddns.net"` into `{ baseName: "erin", domain: "nova.ddns.net" }`. Uses `indexOf('@')` (first occurrence). Returns `{ baseName: username, domain: null }` for non-federated usernames.
 
-### `isSelf(user, homeUser)`
+### Matching people
 
-Determines if a user object represents the current user (including cross-instance replicas):
-1. Same `id` -> true
-2. `user.id` in `_knownSelfIds` set (populated from WS `ready` events) -> true
-3. `user.homeInstance === window.location.host` AND base username matches -> true
-
-### `canonicalUserMatch(a, b)`
-
-Federation-safe identity comparison with cascading strategies:
-1. Same `id` -> true
-2. `homeUserId` cross-matching: `a.homeUserId === b.homeUserId`, or `a.homeUserId === b.id`, or `b.homeUserId === a.id` -> true
-3. **Username + homeInstance fallback:** Parse base names, compare home instances (accounting for null = local)
-
-Used by `UserProfileModal:getFriendshipStatus()` to find the correct friend/request for a viewed user across instances.
+Whether two rows are the same person (`userKey`) and whether a row is the signed-in user (`isMine`) are described in `client-federation.md` section 5. `UserProfileModal:getFriendshipStatus()` matches friends and requests to the viewed user by `userKey` of each row with its own origin.
 
 ---
 
@@ -640,7 +628,7 @@ Source: `packages/web/src/components/chat/FriendsPage.tsx`
 |-----|---------|--------------|
 | Online | Online friends only | Filters by `status !== 'offline'` |
 | All | Complete friend list | No filter |
-| Pending | Incoming + outgoing requests | Split into sections; incoming shows badge count in tab |
+| Pending | Incoming + outgoing requests | Split into sections; incoming shows badge count in tab (and on the mobile nav). A request is incoming when its other party (`user`) is its sender (`isIncomingRequest`, `isOutgoingRequest` in `socialStore.ts`): its ids are the holding instance's, so `fromId` is never compared with the session row's id |
 | Add Friend | Search + discover grid | Unified search/discover with direct-add |
 | Activity | Friends grouped by activity | Active (rich presence) / Online (no activity) / Offline sections |
 
@@ -682,16 +670,18 @@ Source: `packages/web/src/components/modals/UserProfileModal.tsx`
 
 ### Friendship Status Resolution
 
-Uses `getFriendshipStatus()` with `canonicalUserMatch()` for federation-safe matching:
+Uses `getFriendshipStatus()`, matching by person (`userKey`, client-federation.md section 5), never by id or username:
 
 ```typescript
-function getFriendshipStatus(viewedUser, currentUser, friends, requests): FriendshipStatus
-  → { state: 'self' }              // isSelf() check
-  | { state: 'friends', friend }   // canonicalUserMatch against friends list
-  | { state: 'outbound_pending', request }  // request.user matches viewed user, user.id === toId
-  | { state: 'inbound_pending', request }   // request.user matches viewed user, user.id === fromId
+function getFriendshipStatus(viewedUser, origin, self, friends, requests): FriendshipStatus
+  → { state: 'self' }              // isMine(viewedUser, origin, self)
+  | { state: 'friends', friend }   // userKey(friend, friend._instanceOrigin) === userKey(viewedUser, origin)
+  | { state: 'outbound_pending', request }  // request.user is the viewed person, user.id === toId
+  | { state: 'inbound_pending', request }   // request.user is the viewed person, user.id === fromId
   | { state: 'none' }
 ```
+
+On the user's own profile the action bar (Send Message, friend actions) is not shown.
 
 ### Tabs
 
@@ -704,7 +694,7 @@ function getFriendshipStatus(viewedUser, currentUser, friends, requests): Friend
 ### Action Buttons
 
 Displayed in footer based on friendship state:
-- Always: "Send Message" (opens/creates DM)
+- Every state except `self`: "Send Message" (opens/creates DM)
 - `none`: "Add Friend"
 - `outbound_pending`: "Cancel Request"
 - `inbound_pending`: "Accept" + "Ignore" (decline)

@@ -4,17 +4,23 @@ import { contentMentionsAny } from './mentionTokens';
 
 /**
  * The rule that decides whether a freshly-arrived chat message alerts the user.
- * Pure; the caller supplies every id the user has (see `messageAlertsUser` in
- * utils/alerts.ts, which both outputs of the `message` alert kind go through).
+ * Pure; the caller answers who wrote it and which id is the user's in that
+ * channel (see `messageAlertsUser` in utils/alerts.ts, which both outputs of
+ * the `message` alert kind go through).
  *
- * Space/channel mute gates both outputs without touching unread state.
- * Channel level overrides space level. Without an explicit level, DMs and
- * mentions alert; allChannels widens only the legacy sound preference.
- * Space mention filters apply in mentions mode, never hide an explicit user ping.
+ * Rule:
+ *   - Never for a message the user wrote (`authoredBySelf` or authored by user's ID).
+ *   - Space/channel mute gates both outputs without touching unread state.
+ *   - For a DM, or for content with a `<@${myId}>` mention outside code.
+ *   - Channel level overrides space level. Without an explicit level, DMs and
+ *     mentions alert; allChannels widens only the legacy sound preference.
+ *   - Space mention filters apply in mentions mode, never hide an explicit user ping.
  */
 export interface MessageAlertInput {
-  authorUserId: string;
-  myIds: ReadonlySet<string>;
+  authoredBySelf?: boolean;
+  authorUserId?: string;
+  myId?: string | undefined;
+  myIds?: ReadonlySet<string>;
   isDmChannel: boolean;
   content: string | null;
   allChannels: boolean;
@@ -25,17 +31,30 @@ export interface MessageAlertInput {
 }
 
 export function isMessageAlert(input: MessageAlertInput): boolean {
-  if (input.myIds.has(input.authorUserId)) return false;
-  if (input.isDmChannel) return true;
+  if (input.authoredBySelf) return false;
+  if (input.authorUserId && input.myIds?.has(input.authorUserId)) return false;
+  if (input.authorUserId && input.myId === input.authorUserId) return false;
+
   const { spaceSetting: space, channelSetting: channel } = input;
   const now = input.now ?? Date.now();
   // Space mute is an absolute gate, even for a channel with an explicit level.
   if ((space?.mutedUntil ?? 0) > now || (channel?.mutedUntil ?? 0) > now) return false;
+
+  if (input.isDmChannel) return true;
+
   const level = channel?.level ?? space?.level ?? (input.allChannels ? 'all' : 'mentions');
   if (level === 'nothing') return false;
   if (level === 'all') return true;
+
   if (!input.content) return false;
-  if (contentMentionsAny(input.content, input.myIds)) return true;
+
+  const mentionIds = new Set<string>();
+  if (input.myId) mentionIds.add(input.myId);
+  if (input.myIds) {
+    for (const id of input.myIds) mentionIds.add(id);
+  }
+  if (mentionIds.size > 0 && contentMentionsAny(input.content, mentionIds)) return true;
+
   const mentions = parseMentions(input.content);
   if (mentions.everyone && !space?.suppressEveryone) return true;
   return !space?.suppressRoles && [...mentions.roleIds].some(id => input.roleIds?.has(id));

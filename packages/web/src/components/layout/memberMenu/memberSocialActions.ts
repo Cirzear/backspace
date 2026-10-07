@@ -10,21 +10,17 @@ import { getFriendshipStatus } from '../../../utils/friendshipStatus';
 import { parseFederatedUsername } from '../../../utils/identity';
 import { describeError } from '../../../i18n/errors';
 
+import { openDirectMessage } from '../../../utils/openDirectMessage';
+
 export async function runMemberAction(action: () => Promise<unknown>): Promise<void> {
   try { await action(); }
   catch (error) { useUIStore.getState().addToast(describeError(error), 'warning'); }
 }
 
-export async function sendMemberMessage(user: User, navigate: (path: string) => void): Promise<void> {
-  const existing = useSpaceStore.getState().findExistingDmForUser(user);
-  const channel = existing?.dm ?? await api.dm.create({
-    userId: user.homeInstance ? undefined : user.id,
-    homeUserId: user.homeUserId ?? undefined,
-    homeInstance: user.homeInstance ?? undefined,
-  });
-  if (!existing) useSpaceStore.getState().addDmChannel(channel);
+export async function sendMemberMessage(user: User, navigate: (path: string) => void, origin = ''): Promise<void> {
+  const channelId = await openDirectMessage(user, origin);
   useUIStore.getState().setShowDms(true);
-  navigate('/channels/@me/' + channel.id);
+  navigate('/channels/@me/' + channelId);
 }
 
 export function friendshipMenuItems(user: User, t: TFunction<readonly ['spaces', 'social', 'common']>): ContextMenuAction[] {

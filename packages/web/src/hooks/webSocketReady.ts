@@ -8,11 +8,10 @@ import { useChatStore } from '../stores/chatStore';
 import { useNotificationStore } from '../stores/notificationStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useSocialStore } from '../stores/socialStore';
-import { getChannelOrigin, setMyUserIdForOrigin, useSpaceStore } from '../stores/spaceStore';
+import { getChannelOrigin, useSpaceStore } from '../stores/spaceStore';
 import { useUIStore } from '../stores/uiStore';
 import { useVoiceStore } from '../stores/voiceStore';
 import { normalizeUserAssets, resolveAssetUrl } from '../utils/assetUrls';
-import { registerSelfId } from '../utils/identity';
 import { ownStatusReport, statusToAssertOnRemote } from '../utils/selfStatus';
 import { broadcastVoiceStatus } from '../utils/voice';
 import { readyActivityEntries, readyRowIndex } from '../utils/presenceSubject';
@@ -46,8 +45,9 @@ function initializeReadyAccount(origin: string, event: ReadyEvent): void {
   const isHome = origin === '';
   const { setUser } = useAuthStore.getState();
   useNotificationStore.getState().hydrate({ origin, userId: event.user.id, spaces: event.spaces, settings: event.notificationSettings ?? [] });
-  // Register this user's ID for cross-instance self-identification
-  registerSelfId(event.user.id);
+  // This instance names the signed-in user's row there (the home's is the
+  // session row itself, set below). The one record of "my ids".
+  if (!isHome) useAuthStore.getState().recordMyRow(origin, event.user.id);
 
   if (isHome) {
     setUser(event.user);
@@ -79,14 +79,8 @@ function normalizeReadySpaces(origin: string, event: ReadyEvent): void {
 }
 
 function populateReadySpaces(origin: string, event: ReadyEvent): void {
-  const isHome = origin === '';
   const { populateFromReady } = useSpaceStore.getState();
   populateFromReady(origin, event.spaces, event.folders, event.dmChannels, event.spaceLayout, event.layoutUpdatedAt);
-
-  // Cache authoritative identity for this origin (federation-safe)
-  if (!isHome) {
-    setMyUserIdForOrigin(origin, event.user.id);
-  }
 }
 
 function syncReadyIdentity(origin: string, event: ReadyEvent): void {
@@ -100,7 +94,7 @@ function syncReadyIdentity(origin: string, event: ReadyEvent): void {
     const report = ownStatusReport(authUser, { origin, isHome }, { userId: event.user.id, status: event.user.status });
     if (report) useAuthStore.getState().applyOwnStatus(report);
     if (!isHome) {
-      const status = statusToAssertOnRemote(authUser, event.user, getHomeHost());
+      const status = statusToAssertOnRemote(authUser, event.user);
       if (status) wsSend({ type: 'presence_update', status }, origin);
     }
   }

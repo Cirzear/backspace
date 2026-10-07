@@ -13,6 +13,7 @@ function userMatches(user: User, query: string): boolean {
 /** One candidate list drives both keyboard selection and the visible popover. */
 export function mentionOptions(input: {
   query: string;
+  origin?: string;
   candidates?: readonly ChannelUser[];
   members?: readonly MemberWithUser[];
   roles?: readonly Role[];
@@ -53,6 +54,7 @@ export function mentionOptions(input: {
         candidate: {
           userId: m.userId,
           user: m.user,
+          origin: input.origin ?? '',
           member: m,
           nameColor: null,
         },

@@ -41,9 +41,9 @@ export const memberEvents = {
     const { upsertUserView } = useSpaceStore.getState();
     if (!isHome) normalizeUserAssets(event.user, origin);
     upsertUserView(event.user, origin);
-    useSpaceStore.getState().updateUserEverywhere(event.user);
-    useSocialStore.getState().updateFriendProfile(event.user);
-    useChatStore.getState().updateUserInMessages(event.user);
+    useSpaceStore.getState().updateUserEverywhere(event.user, origin);
+    useSocialStore.getState().updateFriendProfile(event.user, origin);
+    useChatStore.getState().updateUserInMessages(event.user, origin);
     // If this is the current user (other tab changed profile), update authStore
     const myId = isHome
       ? useAuthStore.getState().user?.id
@@ -64,11 +64,11 @@ export const memberEvents = {
 
     // Deleted user cleanup: remove from caches the existing pipeline doesn't cover
     if (event.user.isDeleted) {
-      useSocialStore.getState().removeFriendLocally(event.user.id, origin);
-      useSocialStore.getState().removeRequestsForUser(event.user.id);
+      // Each removal goes through userUpdateReach, as the updates above do.
+      useSocialStore.getState().removeDeletedUser(event.user, origin);
       useActivityStore.getState().clearUserActivities(event.user, origin);
-      useDiscoverStore.getState().removeUser(event.user.id);
-      useChatStore.getState().clearTypingForUser(event.user.id);
+      useDiscoverStore.getState().removeDeletedUser(event.user, origin);
+      useChatStore.getState().clearTypingForDeletedUser(event.user, origin);
     }
   },
   member_joined: (origin, event) => {

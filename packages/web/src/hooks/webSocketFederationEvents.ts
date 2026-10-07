@@ -1,5 +1,6 @@
 import { useFederationStore } from '../stores/federationStore';
 import { useUIStore } from '../stores/uiStore';
+import { peerRejectedToast } from '../utils/peerRejectedToast';
 import type { WebSocketEventHandlers } from './webSocketEvents';
 
 export const rejectedPeerOrigins = new Set<string>();
@@ -59,12 +60,7 @@ export const federationEvents = {
     rejectedPeerOrigins.add(event.peerOrigin);
     awaitingApprovalPeerOrigins.delete(event.peerOrigin);
     activePeerOrigins.delete(event.peerOrigin);
-    const label = event.peerLabel || event.peerOrigin;
-    addToast(
-      `Cannot relay messages to ${label} — ${event.reason}`,
-      'warning',
-      10000,
-    );
+    addToast(peerRejectedToast(event), 'warning', 10000);
     notifyFederationChangeListeners();
   },
   federation_peer_active: (origin, event) => {

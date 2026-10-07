@@ -1,19 +1,19 @@
 import type { User } from '@backspace/shared';
 import React, { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useAuthStore } from '../../stores/authStore';
 import { useChatStore } from '../../stores/chatStore';
 import { useSpaceStore } from '../../stores/spaceStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useVoiceStore } from '../../stores/voiceStore';
-import { formatDmHeaderName, formatDmInputLabel, isDeletedPartnerDm } from '../../utils/dmFormatters';
-import { userDisplayName } from '../../utils/identity';
-import { useCanonicalUserView } from '../../utils/userViewLookup';
-import { cancelOutgoingDmCall, canStartDmCall, startDmCall } from '../../utils/voiceActions';
-import { DmDeletedNotice } from '../chat/DmDeletedNotice';
-import { MessageInput } from '../chat/MessageInput';
 import { MessageList } from '../chat/MessageList';
+import { MessageInput } from '../chat/MessageInput';
 import { TransferIndicator } from './TransferIndicator';
+import { DmDeletedNotice } from '../chat/DmDeletedNotice';
+import { formatDmHeaderName, formatDmInputLabel, isDeletedPartnerDm } from '../../utils/dmFormatters';
+import { isMine, userDisplayName } from '../../utils/identity';
+import { useCanonicalUserView } from '../../utils/userViewLookup';
+import { canStartDmCall, startDmCall, cancelOutgoingDmCall } from '../../utils/voiceActions';
+import { useDmViewer } from '../../hooks/useDmViewer';
 
 const FALLBACK_USER = { id: '', username: '', createdAt: 0, isAdmin: false, replicatedInstances: [] } as unknown as User;
 
@@ -37,7 +37,6 @@ export function MobileChatScreen({ params }: MobileChatScreenProps) {
   const setCurrentChannel = useChatStore((s) => s.setCurrentChannel);
   const channels = useSpaceStore((s) => s.channels);
   const dmChannels = useSpaceStore((s) => s.dmChannels);
-  const authUser = useAuthStore((s) => s.user);
 
   useEffect(() => {
     if (!channelId) return;
@@ -45,21 +44,26 @@ export function MobileChatScreen({ params }: MobileChatScreenProps) {
     loadMessages(channelId);
   }, [channelId, setCurrentChannel, loadMessages]);
 
-  const dm = isDm ? dmChannels.find(d => d.id === channelId) : undefined;
+  // Resolve the "main other member" of a 1:1 DM up-front so we can route it
+  // through useCanonicalUserView (hook, must run unconditionally). Group DMs
+  // don't get the cache treatment in the header — the comma-joined title falls
+  // back to per-member parseFederatedUsername normalization, matching the
+  // pattern in MobileDmsScreen.
+  const dm = isDm && channelId ? dmChannels.find(d => d.id === channelId) : undefined;
+  const viewer = useDmViewer(dm?.id);
+  const otherMembers = dm ? dm.members.filter(m => !isMine(m, viewer.origin, viewer.self)) : [];
   const isGroup = !!dm?.ownerId;
-  const dmPartnerDeleted = isDm && dm && authUser ? isDeletedPartnerDm(dm, authUser) : false;
-  const rawMainOther = dm && !isGroup ? (dm.members?.find(m => m.id !== authUser?.id) ?? dm.members?.[0]) : undefined;
-  const canonicalMainOther = useCanonicalUserView(rawMainOther ?? FALLBACK_USER);
-
-  // Call state for DM header action
-  const isCallingThisDm = outgoingCall?.dmChannelId === channelId;
-  const isInThisDmCall = activeDmCall?.dmChannelId === channelId;
-  const callState: 'idle' | 'ringing' | 'inCall' | 'busy' =
-    isInThisDmCall ? 'inCall'
-    : isCallingThisDm ? 'ringing'
-    : canStartCall ? 'idle'
-    : 'busy';
-
+  const rawMainOther = !isGroup ? otherMembers[0] : undefined;
+  const canonicalMainOther = useCanonicalUserView((rawMainOther as unknown as User) ?? FALLBACK_USER, viewer.origin);
+  const dmPartnerDeleted = dm ? isDeletedPartnerDm(dm, viewer) : false;
+  // The header call button has four states, in this order of precedence:
+  // in a call with this DM (opens the call screen), ringing this DM (cancels),
+  // idle (starts a call), and busy (disabled: `canStartDmCall` refuses while
+  // any DM call rings or runs, including one ringing in from this DM).
+  const callState: 'inCall' | 'ringing' | 'idle' | 'busy' =
+    !!channelId && activeDmCall?.dmChannelId === channelId ? 'inCall'
+      : !!channelId && outgoingCall?.dmChannelId === channelId ? 'ringing'
+        : canStartCall ? 'idle' : 'busy';
   const handleCall = () => {
     if (!channelId) return;
     if (callState === 'ringing') {
@@ -90,8 +94,8 @@ export function MobileChatScreen({ params }: MobileChatScreenProps) {
   if (isDm) {
     channelName = t('spaces:main.dm.fallbackName');
     if (dm && isGroup) {
-      channelName = formatDmHeaderName(dm, authUser);
-      inputPlaceholder = t('spaces:main.dm.composerPlaceholder', { target: formatDmInputLabel(dm, authUser) });
+      channelName = formatDmHeaderName(dm, viewer);
+      inputPlaceholder = t('spaces:main.dm.composerPlaceholder', { target: formatDmInputLabel(dm, viewer) });
     } else if (dm && rawMainOther) {
       channelName = userDisplayName(canonicalMainOther);
       // Use the canonical `channelName` directly so header + placeholder stay

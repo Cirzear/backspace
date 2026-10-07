@@ -1,10 +1,11 @@
 import { create } from 'zustand';
-import type { MessageWithUser, Reaction, ReadState } from '@backspace/shared';
+import type { MessageWithUser, Reaction, ReadState, User } from '@backspace/shared';
 import { wsSend } from '../hooks/useWebSocket';
 import { HttpError } from '../api/client';
 import { isDmChannel, getChannelOrigin, getApiForOrigin, useSpaceStore } from './spaceStore';
-import { useAuthStore } from './authStore';
+import { myRowForOrigin } from './authStore';
 import { normalizeMessageAssets } from '../utils/assetUrls';
+import { updateIsAboutRowId, withUserUpdate, type IdentityFields } from '../utils/identity';
 import { usePendingMessageStore } from './pendingMessageStore';
 import type { ScrollAnchor } from '../components/chat/scrollAnchor';
 
@@ -282,8 +283,18 @@ interface ChatState {
   onMarkUnread: (channelId: string, messageId: string) => void;
   removeChannelStates: (channelIds: Set<string>) => void;
   rekeyChannelState: (oldId: string, newId: string) => void;
-  updateUserInMessages: (user: { id: string; [key: string]: any }) => void;
-  clearTypingForUser: (userId: string) => void;
+  /**
+   * Apply a `user_updated` row issued by `origin` to the authors it is about
+   * (`withUserUpdate`); each channel's rows are its origin's.
+   */
+  updateUserInMessages: (user: User, origin: string) => void;
+  /**
+   * Drop the typing entries of the deleted user's `user_updated` row (issued
+   * by `origin`): a typing entry keeps only a row id, so only the issuing
+   * instance's channels (`updateIsAboutRowId`). Each instance that holds a
+   * row of the person sends its own event for it.
+   */
+  clearTypingForDeletedUser: (user: IdentityFields, origin: string) => void;
 }
 
 /** The client for the instance that owns `channelId`, and that instance's origin. */
@@ -627,8 +638,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sendMessage: async (channelId: string, content: string, attachmentIds?: string[]) => {
     const replyToId = get().replyTo?.id;
     const isDm = isDmChannel(channelId);
-    const currentUser = useAuthStore.getState().user;
     const origin = getChannelOrigin(channelId);
+    // The user's row as the channel's instance issues it: the optimistic
+    // message is checked against that origin (own message, edit, profile).
+    const myRow = myRowForOrigin(origin);
     const client = getApiForOrigin(origin);
 
     // Sending from a window of older history goes back to the present, where
@@ -637,16 +650,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // Generate optimistic message
     const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    if (currentUser) {
+    if (myRow) {
       const optimisticMessage: MessageWithUser = {
         id: tempId,
         channelId: isDm ? '' : channelId,
-        userId: currentUser.id,
+        userId: myRow.id,
         content: content || null,
         replyToId: replyToId ?? null,
         editedAt: null,
         createdAt: Date.now(),
-        user: currentUser,
+        user: myRow,
         attachments: [],
         embeds: [],
         reactions: [],
@@ -662,7 +675,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (isDm) {
         useSpaceStore.getState().patchDmCopy(channelId, dm => ({
           ...dm,
-          lastMessage: { id: tempId, dmChannelId: channelId, userId: currentUser.id, content, createdAt: Date.now() },
+          lastMessage: { id: tempId, dmChannelId: channelId, userId: myRow.id, content, createdAt: Date.now() },
         }));
       }
     }
@@ -1172,20 +1185,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  updateUserInMessages: (user: { id: string; homeUserId?: string | null; [key: string]: any }) => {
+  updateUserInMessages: (user: User, origin: string) => {
     set((state) => {
       const newMessages = new Map(state.messages);
       let changed = false;
       for (const [channelId, msgs] of newMessages) {
+        const channelOrigin = getChannelOrigin(channelId);
         let channelChanged = false;
         const updated = msgs.map(m => {
-          const matches = m.userId === user.id ||
-            (user.homeUserId && m.user?.homeUserId && m.user.homeUserId === user.homeUserId);
-          if (matches) {
-            channelChanged = true;
-            return { ...m, user: { ...m.user, ...user } };
-          }
-          return m;
+          if (!m.user) return m;
+          const author = withUserUpdate(m.user, channelOrigin, user, origin);
+          if (author === m.user) return m;
+          channelChanged = true;
+          return { ...m, user: author };
         });
         if (channelChanged) { newMessages.set(channelId, updated); changed = true; }
       }
@@ -1193,12 +1205,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  clearTypingForUser: (userId: string) => {
+  clearTypingForDeletedUser: (user: IdentityFields, origin: string) => {
     set((state) => {
       const newTyping = new Map(state.typingUsers);
       let changed = false;
       for (const [channelId, users] of newTyping) {
-        const filtered = users.filter(t => t.userId !== userId);
+        const channelOrigin = getChannelOrigin(channelId);
+        const filtered = users.filter(t => !updateIsAboutRowId(t.userId, channelOrigin, user, origin));
         if (filtered.length !== users.length) {
           newTyping.set(channelId, filtered);
           changed = true;

@@ -83,12 +83,12 @@ export function useMemberContextMenu(space: TaggedSpace | undefined) {
     const items: ContextMenuItem[] = [
       {
         type: 'action', key: 'profile', label: t('spaces:members.menu.profile'), onClick: () => {
-          useUIStore.getState().openUserProfile(canonical, anchor, 'left', { spaceId: member.spaceId, userId: member.userId });
+          useUIStore.getState().openUserProfile(canonical, target.origin, anchor, 'left', { spaceId: member.spaceId, userId: member.userId });
         }
       },
       {
         type: 'action', key: 'message', label: t('social:profile.sendMessage'), hidden: allowed.self,
-        onClick: () => { void runMemberAction(() => sendMemberMessage(user, navigate)); }
+        onClick: () => { void runMemberAction(() => sendMemberMessage(user, navigate, target.origin)); }
       },
       ...(allowed.self ? [] : friendshipMenuItems(user, t)),
       { type: 'separator', key: 'member-separator' },

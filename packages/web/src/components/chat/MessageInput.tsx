@@ -21,6 +21,7 @@ import { usePendingMessageStore } from '../../stores/pendingMessageStore';
 import { putHandle, supportsFsHandles, supportsDnDHandles } from '../../utils/idbHandles';
 import { useVisualViewportInset } from '../../hooks/useVisualViewportInset';
 import { useAuthStore } from '../../stores/authStore';
+import { selfIdentityOf } from '../../utils/identity';
 import { findLastOwnEditableMessage } from './messageEditing';
 import {
   useChannelMentionCandidates,
@@ -96,7 +97,6 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   const chatSetReplyTo = useChatStore((s) => s.setReplyTo);
   const editingMessageId = useChatStore((s) => s.editingMessageId);
   const setEditingMessage = useChatStore((s) => s.setEditingMessage);
-  const currentUser = useAuthStore((s) => s.user);
   // Who can be mentioned here: this channel's people, with ids on its origin.
   const mentionCandidates = useChannelMentionCandidates(channelId);
 
@@ -480,7 +480,8 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
       // Read the list on demand: subscribing to it would re-render the composer
       // on every incoming message, and the shortcut only needs it at keypress time.
       const channelMessages = useChatStore.getState().messages.get(channelId) ?? [];
-      const message = findLastOwnEditableMessage(channelMessages, currentUser);
+      const { user, myRowIds } = useAuthStore.getState();
+      const message = findLastOwnEditableMessage(channelMessages, getChannelOrigin(channelId), selfIdentityOf(user, myRowIds));
       if (message) {
         e.preventDefault();
         setActivePopover(null);

@@ -3,13 +3,12 @@ import { getUploadUrl } from '../../utils/assetUrls';
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { User } from '@backspace/shared';
-import { useSocialStore, type TaggedFriend, type TaggedFriendRequest, type TaggedUser } from '../../stores/socialStore';
+import { isIncomingRequest, isOutgoingRequest, useSocialStore, type TaggedFriend, type TaggedFriendRequest, type TaggedUser } from '../../stores/socialStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useDiscoverStore, type TaggedDiscoverUser } from '../../stores/discoverStore';
 import { useTranslation, Trans } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { describeError } from '../../i18n/errors';
-import { useSpaceStore } from '../../stores/spaceStore';
 import { useInstanceStore } from '../../stores/instanceStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useFederationStore } from '../../stores/federationStore';
@@ -22,7 +21,8 @@ import { Mascot } from '../ui/Mascot';
 import { useActivityStore, activitiesFor } from '../../stores/activityStore';
 import { ActivityCard, hasRichActivity, getActivityAccentClass } from '../ui/ActivityCard';
 import { getPrimaryActivity } from '@backspace/shared/src/activities.js';
-import { parseFederatedUsername, isFederationGlobeApplicable, userDisplayName } from '../../utils/identity';
+import { parseFederatedUsername, isFederationGlobeApplicable, userDisplayName, type IdentityFields } from '../../utils/identity';
+import { openDirectMessage } from '../../utils/openDirectMessage';
 import { useCanonicalUserView } from '../../utils/userViewLookup';
 import { friendRequestTarget } from '../../utils/friendRequestTarget';
 import { replaceEmojiShortcodes, useEmojiShortcodeNames } from '../../utils/emojiShortcodes';
@@ -47,10 +47,10 @@ function ActivityFriendItem({
   isRichActivity: boolean;
   accentClass: string;
   mobile?: boolean;
-  onMobileClick: (userId: string) => void;
-  onDmClick: (id: string, homeUserId?: string, homeInstance?: string | null) => void;
+  onMobileClick: (friend: TaggedFriend) => void;
+  onDmClick: (person: IdentityFields, origin: string) => void;
 }) {
-  const canonical = useCanonicalUserView(friend as unknown as User);
+  const canonical = useCanonicalUserView(friend as unknown as User, friend._instanceOrigin);
   const friendDisplayName = userDisplayName(canonical);
 
   const rowClass = isRichActivity
@@ -61,9 +61,9 @@ function ActivityFriendItem({
     <div
       onClick={() => {
         if (mobile) {
-          onMobileClick(friend.id);
+          onMobileClick(friend);
         } else {
-          onDmClick(friend.id, friend.homeUserId ?? undefined, friend.homeInstance);
+          onDmClick(friend, friend._instanceOrigin);
         }
       }}
       className={rowClass}
@@ -114,7 +114,6 @@ export function FriendsPage({ mobile }: FriendsPageProps) {
   const [activeTab, setActiveTab] = useState<Tab>('online');
   const [pendingUnfriend, setPendingUnfriend] = useState<{ id: string; name: string } | null>(null);
   const navigate = useNavigate();
-  const upsertDmCopy = useSpaceStore((s) => s.upsertDmCopy);
   const addToast = useUIStore((s) => s.addToast);
 
   // If the user clicked "Retry your friend request" in the Connections panel
@@ -148,25 +147,13 @@ export function FriendsPage({ mobile }: FriendsPageProps) {
   const pushMobileScreen = useUIStore((s) => s.pushMobileScreen);
 
   const onlineFriends = friends.filter(f => f.status !== 'offline');
-  const pendingIncoming = requests.filter(r => r.status === 'pending' && r.user?.id === r.fromId);
-  const pendingOutgoing = requests.filter(r => r.status === 'pending' && r.user?.id === r.toId);
+  const pendingIncoming = requests.filter(r => r.status === 'pending' && isIncomingRequest(r));
+  const pendingOutgoing = requests.filter(r => r.status === 'pending' && isOutgoingRequest(r));
 
-  const handleOpenDm = async (friendId: string, homeUserId?: string, homeInstance?: string | null) => {
+  const handleOpenDm = async (person: IdentityFields, origin: string) => {
     try {
-      // Check if a DM already exists with this user (on any instance)
-      const existing = useSpaceStore.getState().findExistingDmForUser({ id: friendId, homeUserId: homeUserId ?? undefined });
-      if (existing) {
-        useUIStore.getState().setShowDms(true);
-        navigate(`/channels/@me/${existing.dm.id}`);
-        return;
-      }
-      const dmChannel = await api.dm.create({
-        userId: homeInstance ? undefined : friendId,
-        homeUserId: homeUserId ?? undefined,
-        homeInstance: homeInstance ?? undefined,
-      });
-      // The answer joins its conversation; open the conversation's row.
-      const rowId = upsertDmCopy('', dmChannel, 'stated');
+      const rowId = await openDirectMessage(person, origin);
+      useUIStore.getState().setShowDms(true);
       navigate(`/channels/@me/${rowId}`);
     } catch (err) {
       addToast(t('social:sendMessage.failed', { reason: describeError(err) }), 'warning');
@@ -197,7 +184,7 @@ export function FriendsPage({ mobile }: FriendsPageProps) {
             ) : (
               <>
                 {onlineFriends.map(friend => (
-                  <FriendItem key={`${friend.id}:${friend._instanceOrigin}`} friend={friend} onRemove={() => setPendingUnfriend({ id: friend.id, name: userDisplayName(friend) })} onDm={() => handleOpenDm(friend.id, friend.homeUserId ?? undefined, friend.homeInstance)} />
+                  <FriendItem key={`${friend.id}:${friend._instanceOrigin}`} friend={friend} onRemove={() => setPendingUnfriend({ id: friend.id, name: userDisplayName(friend) })} onDm={() => handleOpenDm(friend, friend._instanceOrigin)} />
                 ))}
               </>
             )}
@@ -217,7 +204,7 @@ export function FriendsPage({ mobile }: FriendsPageProps) {
             ) : (
               <>
                 {friends.map(friend => (
-                  <FriendItem key={`${friend.id}:${friend._instanceOrigin}`} friend={friend} onRemove={() => setPendingUnfriend({ id: friend.id, name: userDisplayName(friend) })} onDm={() => handleOpenDm(friend.id, friend.homeUserId ?? undefined, friend.homeInstance)} />
+                  <FriendItem key={`${friend.id}:${friend._instanceOrigin}`} friend={friend} onRemove={() => setPendingUnfriend({ id: friend.id, name: userDisplayName(friend) })} onDm={() => handleOpenDm(friend, friend._instanceOrigin)} />
                 ))}
               </>
             )}
@@ -295,7 +282,7 @@ export function FriendsPage({ mobile }: FriendsPageProps) {
               isRichActivity={isRichActivity}
               accentClass={accentClass}
               mobile={mobile}
-              onMobileClick={(userId) => pushMobileScreen('user-profile', { userId })}
+              onMobileClick={(person) => pushMobileScreen('user-profile', { userId: person.id, origin: person._instanceOrigin })}
               onDmClick={handleOpenDm}
             />
           );
@@ -442,7 +429,7 @@ export function FriendsPage({ mobile }: FriendsPageProps) {
 function AddFriendTab({
   onOpenDm,
 }: {
-  onOpenDm: (userId: string, homeUserId?: string, homeInstance?: string | null) => void;
+  onOpenDm: (person: IdentityFields, origin: string) => void;
 }) {
   const { t } = useTranslation(['social', 'common']);
   const searchUsers = useSocialStore((s) => s.searchUsers);
@@ -515,11 +502,11 @@ function AddFriendTab({
         if (isFriend) {
           return { ...user, relationship: 'friends' as const, mutualFriendCount: 0, mutualSpaceCount: 0 };
         }
-        const outbound = requests.find(r => r.status === 'pending' && r.user?.id === r.toId && r.user?.id === user.id && r._instanceOrigin === user._instanceOrigin);
+        const outbound = requests.find(r => r.status === 'pending' && isOutgoingRequest(r) && r.user?.id === user.id && r._instanceOrigin === user._instanceOrigin);
         if (outbound) {
           return { ...user, relationship: 'outbound_pending' as const, requestId: outbound.id, mutualFriendCount: 0, mutualSpaceCount: 0 };
         }
-        const inbound = requests.find(r => r.status === 'pending' && r.user?.id === r.fromId && r.user?.id === user.id && r._instanceOrigin === user._instanceOrigin);
+        const inbound = requests.find(r => r.status === 'pending' && isIncomingRequest(r) && r.user?.id === user.id && r._instanceOrigin === user._instanceOrigin);
         if (inbound) {
           return { ...user, relationship: 'inbound_pending' as const, requestId: inbound.id, mutualFriendCount: 0, mutualSpaceCount: 0 };
         }
@@ -684,7 +671,7 @@ function UserDiscoverCard({
   onRelationshipChange,
 }: {
   user: TaggedDiscoverUser;
-  onOpenDm: (userId: string, homeUserId?: string, homeInstance?: string | null) => void;
+  onOpenDm: (person: IdentityFields, origin: string) => void;
   onRelationshipChange: (userId: string, origin: string, relationship: TaggedDiscoverUser['relationship'], requestId?: string) => void;
 }) {
   useEmojiShortcodeNames();
@@ -772,7 +759,7 @@ function UserDiscoverCard({
   };
 
   const handleMessage = () => {
-    onOpenDm(user.id, user.homeUserId ?? undefined, user.homeInstance);
+    onOpenDm(user, user._instanceOrigin);
   };
 
   return (
@@ -920,7 +907,7 @@ function TabButton({ children, active, onClick }: { children: React.ReactNode, a
 
 function FriendItem({ friend, onRemove, onDm }: { friend: TaggedFriend, onRemove: () => void, onDm: () => void }) {
   const { t } = useTranslation(['social', 'common']);
-  const canonical = useCanonicalUserView(friend as unknown as User);
+  const canonical = useCanonicalUserView(friend as unknown as User, friend._instanceOrigin);
   const instanceLabel = friend._instanceOrigin ? (() => { try { return new URL(friend._instanceOrigin).host; } catch { return friend._instanceOrigin; } })() : '';
   const friendDisplayName = userDisplayName(canonical);
   return (
@@ -974,7 +961,7 @@ function RequestItem({ request, type, onAccept, onDecline, onCancel }: {
   const { t } = useTranslation(['social', 'common']);
   const rawUser = request.user;
   const _FALLBACK_USER = { id: '', username: '', createdAt: 0, isAdmin: false, replicatedInstances: [] } as unknown as User;
-  const canonicalUser = useCanonicalUserView((rawUser as unknown as User | null) ?? _FALLBACK_USER);
+  const canonicalUser = useCanonicalUserView((rawUser as unknown as User | null) ?? _FALLBACK_USER, request._instanceOrigin);
   const user = rawUser ? canonicalUser : null;
   if (!user) return null;
   const instanceLabel = request._instanceOrigin ? (() => { try { return new URL(request._instanceOrigin).host; } catch { return request._instanceOrigin; } })() : '';

@@ -14,7 +14,7 @@ import type {
   UpdateSpaceRequest,
   User,
 } from '@backspace/shared';
-import type { PresenceSubject } from '../utils/identity';
+import type { PresenceSubject, IdentityFields } from '../utils/identity';
 import type { PeerDmChannel } from '../utils/dmConversationKey';
 import type { DmConversations } from './dmConversations';
 import type { SpaceChannelIndex } from './spaceChannels';
@@ -178,7 +178,7 @@ export interface SpaceState {
    * `activityKey` (their home identity), never by a raw row id.
    */
   updateMemberPresence: (subject: PresenceSubject, origin: string, status: string) => void;
-  updateUserEverywhere: (user: User) => void;
+  updateUserEverywhere: (user: User, origin: string) => void;
   /** A member joined `spaceId`, the open space. Also replayed onto an in-flight detail fetch's roster. */
   addMember: (spaceId: string, member: MemberWithUser) => void;
   /** A member left `spaceId`, the open space. Also replayed onto an in-flight detail fetch's roster. */
@@ -199,6 +199,6 @@ export interface SpaceState {
   addSpaceFromReady: (origin: string, space: SpaceWithChannelsAndMembers) => void;
   removeInstanceSpaces: (origin: string) => void;
   transferOwnership: (spaceId: string, newOwnerId: string) => Promise<void>;
-  findExistingDmForUser: (targetUser: { id: string; homeUserId?: string | null }) => { dm: DmChannel; origin: string } | null;
+  findExistingDmForUser: (target: IdentityFields, targetOrigin: string) => { dm: DmChannel; origin: string } | null;
   reset: () => void;
 }
