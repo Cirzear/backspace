@@ -64,7 +64,7 @@ beforeEach(() => {
     channelOriginMap: new Map([[CHANNEL, ORBIT], [DM, ORBIT]]),
     dmChannels: [],
   });
-  useChatStore.setState({ messages: new Map(), replyTo: null, detachedChannels: new Map() });
+  useChatStore.setState({ messages: new Map(), replyTargets: new Map(), detachedChannels: new Map() });
 });
 
 afterEach(() => {
