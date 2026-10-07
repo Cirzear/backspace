@@ -176,6 +176,13 @@
       "when": 1791393454331,
       "tag": "0024_reaction_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1791411196654,
+      "tag": "0025_notification_settings",
+      "breakpoints": true
     }
   ]
 }

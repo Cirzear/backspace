@@ -1,20 +1,29 @@
-import type { UserStatus } from '@backspace/shared';
+import type { ChannelNotificationPolicy, UserStatus } from '@backspace/shared';
 import { contentMentionsAny } from './mentionTokens';
 
 /**
  * The rule that decides whether a freshly-arrived chat message alerts the user.
- * Pure; the caller answers who wrote it and which id is the user's in that
- * channel (see `messageAlertsUser` in utils/alerts.ts, which both outputs of
- * the `message` alert kind go through).
+ * Pure; the caller answers who wrote it, which id is the user's in that
+ * channel and what the channel's notification settings are (see
+ * `messageAlertsUser` in utils/alerts.ts, which both outputs of the `message`
+ * alert kind go through). Documented in docs/systems/sounds.md ("Which
+ * messages alert").
  *
- * Rule (Discord-default):
+ * Rule:
  *   - Never for a message the user wrote (`authoredBySelf`).
- *   - For a DM, or for content with a `<@${myId}>` mention outside code (the
- *     shared scan in utils/mentionTokens.ts). `myId` is the user's id on the
- *     instance that issued the channel, which is the id a mention there carries.
- *   - When allChannels=true, for every other message too. Only the in-app
- *     cue passes it: the "Play sound for every message" preference is a sound
- *     setting and does not widen the OS notification.
+ *   - Always for a DM. Notification settings belong to spaces and channels
+ *     and do not reach DMs.
+ *   - For a space channel, by its notification policy:
+ *     - muted (its own mute or its space's): never, mentions included;
+ *     - `nothing`: never, mentions included;
+ *     - `all`: every message;
+ *     - `mentions`: content with a `<@${myId}>` mention outside code (the
+ *       shared scan in utils/mentionTokens.ts), where `myId` is the user's id
+ *       on the instance that issued the channel. With `allChannels`, every
+ *       message: only the in-app cue passes it, since the "Play sound for
+ *       every message" preference is a sound setting and does not widen the
+ *       OS notification. It widens `mentions` only, so it never overrides a
+ *       channel the user set to `nothing` or muted.
  */
 export interface MessageAlertInput {
   authoredBySelf: boolean;
@@ -22,14 +31,24 @@ export interface MessageAlertInput {
   isDmChannel: boolean;
   content: string | null;
   allChannels: boolean;
+  /** The channel's resolved settings (`resolveChannelNotificationPolicy`); not read for a DM. */
+  notification: Pick<ChannelNotificationPolicy, 'level' | 'muted'>;
 }
 
 export function isMessageAlert(input: MessageAlertInput): boolean {
   if (input.authoredBySelf) return false;
-  if (input.allChannels) return true;
   if (input.isDmChannel) return true;
-  if (!input.content || !input.myId) return false;
-  return contentMentionsAny(input.content, new Set([input.myId]));
+  if (input.notification.muted) return false;
+  switch (input.notification.level) {
+    case 'nothing':
+      return false;
+    case 'all':
+      return true;
+    case 'mentions':
+      if (input.allChannels) return true;
+      if (!input.content || !input.myId) return false;
+      return contentMentionsAny(input.content, new Set([input.myId]));
+  }
 }
 
 /**

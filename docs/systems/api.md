@@ -367,6 +367,22 @@ PATCH /settings/instance     (admin)       { instanceName?, registrationOpen?, f
 
 `supportCardEnabled` must be a boolean (`400 field_not_boolean` with `{ field: 'supportCardEnabled' }`). It is carried only on `/settings/instance` and not on `/settings/streaming`, is reported publicly on `GET /instance/info`, and never marks the directory dirty. Default true. What it hides: [admin.md](admin.md), General panel.
 
+## Notification settings (`routes/notificationSettings.ts`) — auth required
+```
+GET   /users/@me/notification-settings                 → { settings: NotificationSetting[] }
+PATCH /spaces/:spaceId/notification-settings     { level?, mute? } → NotificationSetting
+PATCH /channels/:channelId/notification-settings { level?, mute? } → NotificationSetting
+```
+The signed-in user's per-space and per-channel notification settings on **this** instance, for the spaces it hosts. Keyed by the caller's row here, so a federated member uses their account on the space's instance: the client sends these to the space's origin (`getApiForOrigin`), never to its home. What the settings do is in [sounds.md](sounds.md) ("Notification settings"); the table is `notification_settings` ([database.md](database.md)).
+
+`NotificationSetting` is `{ spaceId, channelId: string | null, level: 'all' | 'mentions' | 'nothing' | null, muted, mutedUntil: number | null, updatedAt }`. `channelId` null is the space-wide setting. `level` null is "not chosen": a channel inherits its space, a space uses `mentions`. `muted` with `mutedUntil` null lasts until lifted; a timed mute ends at `mutedUntil` (epoch ms, server clock). `updatedAt` is the server's write time and is always later than the stored one, so clients merge last-write-wins.
+
+The PATCH body changes only the fields it carries, and needs at least one: `level` is a level or null (clear), `mute` is `'1h' | '8h' | '24h' | 'indefinite'` or null (lift). The server computes `mutedUntil` from the duration with its own clock; a mute that already ended is read as none. A write that leaves nothing chosen (level null, not muted) deletes the row and answers the setting with level null and not muted. Every successful write is pushed as `notification_settings_updated` to all of the user's sockets on this instance ([websocket.md](websocket.md)).
+
+GET lists only rows of spaces the caller is a member of, and channel rows of channels they can see (`VIEW_CHANNEL` or `ADMINISTRATOR`). Rows outlive leaving a space or losing a channel: they come back if the user rejoins or regains it, and go with the user, space or channel row (cascade).
+
+Errors: `400 validation_failed` (no known field, or a value of the wrong kind), `404 space_not_found`, `404 channel_not_found`, `403 not_space_member`, `403 missing_permission` (`{ permission: 'VIEW_CHANNEL' }`) for a channel the caller cannot see.
+
 ## Admin (`routes/admin.ts`) — admin required
 ```
 GET    /admin/storage/stats                                → StorageStats

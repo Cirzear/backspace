@@ -268,6 +268,141 @@ export interface ReadState {
   lastReadMessageId: string;
 }
 
+// ─── Notification Settings ─────────────────────────────────────────────────
+// Per-space and per-channel alert preferences, stored on the instance that
+// hosts the space (docs/systems/sounds.md, "Notification settings").
+
+/**
+ * Which messages of a space channel alert the user (sound and desktop
+ * notification). DMs are not governed by it.
+ *
+ * - `all`: every message from someone else.
+ * - `mentions`: only messages that mention the user.
+ * - `nothing`: no message, mentions included.
+ */
+export const NOTIFICATION_LEVELS = ['all', 'mentions', 'nothing'] as const;
+export type NotificationLevel = (typeof NOTIFICATION_LEVELS)[number];
+
+/** The level of a space with no stored choice, and of every channel that inherits it. */
+export const DEFAULT_NOTIFICATION_LEVEL: NotificationLevel = 'mentions';
+
+export function isNotificationLevel(value: unknown): value is NotificationLevel {
+  return typeof value === 'string' && (NOTIFICATION_LEVELS as readonly string[]).includes(value);
+}
+
+/**
+ * How long a mute lasts. The server turns a duration into `mutedUntil` with
+ * its own clock, so every session of the user sees the same end time.
+ */
+export const NOTIFICATION_MUTE_DURATIONS = ['1h', '8h', '24h', 'indefinite'] as const;
+export type NotificationMuteDuration = (typeof NOTIFICATION_MUTE_DURATIONS)[number];
+
+/** Length of each timed mute in ms; `indefinite` has none. */
+export const NOTIFICATION_MUTE_DURATION_MS: Record<Exclude<NotificationMuteDuration, 'indefinite'>, number> = {
+  '1h': 60 * 60 * 1000,
+  '8h': 8 * 60 * 60 * 1000,
+  '24h': 24 * 60 * 60 * 1000,
+};
+
+export function isNotificationMuteDuration(value: unknown): value is NotificationMuteDuration {
+  return typeof value === 'string' && (NOTIFICATION_MUTE_DURATIONS as readonly string[]).includes(value);
+}
+
+/**
+ * One stored notification setting of the signed-in user, for a whole space
+ * (`channelId` null) or for one channel of it. Ids are the hosting
+ * instance's.
+ *
+ * `level` null means "not chosen": a channel then inherits its space's level,
+ * and a space uses `DEFAULT_NOTIFICATION_LEVEL`. `muted` with `mutedUntil`
+ * null is a mute until the user lifts it; with a time, the mute ends then
+ * (epoch ms, the server's clock). A mute that has ended reads as not muted.
+ *
+ * `updatedAt` is the server's write time. A setting with no choice left
+ * (`level` null and not muted) is not stored, and is sent as such so other
+ * sessions drop theirs.
+ */
+export interface NotificationSetting {
+  spaceId: string;
+  channelId: string | null;
+  level: NotificationLevel | null;
+  muted: boolean;
+  mutedUntil: number | null;
+  updatedAt: number;
+}
+
+/**
+ * Body of `PATCH /api/spaces/:spaceId/notification-settings` and
+ * `PATCH /api/channels/:channelId/notification-settings`. An absent field is
+ * left as it is. `level: null` clears the choice (inherit / default);
+ * `mute: null` lifts the mute.
+ */
+export interface UpdateNotificationSettingRequest {
+  level?: NotificationLevel | null;
+  mute?: NotificationMuteDuration | null;
+}
+
+export interface NotificationSettingsResponse {
+  settings: NotificationSetting[];
+}
+
+/** Whether a stored mute is in force at `now`. */
+export function isMuteActive(setting: Pick<NotificationSetting, 'muted' | 'mutedUntil'> | null | undefined, now: number): boolean {
+  if (!setting || !setting.muted) return false;
+  return setting.mutedUntil === null || setting.mutedUntil > now;
+}
+
+/** Where a channel's effective level came from. */
+export type NotificationLevelSource = 'channel' | 'space' | 'default';
+
+/**
+ * What applies to one space channel: its level after inheritance, and
+ * whether it is muted (its own mute or its space's). `mutedUntil` is the
+ * end of the mute in force (null while indefinite or not muted); with both
+ * the channel and the space muted it is the later of the two ends.
+ */
+export interface ChannelNotificationPolicy {
+  level: NotificationLevel;
+  levelSource: NotificationLevelSource;
+  muted: boolean;
+  mutedUntil: number | null;
+  /** The channel's own mute is in force (as opposed to only the space's). */
+  channelMuted: boolean;
+  /** The space's mute is in force. */
+  spaceMuted: boolean;
+}
+
+/**
+ * The inheritance rule, in one place: a channel's own level wins, else its
+ * space's, else `DEFAULT_NOTIFICATION_LEVEL`. A channel is muted while its
+ * own mute or its space's is in force.
+ */
+export function resolveChannelNotificationPolicy(
+  spaceSetting: NotificationSetting | null | undefined,
+  channelSetting: NotificationSetting | null | undefined,
+  now: number,
+): ChannelNotificationPolicy {
+  let level: NotificationLevel = DEFAULT_NOTIFICATION_LEVEL;
+  let levelSource: NotificationLevelSource = 'default';
+  if (channelSetting?.level) {
+    level = channelSetting.level;
+    levelSource = 'channel';
+  } else if (spaceSetting?.level) {
+    level = spaceSetting.level;
+    levelSource = 'space';
+  }
+  const channelMuted = isMuteActive(channelSetting, now);
+  const spaceMuted = isMuteActive(spaceSetting, now);
+  const ends: Array<number | null> = [];
+  if (channelMuted && channelSetting) ends.push(channelSetting.mutedUntil);
+  if (spaceMuted && spaceSetting) ends.push(spaceSetting.mutedUntil);
+  let mutedUntil: number | null = null;
+  if (ends.length > 0 && !ends.includes(null)) {
+    mutedUntil = Math.max(...ends.filter((end): end is number => end !== null));
+  }
+  return { level, levelSource, muted: channelMuted || spaceMuted, mutedUntil, channelMuted, spaceMuted };
+}
+
 // ─── Message Types ──────────────────────────────────────────────────────────
 
 export interface Message {
@@ -567,6 +702,10 @@ export type ServerEvent =
   | { type: 'category_deleted'; categoryId: string; spaceId: string }
   | { type: 'channel_layout_updated'; spaceId: string; channels: Channel[]; categories: ChannelCategory[] }
   | { type: 'space_layout_updated'; layout: SpaceLayoutItem[]; folders: SpaceFolder[]; updatedAt?: number }
+  // One of the user's notification settings on this instance changed (from
+  // any of their sessions here). A setting with level null and not muted was
+  // cleared. See docs/systems/websocket.md.
+  | { type: 'notification_settings_updated'; setting: NotificationSetting }
   | { type: 'mark_unread'; channelId: string; messageId: string }
   | { type: 'embeds_resolved'; messageId: string; channelId: string; embeds: Embed[] }
   | { type: 'dm_embeds_resolved'; messageId: string; dmChannelId: string; embeds: Embed[] }

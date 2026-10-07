@@ -43,6 +43,7 @@ import {
 } from '../utils/crossStoreResolvers';
 import { useAuthStore, getMyUserIdForOrigin, isMe } from './authStore';
 import { useChatStore } from './chatStore';
+import { useNotificationSettingsStore } from './notificationSettingsStore';
 
 // ─── Instance-aware types ─────────────────────────────────────────────────────
 
@@ -1374,8 +1375,10 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   },
 
   removeInstanceSpaces: (origin: string) => {
-    // The instance is gone: the id its `ready` gave the user says nothing now.
+    // The instance is gone: the id its `ready` gave the user says nothing now,
+    // and neither do the notification settings it stored.
     useAuthStore.getState().forgetMyRow(origin);
+    useNotificationSettingsStore.getState().forgetOrigin(origin);
 
     // Collect channel IDs before set() for chatStore cleanup
     const currentState = get();

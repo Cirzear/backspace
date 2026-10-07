@@ -51,6 +51,7 @@ import {
 } from './recovery';
 import { migrateUserData } from './userDataMigration';
 import { isNavigationAllowed } from './navigationPolicy';
+import { NotificationRetainer } from './notificationRetention';
 import {
   screenSharePickerMode,
   isPendingSelectionFresh,
@@ -529,6 +530,13 @@ function createTray(): void {
 
 // ─── Notifications ──────────────────────────────────────────────────────────
 
+/**
+ * Every shown notification stays referenced until it is clicked, closed or
+ * fails. Without it the object can be garbage-collected while the toast is
+ * still up, and on Windows the click is then dropped (#394).
+ */
+const shownNotifications = new NotificationRetainer<Notification>();
+
 function showNotification(title: string, body: string, onClick?: () => void): void {
   if (!Notification.isSupported()) return;
   const notification = new Notification({ title, body, silent: false });
@@ -536,6 +544,10 @@ function showNotification(title: string, body: string, onClick?: () => void): vo
     mainWindow?.show();
     mainWindow?.focus();
   }));
+  notification.on('failed', (_event, error) => {
+    console.warn('[notifications] a notification could not be shown:', error);
+  });
+  shownNotifications.retain(notification);
   notification.show();
 }
 

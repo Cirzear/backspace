@@ -19,6 +19,7 @@ import { presenceSubjectOf, readyActivityEntries, readyRowIndex } from '../utils
 import { useDiscoverStore } from '../stores/discoverStore';
 import { useFederationStore } from '../stores/federationStore';
 import { notePendingOriginReady } from '../stores/pendingMessageRehydrate';
+import { useNotificationSettingsStore } from '../stores/notificationSettingsStore';
 import { detectClientKind } from '../platform/clientKind';
 import { ConnectionState as LiveKitConnectionState } from 'livekit-client';
 
@@ -232,6 +233,9 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
       populateFromReady(origin, event.spaces, event.folders, event.dmChannels, event.spaceLayout, event.layoutUpdatedAt);
       // Pending messages restored at boot wait for the ready that lists their channel.
       notePendingOriginReady(origin);
+      // This instance's notification settings for the spaces it hosts, read
+      // by the alert filter (docs/systems/sounds.md).
+      void useNotificationSettingsStore.getState().load(origin);
 
       // The user's own chosen status (utils/selfStatus.ts): take it from this
       // socket when it is the owner's report (the true home, for a session on
@@ -1252,6 +1256,13 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
 
     case 'channel_layout_updated': {
       useSpaceStore.getState().applyChannelLayout(event.spaceId, origin, event.channels, event.categories);
+      break;
+    }
+
+    case 'notification_settings_updated': {
+      // Settings live on the instance that hosts the space, so the socket
+      // that delivered the change is the origin they belong to.
+      useNotificationSettingsStore.getState().apply(origin, event.setting);
       break;
     }
 
