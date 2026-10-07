@@ -151,6 +151,20 @@ handler alike, so both paths reach the same audience. (`reaction_added` and
 | `channel_layout_updated` | spaceId, channels[], categories[] | space |
 | `space_access_changed` | spaceId | space |
 | `space_layout_updated` | layout[], folders[], updatedAt? | user |
+| `notification_settings_updated` | setting: NotificationSetting | user (all of their sockets on this instance) |
+
+`notification_settings_updated` follows every successful
+`PATCH /spaces/:spaceId/notification-settings` and
+`PATCH /channels/:channelId/notification-settings` (api.md, "Notification
+settings"), including to the socket of the session that made the change. It
+names the instance's own ids; the client files it under the origin of the
+socket that delivered it, which is the instance that hosts the space
+(`notificationSettingsStore.apply`), and keeps the newer `updatedAt` when
+several sources disagree. A setting with `level` null and `muted` false was
+cleared. Clients load the full list with `GET /users/@me/notification-settings`
+when each instance's `ready` arrives; the `ready` payload itself does not
+carry it. Mixed versions: an old client ignores the event; a new client on an
+old server gets a 404 from the list route, logs it and uses the defaults.
 
 `space_access_changed` follows any change to the space's roles or to a
 member's roles: `POST`, `PATCH`, `DELETE /spaces/:id/roles[/:rid]`,

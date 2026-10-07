@@ -21,6 +21,12 @@ Source files:
 - Settings: `packages/web/src/stores/voiceStore.ts`
   (`soundEffectVolume`, `messageSoundAllChannels`),
   `packages/web/src/components/modals/settingsPanels/VoicePanel.tsx`
+- Per-space and per-channel notification settings:
+  `packages/web/src/stores/notificationSettingsStore.ts`,
+  `packages/web/src/hooks/useNotificationSettings.ts`,
+  `packages/web/src/components/notifications/`, server
+  `packages/server/src/routes/notificationSettings.ts`, shared rule
+  `resolveChannelNotificationPolicy` in `packages/shared/src/types.ts`
 
 ---
 
@@ -55,9 +61,19 @@ rule `isMessageAlert` in `utils/notificationFilters.ts`. `SoundController`
 calls it before `message.ogg` and `NotificationController` calls it before the
 new-message OS notification, so the two outputs cannot drift apart.
 
-**Rule.** Never for the user's own message. Otherwise yes for a DM, and yes for
-a message whose content mentions the user (`<@id>`). Every other message does
-not alert.
+**Rule.** Never for the user's own message. Otherwise always for a DM. For a
+space channel it follows the channel's notification policy (below): never
+while the channel or its space is muted, never on `nothing` (mentions
+included), always on `all`, and on `mentions` (the default) only for a message
+whose content mentions the user (`<@id>`).
+
+| Channel policy | Plain message | Mentions the user | `messageSoundAllChannels` on (sound only) |
+|---|---|---|---|
+| `all` | alerts | alerts | alerts |
+| `mentions` (default) | no | alerts | alerts |
+| `nothing` | no | no | no |
+| muted (any level) | no | no | no |
+| DM (any setting) | alerts | alerts | alerts |
 
 **Whose message, whose mention.** Both are decided with the channel's origin
 (`getChannelOrigin`). The author is the user when `isMe(author, origin)` holds
@@ -71,16 +87,78 @@ there and miss mentions.
 
 **The every-message preference.** `messageSoundAllChannels` ("Play sound for
 every message") widens the sound only. `SoundController` passes it as
-`everyMessage`; `NotificationController` does not, so OS notifications stay on
-DMs and mentions whatever the preference says.
-
-**Per-channel and per-space settings.** There are none today: no channel or
-space mute and no notification level. When one is added it belongs in
-`messageAlertsUser`, so both outputs follow it.
+`everyMessage`; `NotificationController` does not, so OS notifications follow
+the channel policy whatever the preference says. It widens a channel on
+`mentions` only: a channel the user set to `nothing`, or muted, stays silent,
+because that choice is about the one channel and the preference is a general
+one.
 
 **Order.** The predicate decides first, then Do Not Disturb (below) withholds
 what it allowed. A batch of events raises at most one sound and at most one
 notification, for the first message that alerts.
+
+**Desktop clicks.** The main process keeps each native notification
+referenced until it is clicked or closed, so Windows does not drop its click
+(desktop.md, "Notifications").
+
+---
+
+## Notification settings
+
+Per-space and per-channel settings decide which space messages alert. DMs are
+not governed by them.
+
+**Values.** A level, `all` | `mentions` | `nothing`, and a mute: off, or on
+until a time (1 h, 8 h, 24 h from when it was set, server clock) or until
+lifted. A space's level defaults to `mentions`; a channel's level is "not
+chosen" until set, and then it inherits its space's. A channel is muted while
+its own mute or its space's is in force. `resolveChannelNotificationPolicy`
+in `@backspace/shared` holds the inheritance and mute rules in one place.
+
+**Where they live.** On the instance that hosts the space, in
+`notification_settings` (database.md), keyed by the user's row there: for a
+space on a remote instance that is the user's account on that instance,
+never their home id. The client reaches it through origin routing
+(`getApiForOrigin` of the space's origin). Routes: api.md, "Notification
+settings". Every change is pushed as `notification_settings_updated` to the
+user's sockets on that instance (websocket.md), so their other sessions there
+follow at once. Sessions on other devices that connect later read the list
+when that instance's `ready` arrives.
+
+**Client.** `stores/notificationSettingsStore.ts` keeps every connected
+instance's settings, keyed by origin and id (ids are per instance). Each
+instance's list is loaded on its `ready`; pushes and the response to the
+user's own change are merged last-write-wins on the server's `updatedAt`, and
+a push that lands while a list is loading is merged over the list rather than
+lost. The entries of an instance go when it is removed
+(`removeInstanceSpaces`) and all of them on sign-out (`resetUserStores`). One
+timer fires at the nearest end of a timed mute and bumps the store's `clock`,
+so the muted indicator and the open controls update at that moment; the
+filter itself compares `mutedUntil` with the time of each message.
+`hooks/useNotificationSettings.ts` resolves a channel's origin and space from
+the space-channel index (`getChannelNotificationPolicy` for event-time code,
+`useChannelNotificationPolicy` for render). A channel the index does not know
+yet resolves to the defaults.
+
+**Applied in one place.** `messageAlertsUser` reads the channel's policy and
+passes it to `isMessageAlert`, so `message.ogg` and the OS notification follow
+the same settings. Do Not Disturb then applies on top, as before.
+
+**UI.**
+- The channel header's bell (`ChannelNotificationButton`) opens a `.glass`
+  popover (`ChannelNotificationPopover`) with the channel's level (including
+  "Space default (…)") and the mute options; while muted it shows the end and
+  an Unmute button. The bell is crossed out while the channel is muted.
+- "Notification settings" in the space context menu (desktop and mobile) opens
+  the same controls for the space in a `.glass-modal` dialog
+  (`NotificationSettingsModal`). On mobile, which has no header bell, the
+  channel menu has the same entry for the channel.
+- A muted channel shows a crossed-out bell in the channel list
+  (`ChannelMutedIndicator`), for its own mute or its space's. Unread state and
+  badges are unchanged by settings, as they are by Do Not Disturb.
+
+The controls live in `components/notifications/`. Voice channels have no
+bell; their text chat follows the space setting.
 
 ---
 

@@ -633,5 +633,31 @@
     "loading": "Loading members…",
     "success": "Ownership transferred to {{name}}",
     "failed": "Failed to transfer ownership"
+  },
+  "notifications": {
+    "open": "Notification settings",
+    "channelTitle": "Notifications for #{{channel}}",
+    "spaceTitle": "Notifications for {{space}}",
+    "levelHeading": "Notify me about",
+    "level": {
+      "all": "All messages",
+      "mentions": "Only @mentions",
+      "nothing": "Nothing",
+      "inherit": "Space default ({{level}})"
+    },
+    "dmNote": "Direct messages always notify you.",
+    "muteHeading": "Mute",
+    "mute": {
+      "oneHour": "For 1 hour",
+      "eightHours": "For 8 hours",
+      "oneDay": "For 24 hours",
+      "indefinite": "Until I unmute"
+    },
+    "unmute": "Unmute",
+    "mutedUntil": "Muted until {{time}}",
+    "mutedIndefinitely": "Muted until you unmute",
+    "spaceMuted": "This space is muted, so its channels are too.",
+    "mutedIndicator": "Muted",
+    "saveFailed": "Could not save notification settings"
   }
 }

@@ -1,5 +1,8 @@
 import { isErrorCode, type ErrorCode, type ErrorDetails } from '@backspace/shared/src/errors';
 import type {
+  NotificationSetting,
+  NotificationSettingsResponse,
+  UpdateNotificationSettingRequest,
   AuthResponse,
   PeerEnsureRequest,
   RegisterRequest,
@@ -115,6 +118,41 @@ export interface HistoryPageAfter<T> {
   forward: boolean;
 }
 
+/**
+ * A channel or category override write. `version` is the version of the row
+ * the edit started from (`overrideVersion`, permissions.md "Concurrent
+ * edits"); the server answers 409 `overrides_conflict` when the row has
+ * changed since. A server from before the check ignores it.
+ */
+export interface OverrideWriteBody {
+  targetType: string;
+  targetId: string;
+  allow: string;
+  deny: string;
+  version?: string;
+}
+
+/**
+ * A role update. `permissionsVersion` is the version of the permissions the
+ * edit started from (`rolePermissionsVersion`); with `permissions`, the server
+ * answers 409 `role_permissions_conflict` when the role's permissions have
+ * changed since.
+ */
+export interface RoleUpdateBody {
+  name?: string;
+  color?: string;
+  position?: number;
+  above?: string;
+  below?: string;
+  permissions?: string;
+  permissionsVersion?: string;
+}
+
+/** The `?version=` of an override delete, or nothing when there is no version to send. */
+function versionQuery(version: string | undefined): string {
+  return version === undefined ? '' : `?${new URLSearchParams({ version }).toString()}`;
+}
+
 /** The parts of an error body the client reads; see HttpError.fromBody for the vintages. */
 function readErrorBody(body: unknown): { errorText?: string; code?: ErrorCode; details?: ErrorDetails } {
   const record = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {};
@@ -203,6 +241,16 @@ export class BackspaceApiClient {
     update: (data: { items: SpaceLayoutItem[]; folders: Record<string, { name: string | null; color: string | null; spaceIds: string[] }>; updatedAt?: number }) => Promise<{ items: SpaceLayoutItem[]; folders: SpaceFolder[]; updatedAt?: number }>;
   };
 
+  /**
+   * The signed-in user's notification settings on this instance. Called on
+   * the client of the instance that hosts the space (origin routing).
+   */
+  readonly notificationSettings: {
+    list: () => Promise<NotificationSettingsResponse>;
+    updateSpace: (spaceId: string, data: UpdateNotificationSettingRequest) => Promise<NotificationSetting>;
+    updateChannel: (channelId: string, data: UpdateNotificationSettingRequest) => Promise<NotificationSetting>;
+  };
+
   readonly spaces: {
     list: () => Promise<Space[]>;
     get: (id: string) => Promise<SpaceWithChannelsAndMembers>;
@@ -231,9 +279,9 @@ export class BackspaceApiClient {
     messagesAround: (id: string, messageId: string, limit?: number) => Promise<MessageWithUser[]>;
     messagesAfter: (id: string, after: string, limit?: number) => Promise<HistoryPageAfter<MessageWithUser>>;
     sendMessage: (channelId: string, data: CreateMessageRequest) => Promise<MessageWithUser>;
-    getOverrides: (channelId: string) => Promise<{ channelId: string; targetType: string; targetId: string; allow: string; deny: string }[]>;
-    putOverride: (channelId: string, data: { targetType: string; targetId: string; allow: string; deny: string }) => Promise<{ success: boolean }>;
-    deleteOverride: (channelId: string, targetType: string, targetId: string) => Promise<{ success: boolean }>;
+    getOverrides: (channelId: string) => Promise<{ channelId: string; targetType: string; targetId: string; allow: string; deny: string; version?: string }[]>;
+    putOverride: (channelId: string, data: OverrideWriteBody) => Promise<{ success: boolean; version?: string }>;
+    deleteOverride: (channelId: string, targetType: string, targetId: string, version?: string) => Promise<{ success: boolean }>;
     updateLayout: (spaceId: string, data: { channels: Array<{ id: string; position: number; categoryId: string | null }>; categories: Array<{ id: string; position: number }> }) => Promise<{ success: boolean }>;
   };
 
@@ -241,9 +289,9 @@ export class BackspaceApiClient {
     create: (spaceId: string, name: string) => Promise<ChannelCategory>;
     update: (id: string, data: { name?: string; position?: number }) => Promise<ChannelCategory>;
     delete: (id: string) => Promise<{ success: boolean }>;
-    getOverrides: (categoryId: string) => Promise<{ categoryId: string; targetType: string; targetId: string; allow: string; deny: string }[]>;
-    putOverride: (categoryId: string, data: { targetType: string; targetId: string; allow: string; deny: string }) => Promise<{ success: boolean }>;
-    deleteOverride: (categoryId: string, targetType: string, targetId: string) => Promise<{ success: boolean }>;
+    getOverrides: (categoryId: string) => Promise<{ categoryId: string; targetType: string; targetId: string; allow: string; deny: string; version?: string }[]>;
+    putOverride: (categoryId: string, data: OverrideWriteBody) => Promise<{ success: boolean; version?: string }>;
+    deleteOverride: (categoryId: string, targetType: string, targetId: string, version?: string) => Promise<{ success: boolean }>;
   };
 
   readonly messages: {
@@ -310,7 +358,7 @@ export class BackspaceApiClient {
 
   readonly roles: {
     create: (spaceId: string, data: { name: string; color?: string; permissions?: string }) => Promise<Role>;
-    update: (spaceId: string, roleId: string, data: { name?: string; color?: string; position?: number; above?: string; below?: string; permissions?: string }) => Promise<Role>;
+    update: (spaceId: string, roleId: string, data: RoleUpdateBody) => Promise<Role>;
     delete: (spaceId: string, roleId: string) => Promise<{ success: boolean }>;
   };
 
@@ -527,6 +575,14 @@ export class BackspaceApiClient {
         request<{ items: SpaceLayoutItem[]; folders: SpaceFolder[]; updatedAt?: number }>('PUT', '/users/@me/space-layout', data),
     };
 
+    this.notificationSettings = {
+      list: () => request<NotificationSettingsResponse>('GET', '/users/@me/notification-settings'),
+      updateSpace: (spaceId, data) =>
+        request<NotificationSetting>('PATCH', `/spaces/${encodeURIComponent(spaceId)}/notification-settings`, data),
+      updateChannel: (channelId, data) =>
+        request<NotificationSetting>('PATCH', `/channels/${encodeURIComponent(channelId)}/notification-settings`, data),
+    };
+
     this.spaces = {
       list: () => request<Space[]>('GET', '/spaces'),
       get: (id: string) => request<SpaceWithChannelsAndMembers>('GET', `/spaces/${id}`),
@@ -576,13 +632,13 @@ export class BackspaceApiClient {
       sendMessage: (channelId: string, data: CreateMessageRequest) =>
         request<MessageWithUser>('POST', `/channels/${channelId}/messages`, data),
       getOverrides: (channelId: string) =>
-        request<{ channelId: string; targetType: string; targetId: string; allow: string; deny: string }[]>(
+        request<{ channelId: string; targetType: string; targetId: string; allow: string; deny: string; version?: string }[]>(
           'GET', `/channels/${channelId}/overrides`
         ),
-      putOverride: (channelId: string, data: { targetType: string; targetId: string; allow: string; deny: string }) =>
-        request<{ success: boolean }>('PUT', `/channels/${channelId}/overrides`, data),
-      deleteOverride: (channelId: string, targetType: string, targetId: string) =>
-        request<{ success: boolean }>('DELETE', `/channels/${channelId}/overrides/${targetType}/${targetId}`),
+      putOverride: (channelId: string, data: OverrideWriteBody) =>
+        request<{ success: boolean; version?: string }>('PUT', `/channels/${channelId}/overrides`, data),
+      deleteOverride: (channelId: string, targetType: string, targetId: string, version?: string) =>
+        request<{ success: boolean }>('DELETE', `/channels/${channelId}/overrides/${targetType}/${targetId}${versionQuery(version)}`),
       updateLayout: (spaceId: string, data: { channels: Array<{ id: string; position: number; categoryId: string | null }>; categories: Array<{ id: string; position: number }> }) =>
         request<{ success: boolean }>('PATCH', `/spaces/${spaceId}/channel-layout`, data),
     };
@@ -595,13 +651,13 @@ export class BackspaceApiClient {
       delete: (id: string) =>
         request<{ success: boolean }>('DELETE', `/categories/${id}`),
       getOverrides: (categoryId: string) =>
-        request<{ categoryId: string; targetType: string; targetId: string; allow: string; deny: string }[]>(
+        request<{ categoryId: string; targetType: string; targetId: string; allow: string; deny: string; version?: string }[]>(
           'GET', `/categories/${categoryId}/overrides`
         ),
-      putOverride: (categoryId: string, data: { targetType: string; targetId: string; allow: string; deny: string }) =>
-        request<{ success: boolean }>('PUT', `/categories/${categoryId}/overrides`, data),
-      deleteOverride: (categoryId: string, targetType: string, targetId: string) =>
-        request<{ success: boolean }>('DELETE', `/categories/${categoryId}/overrides/${targetType}/${targetId}`),
+      putOverride: (categoryId: string, data: OverrideWriteBody) =>
+        request<{ success: boolean; version?: string }>('PUT', `/categories/${categoryId}/overrides`, data),
+      deleteOverride: (categoryId: string, targetType: string, targetId: string, version?: string) =>
+        request<{ success: boolean }>('DELETE', `/categories/${categoryId}/overrides/${targetType}/${targetId}${versionQuery(version)}`),
     };
 
     this.messages = {
@@ -709,7 +765,7 @@ export class BackspaceApiClient {
     this.roles = {
       create: (spaceId: string, data: { name: string; color?: string; permissions?: string }) =>
         request<Role>('POST', `/spaces/${spaceId}/roles`, data),
-      update: (spaceId: string, roleId: string, data: { name?: string; color?: string; position?: number; above?: string; below?: string; permissions?: string }) =>
+      update: (spaceId: string, roleId: string, data: RoleUpdateBody) =>
         request<Role>('PATCH', `/spaces/${spaceId}/roles/${roleId}`, data),
       delete: (spaceId: string, roleId: string) =>
         request<{ success: boolean }>('DELETE', `/spaces/${spaceId}/roles/${roleId}`),

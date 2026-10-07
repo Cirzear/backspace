@@ -12,7 +12,7 @@ vi.mock('../../audio/AudioManager', () => ({
 
 import { PermissionsEditor, type Override } from './PermissionsEditor';
 import { useSpaceStore } from '../../stores/spaceStore';
-import { PermissionBits, permissionsToString } from '../../utils/permissions';
+import { PermissionBits, permissionsToString, overrideVersion } from '../../utils/permissions';
 import type { PermissionDef } from './OverrideEntry';
 
 const SPACE_ID = 'space-1';
@@ -108,7 +108,9 @@ describe('PermissionsEditor: removing a role override (#290)', () => {
     expect(screen.queryByRole('button', { name: /^Moderators/ })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
-    await waitFor(() => expect(deleteOverride).toHaveBeenCalledWith('role', 'r-mod'));
+    await waitFor(() => expect(deleteOverride).toHaveBeenCalledWith(
+      'role', 'r-mod', overrideVersion(override('r-mod', PermissionBits.SEND_MESSAGES, 0n)),
+    ));
     expect(deleteOverride).toHaveBeenCalledTimes(1);
     expect(putOverride).not.toHaveBeenCalled();
   });
@@ -134,7 +136,9 @@ describe('PermissionsEditor: removing the @everyone override (#314)', () => {
     expect(deleteOverride).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(deleteOverride).toHaveBeenCalledWith('role', SPACE_ID));
+    await waitFor(() => expect(deleteOverride).toHaveBeenCalledWith(
+      'role', SPACE_ID, overrideVersion(override(SPACE_ID, 0n, PermissionBits.SEND_MESSAGES)),
+    ));
     expect(deleteOverride).toHaveBeenCalledTimes(1);
     expect(putOverride).not.toHaveBeenCalled();
   });
@@ -167,7 +171,11 @@ describe('PermissionsEditor: the add pickers follow the staged rows (#314)', () 
     // Re-added as a fresh, empty override in the same edit.
     expect(screen.getByRole('button', { name: 'Remove override for Moderators' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(putOverride).toHaveBeenCalledWith({ targetType: 'role', targetId: 'r-mod', allow: '0', deny: '0' }));
+    // The re-added row replaces the saved one, so it names the saved row's version.
+    await waitFor(() => expect(putOverride).toHaveBeenCalledWith({
+      targetType: 'role', targetId: 'r-mod', allow: '0', deny: '0',
+      version: overrideVersion(override('r-mod', PermissionBits.SEND_MESSAGES, 0n)),
+    }));
     expect(deleteOverride).not.toHaveBeenCalled();
   });
 
@@ -185,7 +193,9 @@ describe('PermissionsEditor: the add pickers follow the staged rows (#314)', () 
 
     expect(screen.queryByRole('button', { name: /^Moderators/ })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(deleteOverride).toHaveBeenCalledWith('role', 'r-mod'));
+    await waitFor(() => expect(deleteOverride).toHaveBeenCalledWith(
+      'role', 'r-mod', overrideVersion(override('r-mod', PermissionBits.SEND_MESSAGES, 0n)),
+    ));
     expect(putOverride).not.toHaveBeenCalled();
   });
 

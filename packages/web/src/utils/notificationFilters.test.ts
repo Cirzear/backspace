@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { isAlertAllowed, isMessageAlert } from './notificationFilters';
+import { isAlertAllowed, isMessageAlert, type MessageAlertInput } from './notificationFilters';
+
+/** A space channel nobody configured: mentions, not muted. */
+const DEFAULT_POLICY: MessageAlertInput['notification'] = { level: 'mentions', muted: false };
 
 describe('isMessageAlert', () => {
   it('does not alert for my token inside code in a space channel', () => {
@@ -10,6 +13,7 @@ describe('isMessageAlert', () => {
         isDmChannel: false,
         content: 'the syntax is `<@local-snowflake>`',
         allChannels: false,
+        notification: DEFAULT_POLICY,
       }),
     ).toBe(false);
   });
@@ -24,6 +28,7 @@ describe('isMessageAlert', () => {
         isDmChannel: true,
         content: 'hi',
         allChannels: false,
+        notification: DEFAULT_POLICY,
       }),
     ).toBe(false);
   });
@@ -36,6 +41,7 @@ describe('isMessageAlert', () => {
         isDmChannel: true,
         content: 'yo',
         allChannels: false,
+        notification: DEFAULT_POLICY,
       }),
     ).toBe(true);
   });
@@ -48,6 +54,7 @@ describe('isMessageAlert', () => {
         isDmChannel: false,
         content: 'general chatter',
         allChannels: false,
+        notification: DEFAULT_POLICY,
       }),
     ).toBe(false);
   });
@@ -60,6 +67,7 @@ describe('isMessageAlert', () => {
         isDmChannel: false,
         content: 'hey <@local-snowflake> look',
         allChannels: false,
+        notification: DEFAULT_POLICY,
       }),
     ).toBe(true);
   });
@@ -72,6 +80,7 @@ describe('isMessageAlert', () => {
         isDmChannel: false,
         content: 'pinging <@third-party>',
         allChannels: false,
+        notification: DEFAULT_POLICY,
       }),
     ).toBe(false);
   });
@@ -84,6 +93,7 @@ describe('isMessageAlert', () => {
         isDmChannel: false,
         content: 'general chatter',
         allChannels: true,
+        notification: DEFAULT_POLICY,
       }),
     ).toBe(true);
   });
@@ -96,6 +106,7 @@ describe('isMessageAlert', () => {
         isDmChannel: false,
         content: 'my own message',
         allChannels: true,
+        notification: DEFAULT_POLICY,
       }),
     ).toBe(false);
   });
@@ -108,6 +119,7 @@ describe('isMessageAlert', () => {
         isDmChannel: true,
         content: null,
         allChannels: false,
+        notification: DEFAULT_POLICY,
       }),
     ).toBe(true);
     expect(
@@ -117,8 +129,94 @@ describe('isMessageAlert', () => {
         isDmChannel: false,
         content: null,
         allChannels: false,
+        notification: DEFAULT_POLICY,
       }),
     ).toBe(false);
+  });
+});
+
+describe('isMessageAlert with notification settings', () => {
+  const myId = 'local-snowflake';
+  const PLAIN = 'general chatter';
+  const MENTION = 'hey <@local-snowflake>';
+
+  type Level = MessageAlertInput['notification']['level'];
+  type Row = [Level, boolean, 'plain' | 'mention', boolean, boolean];
+
+  // level, muted, message, allChannels (sound preference), expected
+  const matrix: Row[] = [
+    ['all', false, 'plain', false, true],
+    ['all', false, 'mention', false, true],
+    ['all', false, 'plain', true, true],
+    ['mentions', false, 'plain', false, false],
+    ['mentions', false, 'mention', false, true],
+    ['mentions', false, 'plain', true, true],
+    ['nothing', false, 'plain', false, false],
+    ['nothing', false, 'mention', false, false],
+    ['nothing', false, 'plain', true, false],
+    ['nothing', false, 'mention', true, false],
+    ['all', true, 'plain', false, false],
+    ['all', true, 'mention', false, false],
+    ['mentions', true, 'mention', false, false],
+    ['mentions', true, 'plain', true, false],
+    ['nothing', true, 'mention', true, false],
+  ];
+
+  it.each(matrix)('space channel on %s, muted=%s, %s message, allChannels=%s → %s', (level, muted, kind, allChannels, expected) => {
+    expect(
+      isMessageAlert({
+        authoredBySelf: false,
+        myId,
+        isDmChannel: false,
+        content: kind === 'mention' ? MENTION : PLAIN,
+        allChannels,
+        notification: { level, muted },
+      }),
+    ).toBe(expected);
+  });
+
+  it.each([
+    ['all', false],
+    ['nothing', false],
+    ['mentions', true],
+    ['nothing', true],
+  ] as const)('a DM alerts whatever the policy says (%s, muted=%s)', (level, muted) => {
+    expect(
+      isMessageAlert({
+        authoredBySelf: false,
+        myId,
+        isDmChannel: true,
+        content: PLAIN,
+        allChannels: false,
+        notification: { level, muted },
+      }),
+    ).toBe(true);
+  });
+
+  it('never alerts for the user\'s own message, even on all', () => {
+    expect(
+      isMessageAlert({
+        authoredBySelf: true,
+        myId,
+        isDmChannel: false,
+        content: MENTION,
+        allChannels: true,
+        notification: { level: 'all', muted: false },
+      }),
+    ).toBe(false);
+  });
+
+  it('alerts on all for an attachment-only message', () => {
+    expect(
+      isMessageAlert({
+        authoredBySelf: false,
+        myId,
+        isDmChannel: false,
+        content: null,
+        allChannels: false,
+        notification: { level: 'all', muted: false },
+      }),
+    ).toBe(true);
   });
 });
 

@@ -1,7 +1,8 @@
 import { act, cleanup, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import type { DmChannel, MessageWithUser, User } from '@backspace/shared';
+import type { DmChannel, MessageWithUser, NotificationSetting, User } from '@backspace/shared';
+import { notificationSettingKey, useNotificationSettingsStore } from '../stores/notificationSettingsStore';
 import { NotificationController } from './NotificationController';
 import { sendNotification } from '../platform/notifications';
 import { useAuthStore } from '../stores/authStore';
@@ -236,6 +237,81 @@ describe('which messages raise a notification (#317)', () => {
     mountSettled('dnd');
     act(() => useChatStore.setState({ realtimeMessageEvents: [event('m1', 'general', 'Look <@me>')] }));
     expect(BrowserNotification.instances).toHaveLength(0);
+  });
+});
+
+describe('notification settings (#394)', () => {
+  const event = (id: string, channelId: string, content: string) => ({
+    channelId,
+    message: { id, channelId, userId: 'other', content } as MessageWithUser,
+  });
+  const setting = (over: Partial<NotificationSetting> & Pick<NotificationSetting, 'spaceId'>): NotificationSetting => ({
+    channelId: null, level: null, muted: false, mutedUntil: null, updatedAt: 1, ...over,
+  });
+
+  function mountWith(entries: Array<[string, NotificationSetting]>) {
+    useNotificationSettingsStore.setState({ settings: new Map(entries) });
+    useSpaceStore.setState({
+      channelToSpaceMap: new Map([['general', 'home-space'], ['remote-chat', 'remote-space']]),
+      channelOriginMap: new Map([['remote-chat', 'https://remote.example']]),
+      dmChannels: [{ id: 'dm' } as DmChannel],
+    });
+    useAuthStore.getState().recordMyRow('https://remote.example', 'remote-me');
+    mount();
+    act(() => vi.advanceTimersByTime(1000));
+  }
+
+  afterEach(() => {
+    useNotificationSettingsStore.getState().reset();
+  });
+
+  it('raises one for a plain message in a channel set to all', () => {
+    mountWith([[notificationSettingKey('', { spaceId: 'home-space', channelId: 'general' }), setting({ spaceId: 'home-space', channelId: 'general', level: 'all' })]]);
+    act(() => useChatStore.setState({ realtimeMessageEvents: [event('m1', 'general', 'Hello everyone')] }));
+    expect(BrowserNotification.instances).toHaveLength(1);
+  });
+
+  it('raises one for a plain message when the space is set to all and the channel inherits', () => {
+    mountWith([[notificationSettingKey('', { spaceId: 'home-space', channelId: null }), setting({ spaceId: 'home-space', level: 'all' })]]);
+    act(() => useChatStore.setState({ realtimeMessageEvents: [event('m1', 'general', 'Hello everyone')] }));
+    expect(BrowserNotification.instances).toHaveLength(1);
+  });
+
+  it('raises none for a mention in a channel set to nothing', () => {
+    mountWith([[notificationSettingKey('', { spaceId: 'home-space', channelId: 'general' }), setting({ spaceId: 'home-space', channelId: 'general', level: 'nothing' })]]);
+    act(() => useChatStore.setState({ realtimeMessageEvents: [event('m1', 'general', 'Look <@me>')] }));
+    expect(BrowserNotification.instances).toHaveLength(0);
+  });
+
+  it('raises none for a mention while the remote space is muted, reading the remote instance\'s settings', () => {
+    const key = notificationSettingKey('https://remote.example', { spaceId: 'remote-space', channelId: null });
+    mountWith([[key, setting({ spaceId: 'remote-space', muted: true, mutedUntil: null })]]);
+    act(() => useChatStore.setState({ realtimeMessageEvents: [event('m1', 'remote-chat', 'Look <@remote-me>')] }));
+    expect(BrowserNotification.instances).toHaveLength(0);
+  });
+
+  it('does not apply the home instance\'s settings to a remote space with the same id', () => {
+    // Ids are per instance: a home space that happens to share the id is muted, the remote one is not.
+    const key = notificationSettingKey('', { spaceId: 'remote-space', channelId: null });
+    mountWith([[key, setting({ spaceId: 'remote-space', muted: true })]]);
+    act(() => useChatStore.setState({ realtimeMessageEvents: [event('m1', 'remote-chat', 'Look <@remote-me>')] }));
+    expect(BrowserNotification.instances).toHaveLength(1);
+  });
+
+  it('alerts again once a timed mute has ended', () => {
+    const now = Date.now();
+    mountWith([[notificationSettingKey('', { spaceId: 'home-space', channelId: 'general' }), setting({ spaceId: 'home-space', channelId: 'general', muted: true, mutedUntil: now + 60_000 })]]);
+    act(() => useChatStore.setState({ realtimeMessageEvents: [event('m1', 'general', 'Look <@me>')] }));
+    expect(BrowserNotification.instances).toHaveLength(0);
+    act(() => vi.advanceTimersByTime(61_000));
+    act(() => useChatStore.setState({ realtimeMessageEvents: [event('m1', 'general', 'Look <@me>'), event('m2', 'general', 'Look <@me> again')] }));
+    expect(BrowserNotification.instances).toHaveLength(1);
+  });
+
+  it('leaves DMs alerting whatever the spaces are set to', () => {
+    mountWith([[notificationSettingKey('', { spaceId: 'home-space', channelId: null }), setting({ spaceId: 'home-space', level: 'nothing', muted: true })]]);
+    act(() => useChatStore.setState({ realtimeMessageEvents: [event('m1', 'dm', 'Hello')] }));
+    expect(BrowserNotification.instances).toHaveLength(1);
   });
 });
 

@@ -644,5 +644,31 @@
     "loading": "Carregando membros…",
     "success": "Propriedade transferida para {{name}}",
     "failed": "Falha ao transferir a propriedade"
+  },
+  "notifications": {
+    "open": "Configurações de notificação",
+    "channelTitle": "Notificações de #{{channel}}",
+    "spaceTitle": "Notificações de {{space}}",
+    "levelHeading": "Notificar sobre",
+    "level": {
+      "all": "Todas as mensagens",
+      "mentions": "Apenas @menções",
+      "nothing": "Nada",
+      "inherit": "Padrão do espaço ({{level}})"
+    },
+    "dmNote": "Mensagens diretas sempre notificam você.",
+    "muteHeading": "Silenciar",
+    "mute": {
+      "oneHour": "Por 1 hora",
+      "eightHours": "Por 8 horas",
+      "oneDay": "Por 24 horas",
+      "indefinite": "Até eu reativar"
+    },
+    "unmute": "Reativar notificações",
+    "mutedUntil": "Silenciado até {{time}}",
+    "mutedIndefinitely": "Silenciado até você reativar",
+    "spaceMuted": "Este espaço está silenciado, então os canais dele também estão.",
+    "mutedIndicator": "Silenciado",
+    "saveFailed": "Não foi possível salvar as configurações de notificação"
   }
 }

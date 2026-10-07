@@ -102,7 +102,7 @@ Rules:
 | `chat` | Message list, composer, attachments, embeds, reactions, replies, typing, jump-to-message |
 | `dm` | DM list, group DM management, DM calls, DM system messages |
 | `voice` | Voice channel controls, screen share, stream tiles, device pickers |
-| `spaces` | Space, category and channel CRUD, invites, discovery, membership, bans, roles; the Explore page's Inner and Outer Space sections, the connect-and-join dialog, the connections-that-need-attention chips and the per-space directory switch (`explore.inner.*`, `explore.outer.*`, `explore.connect.*`, `explore.connections.*`, `settings.discovery.directory.*`) |
+| `spaces` | Space, category and channel CRUD, invites, discovery, membership, bans, roles; the Explore page's Inner and Outer Space sections, the connect-and-join dialog, the connections-that-need-attention chips and the per-space directory switch (`explore.inner.*`, `explore.outer.*`, `explore.connect.*`, `explore.connections.*`, `settings.discovery.directory.*`); the per-space and per-channel notification settings: the bell popover, the dialog, the menu entry and the muted indicator (`notifications.*`; the level and mute-duration labels are closed unions mapped by `switch` in `NotificationSettingsControls.tsx`, never built from the value) |
 | `settings` | User settings modal and its panels (account, voice, privacy, connections, keybinds, desktop) |
 | `admin` | Instance settings panels (general, registration, users, storage, streaming, updates, federation); the space-discovery ladder and the directory status line (`general.discovery.*`, `general.directory.*`) |
 | `federation` | Connected instances UI, peering requests, identity attach and detach |
@@ -337,6 +337,12 @@ The space directory ([directory.md](directory.md)) added four codes:
 section shows this text as its unreachable state), `directory_private_space`
 (`directoryListed: true` on a private space) and
 `directory_requires_discovery` (`directoryEnabled: true` with discovery off).
+
+Concurrent permission edits ([permissions.md](permissions.md), "Concurrent
+edits") added two `409` codes: `overrides_conflict` (a channel or category
+override changed since the editor loaded it) and `role_permissions_conflict`
+(a role's permissions did). Their catalog text tells the user to review and
+save again; the editors reload before showing it.
 
 One code is minted by the client and never by a route:
 `federation_different_password`, carried by `RemoteLoginRequiredError` when a
