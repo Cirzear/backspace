@@ -167,7 +167,7 @@ export function useLiveKit() {
     // successful publish until the share stops, and so across a republish.
     const localShareLive = useVoiceStore.getState().isScreenSharing;
 
-    const participants = collectParticipants(r, republishRef.current);
+    const participants = collectParticipants(r, republish ?? null);
     useVoiceStore.getState().setParticipants(participants);
     const nativeSpeaking = participants.some(p => p.isLocal && (useVoiceStore.getState().nativeVoiceActive
       || (p.voicePublisherIdentity && p.voicePublisherIdentity !== p.identity)));
@@ -204,7 +204,7 @@ export function useLiveKit() {
       }
       if (isStreamRepublish(payload)) {
         // The sender's next screen-share unpublish is a codec swap, not the end.
-        republish.announce(participant.identity);
+        republish?.announce(participant.identity);
         return;
       }
     }

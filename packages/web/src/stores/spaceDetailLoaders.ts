@@ -6,7 +6,7 @@ export type RosterChange =
 
 let detailRequestCount = 0;
 /** spaceId → the newest `loadSpaceDetail` started for it. */
-export const newestDetailRequests = new Map<string, { seq: number; result: Promise<Channel[] | undefined> }>();
+export const newestDetailRequests = new Map<string, { seq: number; result: Promise<Channel[] | null> }>();
 
 /** spaceId → the change logs of the loads in flight for it (one per load). */
 export const inFlightRosterLogs = new Map<string, Set<RosterChange[]>>();

@@ -38,7 +38,7 @@ const SCENES: readonly Scene[] = ['space-settings', 'create-space', 'join-space'
 
 const SPACE_ID = 'space-1';
 const SPACE: TaggedSpace = {
-  id: SPACE_ID, name: 'Aether Drift', icon: null, banner: null, avatarColor: 'lavender', ownerId: 'owner',
+  id: SPACE_ID, name: 'Aether Drift', icon: null, banner: null, avatarColor: 'lavender', ownerId: 'owner', ownerTitle: null,
   inviteCode: 'aether', visibility: 'public', directoryListed: false,
   description: 'A calm place for night owls, synth music and long conversations.', createdAt: 1, _instanceOrigin: '',
 };
@@ -149,7 +149,7 @@ async function start(): Promise<void> {
     roles: [EVERYONE],
     members: MEMBERS,
     spacePermissions: new Map([[SPACE_ID, permissionsToString(ALL_PERMISSIONS)]]),
-    loadSpaceDetail: async () => undefined,
+    loadSpaceDetail: async () => null,
   });
   const modal = scene === 'space-settings' ? 'spaceSettings' : scene === 'create-space' ? 'createSpace' : scene === 'join-space' ? 'joinSpace' : null;
   useUIStore.setState({ activeModal: modal, modalData: {} });

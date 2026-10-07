@@ -68,7 +68,7 @@ export function EmojiPicker({ onEmojiSelect, mobile = false, stickers = true }: 
                 : 'text-txt-tertiary hover:bg-interactive-hover hover:text-txt-secondary'
             }`}
           >
-            Emoji
+            {t('composer.emoji')}
           </button>
           <button
             type="button"
@@ -103,7 +103,8 @@ export function EmojiPicker({ onEmojiSelect, mobile = false, stickers = true }: 
         emojiButtonSize={mobile ? 40 : 32}
         dynamicWidth={mobile ? true : false}
         categories={['frequent', 'people', 'nature', 'foods', 'activity', 'places', 'objects', 'symbols', 'flags']}
-      />}
+      />
+      )}
     </div>
   );
 }

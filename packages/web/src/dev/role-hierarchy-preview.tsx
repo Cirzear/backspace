@@ -119,7 +119,7 @@ function seed(): void {
       member(user('plain', 'Tobi', 'offline'), []),
     ],
     spacePermissions: new Map([[SPACE_ID, MODERATION]]),
-    loadSpaceDetail: async () => undefined,
+    loadSpaceDetail: async () => null,
   });
 }
 
@@ -202,7 +202,7 @@ function seedOrder(scene: Scene): void {
       member(user('helper', 'Hana'), [O_HELPERS]),
     ],
     spacePermissions: new Map([[SPACE_ID, MODERATION]]),
-    loadSpaceDetail: async () => undefined,
+    loadSpaceDetail: async () => null,
   });
   // The move call, answered locally: refused in the error scene, applied
   // (the list already shows it) everywhere else.

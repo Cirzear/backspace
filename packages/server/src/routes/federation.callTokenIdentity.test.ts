@@ -144,7 +144,7 @@ describe('dm_call_start: tokens go to the identity they were minted for', () => 
 
     const { buildReadyPayload } = await import('../ws/handler.js');
     const tokenInReady = (userId: string): string | undefined =>
-      buildReadyPayload(userId).activeCalls.find(c => c.federatedCallId === 'fed-r')?.livekitToken;
+      buildReadyPayload(userId).activeCalls.find((c: { federatedCallId?: string | null; livekitToken?: string }) => c.federatedCallId === 'fed-r')?.livekitToken;
     expect(tokenInReady('bob')).toBe('tok-bob');
     expect(tokenInReady('kai-here')).toBeUndefined();
   });

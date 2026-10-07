@@ -18,7 +18,14 @@ import type { PresenceSubject } from '../utils/identity';
 import type { PeerDmChannel } from '../utils/dmConversationKey';
 import type { DmConversations } from './dmConversations';
 import type { SpaceChannelIndex } from './spaceChannels';
-import type { TaggedSpace, UserViewEntry } from './spaceStore';
+export type TaggedSpace = Space & { _instanceOrigin: string; ownerTitle?: string | null };
+
+export interface UserViewEntry {
+  user: User;
+  deliveredBy: string;
+  isHome: boolean;
+  updatedAt: number;
+}
 
 export interface SpaceState {
   spaces: TaggedSpace[];

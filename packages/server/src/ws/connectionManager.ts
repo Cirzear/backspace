@@ -1,12 +1,14 @@
-import type { Activity, ServerEvent } from '@backspace/shared';
+import { ownsChosenStatus, type Activity, type ChosenUserStatus, type ServerEvent } from '@backspace/shared';
 import { and, eq } from 'drizzle-orm';
 import type { WebSocket } from 'ws';
 import { getDb, schema } from '../db/index.js';
 import { computePermissions, PermissionBits } from '../utils/permissions.js';
+import { statusOnConnect, type StatusSourceRow } from '../utils/presenceStatus.js';
 import { collectProfileBroadcastTargetIds } from '../utils/userDeletion.js';
 import { unreadCountEvent } from './channelUnreadCounts.js';
-
+import { showReplicaStatusOnConnect } from './replicaPresence.js';
 import { pushReadyPayloadToConnections } from './readyPayload.js';
+import { buildSpaceVoiceState, type SpaceVoiceStateResult } from './spaceVoiceState.js';
 import { getVoiceRoomElapsedSeconds, MAX_PENDING_VOICE_RECONNECTS, VOICE_RECONNECT_GRACE_MS, type DmRoomMeta, type FederatedCallEntry, type SpaceRoomMeta, type VoiceRoom } from './voiceRoomTypes.js';
 import { WsRateLimiter } from './wsRateLimiter.js';
 import { hasNativeVoiceSocket, removeNativeVoiceSocket, revokeNativeVoiceSessions, syncNativeVoicePermissions } from './nativeVoiceSessions.js';
@@ -193,6 +195,24 @@ class ConnectionManager {
     }
   }
 
+  /**
+   * Publish the status of a connection for `row` that just authenticated and
+   * return it. A row that owns its status shows its chosen one
+   * (`statusOnConnect`); a replicated row's status is written by
+   * `showReplicaStatusOnConnect` (ws/replicaPresence.ts).
+   */
+  publishConnectStatus(row: StatusSourceRow & { id: string }): ChosenUserStatus {
+    if (!ownsChosenStatus(row)) return showReplicaStatusOnConnect(row);
+    const status = statusOnConnect(row);
+    getDb().update(schema.users).set({ status }).where(eq(schema.users.id, row.id)).run();
+    return status;
+  }
+
+  /** A session of the user is open here, or its disconnect grace period runs. */
+  hasSessionHere(userId: string): boolean {
+    return this.isUserOnline(userId) || this.pendingOfflineTimeouts.has(userId);
+  }
+
   private finalizeDisconnect(userId: string) {
     // Double check they are still offline
     if (this.isUserOnline(userId)) return;
@@ -304,19 +324,15 @@ class ConnectionManager {
       this.userSpaces.set(userId, new Set());
     }
     this.userSpaces.get(userId)!.add(spaceId);
+    this.pushSpaceVoiceState(userId, spaceId);
+  }
 
-    // A user joining a space mid-session must be bootstrapped with that space's
-    // current voice presence. The `ready` payload only carries voice state at
-    // connect time (see buildReadyPayload), so without this push, members already
-    // sitting in a voice channel stay invisible in the new member's channel
-    // sidebar until a full page reload. We deliver a scoped snapshot over the same
-    // ordered WebSocket as the `voice_state_update` deltas, so there is no
-    // snapshot-vs-stream race (a join/leave that happens after this snapshot is
-    // emitted strictly afterwards on the same socket). `addUserSpace` is the single
-    // chokepoint every join path funnels through (invite, public join, join-request
-    // approval) and is NOT used on reconnect (that path uses setUserSpaces), so this
-    // fires exactly once per genuine join. Space creation hits this too but produces
-    // an empty snapshot and is skipped below.
+  /**
+   * Send `userId` the voice presence of `spaceId` they can see now, as one
+   * `space_voice_state` (`buildSpaceVoiceState`, VIEW_CHANNEL-filtered).
+   */
+  pushSpaceVoiceState(userId: string, spaceId: string): void {
+    if (this.getUserConnections(userId).size === 0) return;
     const snapshot = this.buildSpaceVoiceState(spaceId, userId);
     if (Object.keys(snapshot.voiceStates).length === 0
         && Object.keys(snapshot.spaceVoiceStates).length === 0) {
@@ -330,6 +346,17 @@ class ConnectionManager {
       voiceUserStates: snapshot.voiceUserStates,
       spaceVoiceStates: snapshot.spaceVoiceStates,
     });
+  }
+
+  /**
+   * After a change to the space's roles or to a member's roles, notify members
+   * and push the updated space voice state to affected users.
+   */
+  announceSpaceAccessChange(spaceId: string, affectedUserIds: Iterable<string>): void {
+    this.sendToSpace(spaceId, { type: 'space_access_changed', spaceId });
+    for (const userId of new Set(affectedUserIds)) {
+      if (this.getUserSpaces(userId).has(spaceId)) this.pushSpaceVoiceState(userId, spaceId);
+    }
   }
 
   getUserSpaces(userId: string): Set<string> {
@@ -352,70 +379,17 @@ class ConnectionManager {
    * looped across all of a user's spaces) and `addUserSpace` (mid-session join
    * push). Keep these two consumers in sync by changing only this method.
    */
-  buildSpaceVoiceState(spaceId: string, userId: string): {
-    voiceStates: Record<string, string[]>;
-    voiceChannelElapsedSeconds: Record<string, number>;
-    voiceUserStates: Record<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }>;
-    spaceVoiceStates: Record<string, { spaceMuted: boolean; spaceDeafened: boolean; permissionMuted: boolean }>;
-  } {
-    const db = getDb();
-    const voiceStates: Record<string, string[]> = {};
-    const voiceChannelElapsedSeconds: Record<string, number> = {};
-    const voiceUserStates: Record<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }> = {};
-    const spaceVoiceStates: Record<string, { spaceMuted: boolean; spaceDeafened: boolean; permissionMuted: boolean }> = {};
-
-    // Who is currently in each of this space's voice channels the user can VIEW.
-    const voiceChannels = db.select({ id: schema.channels.id })
-      .from(schema.channels)
-      .where(and(eq(schema.channels.spaceId, spaceId), eq(schema.channels.type, 'voice')))
-      .all();
-    for (const ch of voiceChannels) {
-      const chPerms = computePermissions(userId, spaceId, ch.id);
-      const hasView = (chPerms & PermissionBits.VIEW_CHANNEL) !== 0n || (chPerms & PermissionBits.ADMINISTRATOR) !== 0n;
-      if (!hasView) continue;
-      const room = this.getRoom(ch.id);
-      if (room && room.participants.size > 0) {
-        const ids = Array.from(room.participants);
-        voiceStates[ch.id] = ids;
-        voiceChannelElapsedSeconds[ch.id] = getVoiceRoomElapsedSeconds(room);
-        for (const uid of ids) {
-          const status = this.getVoiceUserStatus(uid);
-          if (status) voiceUserStates[uid] = status;
-        }
-      }
-    }
-
-    // Space mute/deafen — persisted, authoritative (survives reconnect). These are
-    // space-level flags (they do not reveal which channel a user is in), so they
-    // are not channel-filtered, mirroring buildReadyPayload.
-    const restrictions = db.select()
-      .from(schema.voiceRestrictions)
-      .where(eq(schema.voiceRestrictions.spaceId, spaceId))
-      .all();
-    for (const r of restrictions) {
-      const key = `${r.spaceId}:${r.userId}`;
-      const existing = spaceVoiceStates[key] ?? { spaceMuted: false, spaceDeafened: false, permissionMuted: false };
-      if (r.restrictionType === 'mute') existing.spaceMuted = true;
-      if (r.restrictionType === 'deafen') existing.spaceDeafened = true;
-      spaceVoiceStates[key] = existing;
-    }
-    // Permission-mute — ephemeral, derived from in-memory state for every
-    // participant currently in this space's voice rooms (mirrors buildReadyPayload).
-    for (const [, room] of this.voiceRooms) {
-      if (room.roomType !== 'space') continue;
-      const meta = room.metadata as SpaceRoomMeta;
-      if (meta.spaceId !== spaceId) continue;
-      for (const participantId of room.participants) {
-        if (this.isPermissionMuted(spaceId, participantId)) {
-          const key = `${spaceId}:${participantId}`;
-          const existing = spaceVoiceStates[key] ?? { spaceMuted: false, spaceDeafened: false, permissionMuted: false };
-          existing.permissionMuted = true;
-          spaceVoiceStates[key] = existing;
-        }
-      }
-    }
-
-    return { voiceStates, voiceChannelElapsedSeconds, voiceUserStates, spaceVoiceStates };
+  buildSpaceVoiceState(spaceId: string, userId: string): SpaceVoiceStateResult {
+    return buildSpaceVoiceState(
+      {
+        getRoom: (id) => this.getRoom(id),
+        getVoiceUserStatus: (uid) => this.getVoiceUserStatus(uid),
+        getVoiceRooms: () => this.voiceRooms.entries(),
+        isPermissionMuted: (sid, uid) => this.isPermissionMuted(sid, uid),
+      },
+      spaceId,
+      userId,
+    );
   }
 
   // ─── Unified VoiceRoom API ─────────────────────────────────────────────────

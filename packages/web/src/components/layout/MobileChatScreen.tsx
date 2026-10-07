@@ -46,14 +46,14 @@ export function MobileChatScreen({ params }: MobileChatScreenProps) {
   }, [channelId, setCurrentChannel, loadMessages]);
 
   const dm = isDm ? dmChannels.find(d => d.id === channelId) : undefined;
-  const isGroup = dm?.type === 'group_dm';
-  const dmPartnerDeleted = isDm && isDeletedPartnerDm(dm);
+  const isGroup = !!dm?.ownerId;
+  const dmPartnerDeleted = isDm && dm && authUser ? isDeletedPartnerDm(dm, authUser) : false;
   const rawMainOther = dm && !isGroup ? (dm.members?.find(m => m.id !== authUser?.id) ?? dm.members?.[0]) : undefined;
   const canonicalMainOther = useCanonicalUserView(rawMainOther ?? FALLBACK_USER);
 
   // Call state for DM header action
-  const isCallingThisDm = outgoingCall?.channelId === channelId;
-  const isInThisDmCall = activeDmCall?.channelId === channelId;
+  const isCallingThisDm = outgoingCall?.dmChannelId === channelId;
+  const isInThisDmCall = activeDmCall?.dmChannelId === channelId;
   const callState: 'idle' | 'ringing' | 'inCall' | 'busy' =
     isInThisDmCall ? 'inCall'
     : isCallingThisDm ? 'ringing'
@@ -63,9 +63,9 @@ export function MobileChatScreen({ params }: MobileChatScreenProps) {
   const handleCall = () => {
     if (!channelId) return;
     if (callState === 'ringing') {
-      cancelOutgoingDmCall();
+      cancelOutgoingDmCall(channelId);
     } else if (callState === 'inCall') {
-      useUIStore.getState().openDmCallModal();
+      useUIStore.getState().pushMobileScreen('voice-full');
     } else if (callState === 'idle') {
       startDmCall(channelId);
     }

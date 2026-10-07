@@ -77,6 +77,7 @@ const SPACE: TaggedSpace = {
   visibility: 'public',
   directoryListed: false,
   description: 'Rock pools, field notes and the odd crab.',
+  ownerTitle: null,
   createdAt: 1,
   _instanceOrigin: '',
 };

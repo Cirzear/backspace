@@ -24,7 +24,6 @@ import {
   getCachedUserIdForOrigin,
   resolveOriginFromHostname,
   resolveUserIdFromInstances,
-  setOwnerInstanceForDmResolver,
 } from '../utils/crossStoreResolvers';
 import { locateDmChannel } from '../utils/dmChannelLookup';
 import { deriveMissingOneOnOneKeys, type PeerDmChannel } from '../utils/dmConversationKey';
@@ -47,7 +46,6 @@ import {
   channelIdsWhere,
   deriveChannelLookups,
   deriveChannelOriginMap,
-  channelKindIn,
   channelTablesOf,
   channelTableFields,
   byPosition,
@@ -79,20 +77,17 @@ import { createAddSpaceFromReadySlice } from './spaceAddSpaceFromReadySlice';
 import { createSpaceLayoutSlice, pushLayoutToOrigin } from './spaceLayoutSlice';
 import { createPopulateFromReadySlice } from './spacePopulateFromReadySlice';
 import { createRemoveInstanceSpacesSlice } from './spaceRemoveInstanceSpacesSlice';
-import type { ChannelKind, SpaceState, UserViewEntry } from './spaceStoreTypes';
+import type { SpaceState, TaggedSpace, UserViewEntry } from './spaceStoreTypes';
+export type { TaggedSpace, UserViewEntry } from './spaceStoreTypes';
 import {
   nextDetailRequestSeq,
   newestDetailRequests,
   inFlightRosterLogs,
   recordRosterChange,
   replayRosterChange,
+  applyRosterChange,
   type RosterChange,
 } from './spaceDetailLoaders';
-
-// ─── Instance-aware types ─────────────────────────────────────────────────────
-
-/** Server augmented with instance origin tracking (client-only, not in shared types). */
-export type TaggedSpace = Space & { _instanceOrigin: string; ownerTitle?: string | null };
 
 // ─── Error types ─────────────────────────────────────────────────────────────
 
@@ -102,23 +97,6 @@ export class NotConnectedError extends Error {
     super(`Not connected to ${origin}`);
     this.name = 'NotConnectedError';
   }
-}
-
-// ─── User-view cache types ────────────────────────────────────────────────────
-
-/**
- * A single cached view of a user, populated from one delivering origin.
- *
- * The userViews cache stores the best-known view of each canonical identity
- * across every connected instance, regardless of whether the carrying channel
- * survived dedup. Mirrors `dmAlternatives` philosophy: information from
- * skipped ready payloads is still load-bearing for rendering.
- */
-export interface UserViewEntry {
-  user: User;
-  deliveredBy: string;
-  isHome: boolean;
-  updatedAt: number;
 }
 
 
@@ -383,19 +361,19 @@ export const useSpaceStore = create<SpaceState>((set, get, apiStore) => ({
     const seq = nextDetailRequestSeq();
     // Whether a load of this space started after this one.
     const overtaken = (): boolean => newestDetailRequests.get(spaceId)?.seq !== seq;
-    const newestResult = (): Promise<Channel[] | undefined> =>
-      newestDetailRequests.get(spaceId)?.result ?? Promise.resolve(undefined);
+    const newestResult = (): Promise<Channel[] | null> =>
+      newestDetailRequests.get(spaceId)?.result ?? Promise.resolve(null);
     // Ends the loading state of this space's open, whichever load started it.
     const endLoading = (state: SpaceState): string | null =>
       state.loadingSpaceId === spaceId ? null : state.loadingSpaceId;
 
-    const result = (async (): Promise<Channel[] | undefined> => {
+    const result = (async (): Promise<Channel[] | null> => {
       // Joins and leaves that arrive during the fetch, replayed onto its roster.
       const rosterChanges: RosterChange[] = [];
       try {
         // Resolve the correct API client based on the server's instance origin
         const space = get().spaces.find(s => s.id === spaceId);
-        if (!space) return undefined; // Not populated yet — remote WS ready will trigger reload
+        if (!space) return null; // Not populated yet — remote WS ready will trigger reload
         if (!quiet) set({ loadingSpaceId: spaceId });
         const origin = space._instanceOrigin ?? '';
         const client = getApiForOrigin(origin);
@@ -457,7 +435,7 @@ export const useSpaceStore = create<SpaceState>((set, get, apiStore) => ({
       } catch {
         if (overtaken()) return newestResult();
         set((state) => ({ loadingSpaceId: endLoading(state) }));
-        return undefined;
+        return null;
       } finally {
         const logs = inFlightRosterLogs.get(spaceId);
         logs?.delete(rosterChanges);

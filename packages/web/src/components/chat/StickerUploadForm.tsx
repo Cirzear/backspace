@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useFormatters } from '../../i18n/formatters';
 import { MAX_STICKER_BYTES, type PersonalSticker } from '@backspace/shared/src/stickers';
 import { uploadSticker } from './stickerUpload';
 
@@ -45,6 +46,7 @@ function createUploadItem(file: File): UploadItem {
  */
 export function StickerUploadForm({ onAdded, onCancel }: StickerUploadFormProps) {
   const { t } = useTranslation('chat');
+  const { formatBytes } = useFormatters();
   const inputRef = useRef<HTMLInputElement>(null);
   const chooseRef = useRef<HTMLButtonElement>(null);
   const selectModeRef = useRef<'replace' | 'append'>('replace');
@@ -329,7 +331,7 @@ export function StickerUploadForm({ onAdded, onCancel }: StickerUploadFormProps)
                   <div className="min-w-0 flex-1">
                     <div className="mb-1 flex items-center justify-between gap-1 text-[11px] text-txt-tertiary">
                       <span className="truncate" title={item.file.name}>{item.file.name}</span>
-                      <span className="shrink-0">{(item.file.size / 1024).toFixed(0)} KB</span>
+                      <span className="shrink-0">{formatBytes(item.file.size)}</span>
                     </div>
                     <input
                       value={item.name}

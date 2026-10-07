@@ -118,7 +118,7 @@ function seed(scene: Scene): void {
     spaces: [SPACE], currentSpaceId: SPACE_ID, loadingSpaceId: null,
     members: MEMBER_ROWS, roles: ROLES,
     spacePermissions: new Map([[SPACE_ID, permissionsToString(viewerIsOwner ? ALL_PERMISSIONS : MODS_HELD)]]),
-    loadSpaceDetail: async () => undefined,
+    loadSpaceDetail: async () => null,
   });
   useUIStore.setState({ isMobile: false, memberListOpen: true });
   if (scene === 'profile') {

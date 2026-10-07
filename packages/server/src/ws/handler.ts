@@ -13,6 +13,7 @@ import { presenceUpdateFor } from './presenceEvent.js';
 
 import { connectionManager } from './connectionManager.js';
 import { buildReadyPayload } from './readyPayload.js';
+export { buildReadyPayload } from './readyPayload.js';
 export { connectionManager } from './connectionManager.js';
 export { getVoiceRoomElapsedSeconds, VOICE_RECONNECT_GRACE_MS, type AuthenticatedSocket, type DmRoomMeta, type FederatedCallEntry, type SpaceRoomMeta, type VoiceRoom } from './voiceRoomTypes.js';
 
