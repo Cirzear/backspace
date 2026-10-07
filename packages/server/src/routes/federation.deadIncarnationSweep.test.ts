@@ -126,10 +126,20 @@ describe('sweepDeadIncarnationArtifacts', () => {
     expect(testDb.select().from(schema.users).all().some(u => u.id === 'junk-stub')).toBe(true);
   });
 
-  it('never touches DETACHED accounts (homed at the peer, not us)', async () => {
-    seedUser({ id: 'detached-1', username: 'dave@orbit.test', passwordHash: 'real-hash', homeInstance: 'orbit.test', homeUserId: 'dave-home', federationHomeOrphaned: 1 });
+  it('never touches DETACHED accounts, and counts them as members homed here', async () => {
+    // Detached: homed here, its former identity kept aside (rehomeDetachedAccount).
+    seedUser({ id: 'detached-1', username: 'dave@orbit.test', passwordHash: 'real-hash', homeInstance: null, homeUserId: null, detachedHomeInstance: 'orbit.test', detachedHomeUserId: 'dave-home', federationHomeOrphaned: 1 });
+    seedUser({ id: 'peer-stub', username: 'erin@elsewhere.test', homeInstance: 'elsewhere.test', homeUserId: 'erin-home' });
+    // A conversation whose only local member is the detached account is this
+    // instance's own conversation, not native-less sync junk.
+    testDb.insert(schema.dmChannels).values({ id: 'ch-detached', federatedId: 'k-detached', createdAt: 1 }).run();
+    testDb.insert(schema.dmMembers).values([
+      { dmChannelId: 'ch-detached', userId: 'detached-1', closed: 0 },
+      { dmChannelId: 'ch-detached', userId: 'peer-stub', closed: 0 },
+    ]).run();
     const { sweepDeadIncarnationArtifacts } = await import('./federation.js');
     sweepDeadIncarnationArtifacts();
     expect(testDb.select().from(schema.users).all().some(u => u.id === 'detached-1')).toBe(true);
+    expect(testDb.select().from(schema.dmChannels).all().some(c => c.id === 'ch-detached')).toBe(true);
   });
 });

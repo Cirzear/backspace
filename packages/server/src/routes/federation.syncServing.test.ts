@@ -241,7 +241,11 @@ describe('membership rows about the requester\'s own users', () => {
 
   it('does not serve them about a detached user of a former incarnation', async () => {
     testDb.delete(schema.dmMembers).where(eq(schema.dmMembers.userId, 'bob-on-home')).run();
-    testDb.update(schema.users).set({ federationHomeOrphaned: 1 }).where(eq(schema.users.id, 'bob-on-home')).run();
+    // Detaching homes the account here and keeps its former identity aside.
+    testDb.update(schema.users).set({
+      federationHomeOrphaned: 1, homeInstance: null, homeUserId: null,
+      detachedHomeInstance: 'https://orbit.test:8443', detachedHomeUserId: 'bob',
+    }).where(eq(schema.users.id, 'bob-on-home')).run();
     log({ id: '4500000000000000001', entityId: 'member_remove-bob', mutationType: 'member_remove', mutatedAt: 100, payload: membership('member_remove', 'bob', ORBIT_ORIGIN) });
     expect((await pull({})).events).toEqual([]);
   });

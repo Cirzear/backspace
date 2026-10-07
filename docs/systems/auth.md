@@ -320,7 +320,7 @@ Detach is sovereign but not permanent: the legitimate owner who re-created their
 |-----------|-------------------|----------|
 | Local (`homeInstance` is null) | Required | Verified via bcrypt against stored hash |
 | Federated (`homeInstance` set, `federationHomeOrphaned !== 1`) | Not required | JWT auth is sufficient (home instance already verified the change) |
-| Detached (`homeInstance` set, `federationHomeOrphaned === 1`) | Required | Follows the **local** rule — the home is gone, so nothing external verified the change; the local hash is the sole authority (detach design §4.4) |
+| Detached (`federationHomeOrphaned === 1`; homed here since #310, so `homeInstance` is null) | Required | Follows the **local** rule — the home is gone, so nothing external verified the change; the local hash is the sole authority (detach design §4.4) |
 
 **Steps:**
 1. Validate `newPassword` is a string of at least `PASSWORD_MIN_LENGTH` (8) characters, else `400 password_too_short` with `details.min`

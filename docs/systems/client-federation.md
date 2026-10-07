@@ -125,7 +125,7 @@ When a home instance is reset, its established accounts on peers become **detach
 
 It performs the proof exchange **only** when all hold (else it returns silently — the manual fallback stays available):
 
-1. The just-connected account is detached (`user.federationHomeOrphaned && user.homeInstance`).
+1. The just-connected account is detached and names its former home (`detachedHomeOf(user)` from `@backspace/shared`: `detachedHomeInstance`, falling back to `homeInstance` for a server that predates #310, where a detached row kept its former home there).
 2. This client also holds an authenticated session on the account's **home domain** — the primary connection when browsing it (native primary user, host matches), else a `status === 'connected'` secondary instance in `instances`.
 3. That home session's username base equals the detached account's username base (case-insensitive, via `parseFederatedUsername`) — the unambiguous "same name" case. A cross-name bind is manual-only (spec §2).
 
@@ -714,7 +714,7 @@ Modeled on the peering-approval surface above, the FederationPanel's `ResetClean
 
 ### AccountPanel re-attach action (fallback, re-attach spec §3.4)
 
-The owner-facing side of re-attach. `AccountPanel` (`components/modals/settingsPanels/AccountPanel.tsx`) renders the detached-account notice whenever the self user is detached (`federationHomeOrphaned && homeInstance`). Below the informational copy it appends a **"Re-attach to `<homeInstance>`"** action **only** when `instanceStore.instances` also holds a `status === 'connected'` connection whose origin host matches the account's `homeInstance` (`homeConnection`, memoized). This is the explicit fallback for what `maybeAutoReattach` deliberately skips: a different username on the new home (cross-name bind), or a home connection established after the detached connection.
+The owner-facing side of re-attach. `AccountPanel` (`components/modals/settingsPanels/AccountPanel.tsx`) renders the detached-account notice whenever the self user is detached and names its former home (`detachedHomeOf(user)`; a detached account is homed on the instance that holds it, so its `homeInstance` is null and the former home is `detachedHomeInstance`). Below the informational copy it appends a **"Re-attach to `<homeInstance>`"** action **only** when `instanceStore.instances` also holds a `status === 'connected'` connection whose origin host matches the account's former home (`homeConnection`, memoized). This is the explicit fallback for what `maybeAutoReattach` deliberately skips: a different username on the new home (cross-name bind), or a home connection established after the detached connection.
 
 The button is a two-step armed confirm that names both identities — first click arms (`Confirm re-attach as <homeUsername>`), second click mints and exchanges the proof: `homeConnection.api.auth.attachProof(window.location.host)` → `api.users.reattach({ token })`, then `useAuthStore.getState().setUser(res.user)` clears the flag so the notice disappears. Errors surface inline; without a home-domain connection the notice keeps only its informational copy.
 

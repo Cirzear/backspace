@@ -259,6 +259,9 @@ export function mayCarryLegacySuffix(user: UserRow): boolean {
  * snapshot carries as `username`: a receiver names and labels its own row
  * from it (`handleFromHint`), so it is never this instance's row name.
  *   - A native user: the username, which is the handle.
+ *   - A detached account (homed here, `rehomeDetachedAccount`): it keeps the
+ *     login name it had as a federated account, `<handle>@<former home>`, so
+ *     the handle is the part before the `@`.
  *   - A row homed elsewhere: the local part of `<local>@<homeInstance>`; for a
  *     suffixed name (`kai~1`) the handle it was named for.
  *   - A placeholder name (`<homeUserId>@<domain>`, a display name) or a name
@@ -268,7 +271,12 @@ export function mayCarryLegacySuffix(user: UserRow): boolean {
 export function relayHandleOf(
   user: Pick<UserRow, 'username' | 'homeInstance' | 'homeUserId'>,
 ): string | null {
-  if (!user.homeInstance) return handleFromHint(user.username);
+  if (!user.homeInstance) {
+    // Registration gives a native account a name without `@`; only a
+    // detached account's kept login name has one.
+    const at = user.username.indexOf('@');
+    return handleFromHint(at === -1 ? user.username : user.username.slice(0, at));
+  }
   const suffix = `@${user.homeInstance}`.toLowerCase();
   const username = user.username.toLowerCase();
   if (!username.endsWith(suffix)) return null;

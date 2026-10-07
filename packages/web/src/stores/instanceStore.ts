@@ -7,6 +7,7 @@ import type {
   FederationRegistryEntry,
   FederationRegistryStatus,
 } from '@backspace/shared';
+import { detachedHomeOf } from '@backspace/shared';
 import { BackspaceApiClient, HttpError, createApiClient, api } from '../api/client';
 import { useAuthStore } from './authStore';
 import {
@@ -348,8 +349,11 @@ async function peerHomeWithRemote(origin: string, announceAs: string | null): Pr
  */
 export async function maybeAutoReattach(instance: ConnectedInstance): Promise<void> {
   const remoteUser = instance.user;
-  if (!remoteUser.federationHomeOrphaned || !remoteUser.homeInstance) return;
-  const homeDomain = remoteUser.homeInstance.replace(/^https?:\/\//, '').replace(/\/+$/, '').toLowerCase();
+  // The home the account was detached from: a detached account is homed on
+  // the remote, which names its former home separately (`detachedHomeOf`).
+  const formerHome = detachedHomeOf(remoteUser);
+  if (!formerHome) return;
+  const homeDomain = formerHome.replace(/^https?:\/\//, '').replace(/\/+$/, '').toLowerCase();
 
   // An authenticated session on the account's home domain: the primary
   // connection when we're browsing it, else a connected secondary instance.

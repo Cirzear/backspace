@@ -176,6 +176,13 @@
       "when": 1791393454331,
       "tag": "0024_reaction_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1791404634631,
+      "tag": "0025_detached_identity",
+      "breakpoints": true
     }
   ]
 }
