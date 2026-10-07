@@ -7,7 +7,9 @@ import { getOurOrigin, buildFederationHeaders } from './federationAuth.js';
 import { extractDomain, relayActorOfUser } from '../routes/federation.js';
 import { racePeering, ensurePeered, createAutoPlaceholderPeer } from './federationPeering.js';
 import { relayMentionsOf } from './federationMentions.js';
+import { relayHandleOf } from '../routes/federation/stubName.js';
 import { federationFetch } from './federationFetch.js';
+import { writeOutboxEvent, type OutboxEventType } from './federationOutboxQueue.js';
 
 // ─── Settings Cache ──────────────────────────────────────────────────────────
 
@@ -91,6 +93,9 @@ export function getRelayTtlDays(): number {
   }
 }
 
+/** How long a mutation log row is kept (the janitor's `cleanupFederationMutationLog`): how far back a peer's pull can read. */
+export const MUTATION_LOG_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+
 /**
  * Append an entry to the federation mutation log.
  * No-op if federation relay is disabled.
@@ -126,14 +131,19 @@ export function appendMutationLog(
 }
 
 /**
- * Queue an outbox event for all active federation peers.
+ * Queue an outbox event for federation peers.
  *
- * Performs per-peer coalescing inside a transaction:
- * - If a 'create' already exists and a 'delete' arrives, the entry is removed
- *   (net effect: message was never relayed).
- * - If an entry already exists, it is updated with the latest payload/event type,
- *   preserving the original 'create' event type if applicable.
- * - Otherwise a new entry is inserted.
+ * Without `targetPeerOrigins` the event is a broadcast (profile, presence) and
+ * goes to every established peer: `active`, and `unreachable`, whose queue is
+ * delivered on recovery. A `pending` peer is not sent broadcasts: what they
+ * carry reaches it on activation anyway (it pulls our profile log, and we push
+ * it a presence snapshot). With targets, the event goes to those origins that
+ * are `active`, `pending` or `unreachable`, and an origin with no peer row
+ * gets an auto-created pending placeholder, whose handshake the queued event
+ * then drives.
+ *
+ * Each peer's copy goes into the queue of its entity by the rules in
+ * federationOutboxQueue.ts (`writeOutboxEvent`).
  *
  * No-op if federation relay is disabled.
  * Failures are logged but never propagate — federation must not break DM flow.
@@ -141,7 +151,7 @@ export function appendMutationLog(
 export function queueOutboxEvent(
   entityId: string,
   contextId: string,
-  eventType: string,
+  eventType: OutboxEventType,
   payload: string,
   targetPeerOrigins?: string[],
   contextType: string = 'dm',
@@ -170,7 +180,10 @@ export function queueOutboxEvent(
       .select()
       .from(schema.federationPeers)
       .where(
-        inArray(schema.federationPeers.status, ['active', 'pending', 'unreachable']),
+        inArray(
+          schema.federationPeers.status,
+          targetPeerOrigins ? ['active', 'pending', 'unreachable'] : ['active', 'unreachable'],
+        ),
       )
       .all();
 
@@ -280,55 +293,7 @@ export function queueOutboxEvent(
 
     for (const peer of matchedPeers) {
       db.transaction((tx) => {
-        const existing = tx
-          .select()
-          .from(schema.federationOutbox)
-          .where(
-            and(
-              eq(schema.federationOutbox.peerId, peer.id),
-              eq(schema.federationOutbox.entityId, entityId),
-            ),
-          )
-          .get();
-
-        if (eventType === 'delete' && existing?.eventType === 'create') {
-          // Entity created and deleted before relay — net effect is nothing
-          tx.delete(schema.federationOutbox)
-            .where(eq(schema.federationOutbox.id, existing.id))
-            .run();
-        } else if (existing) {
-          // Coalesce: update existing entry with latest state.
-          // If the original was a 'create', keep it as 'create' so the peer
-          // receives the full message on first relay rather than an update/delete
-          // for something it never saw.
-          tx.update(schema.federationOutbox)
-            .set({
-              eventType: existing.eventType === 'create' ? 'create' : eventType,
-              payload,
-              attempts: 0,
-              nextRetryAt: now,
-            })
-            .where(eq(schema.federationOutbox.id, existing.id))
-            .run();
-        } else {
-          // No existing entry — insert new
-          tx.insert(schema.federationOutbox)
-            .values({
-              id: generateSnowflake(),
-              peerId: peer.id,
-              contextId,
-              entityId,
-              contextType,
-              eventType,
-              payload,
-              encryptionVersion: 0,
-              attempts: 0,
-              nextRetryAt: now,
-              expiresAt,
-              createdAt: now,
-            })
-            .run();
-        }
+        writeOutboxEvent(tx, { peerId: peer.id, contextId, contextType, entityId, eventType, payload, expiresAt }, now);
       });
     }
   } catch (err) {
@@ -377,7 +342,7 @@ export function getDmParticipants(dmChannelId: string): FederationRelayParticipa
       homeUserId: m.homeUserId || m.id,
       homeInstance: m.homeInstance || domainOrigin,
       profile: {
-        username: m.username ?? null,
+        username: relayHandleOf(m),
         displayName: m.displayName ?? null,
         avatar: m.avatar ?? null,
         avatarColor: m.avatarColor ?? null,
@@ -429,7 +394,7 @@ export function relayTargetOrigins(members: ReadonlyArray<{ homeInstance: string
 }
 
 /**
- * Queue a DM message for federation relay to all active peers.
+ * Queue a DM message for federation relay to the peers hosting its participants.
  * Builds the complete relay payload including attachments with sourceUrl
  * and participant identities. Single source of truth for relay payload
  * construction — all create/update relay hooks call this function.
@@ -1059,7 +1024,7 @@ export function queueGroupMetadataRelay(
     homeUserId: actorRow.homeUserId || actorRow.id,
     homeInstance: actorRow.homeInstance || ourOrigin,
     profile: {
-      username: actorRow.username ?? null,
+      username: relayHandleOf(actorRow),
       displayName: actorRow.displayName ?? null,
       avatar: actorRow.avatar ?? null,
       avatarColor: actorRow.avatarColor ?? null,
@@ -1159,7 +1124,7 @@ export async function sendTypingRelay(
         }
       })
       .catch(err => {
-        console.warn(`[federation] Typing relay to ${peerOrigin} threw unexpectedly:`, err);
+        console.warn('[federation] Typing relay to %s threw unexpectedly:', peerOrigin, err);
       });
   }
 }

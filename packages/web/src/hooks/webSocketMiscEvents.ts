@@ -1,4 +1,5 @@
 import { receiveChannelPoke } from '../components/chat/channelPoke';
+import { describeErrorCode } from '../i18n/errors';
 import { useChannelActivityStore } from '../stores/channelActivityStore';
 import { useChatStore } from '../stores/chatStore';
 import { useNotificationStore } from '../stores/notificationStore';
@@ -23,26 +24,13 @@ export const miscEvents = {
     const { onMarkUnread } = useChatStore.getState();
     onMarkUnread(event.channelId, event.messageId);
   },
-  channel_layout_updated: (origin, event) => {
-    const { currentSpaceId } = useSpaceStore.getState();
-    const { currentSpaceId: layoutSpaceId, setChannels: setLayoutChannels, setCategories: setLayoutCategories, channelPermissions: layoutChPerms, channelToSpaceMap: layoutCtsMap, channelOriginMap: layoutCoMap } = useSpaceStore.getState();
-    if (event.spaceId === layoutSpaceId) {
-      setLayoutChannels(event.channels.sort((a, b) => a.position - b.position));
-      setLayoutCategories(event.categories.sort((a, b) => a.position - b.position));
-      // Update permission maps from the new layout
-      for (const ch of event.channels) {
-        layoutCtsMap.set(ch.id, event.spaceId);
-        layoutCoMap.set(ch.id, origin);
-        if (ch.myPermissions) {
-          layoutChPerms.set(ch.id, ch.myPermissions);
-        }
-      }
-    }
-  },
   pong: (origin, event) => {
 
   },
   error: (origin, event) => {
     console.error(`WebSocket error (${origin || 'home'}):`, event.message);
+    if (event.code) {
+      useUIStore.getState().addToast(describeErrorCode(event.code, event.message), 'warning');
+    }
   },
 } satisfies WebSocketEventHandlers;

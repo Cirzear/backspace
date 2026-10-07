@@ -32,6 +32,9 @@
     "you": "我"
   },
   "chat": {
-    "channelFallback": "频道"
+    "channelFallback": "频道",
+    "openCall": "打开通话",
+    "cancelCall": "取消呼叫",
+    "unknownChannel": "频道"
   }
 }

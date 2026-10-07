@@ -14,59 +14,7 @@ import { useDelayedLoading } from '../../hooks/useDelayedLoading';
 import { OwnerTitleHeading } from './OwnerTitleHeading';
 import { useMemberContextMenu } from './memberMenu/useMemberContextMenu';
 import { useContextMenuStore } from '../../stores/contextMenuStore';
-
-/**
- * Owner headings are editable separately; online and role groups keep their
- * translated label or assigned role name.
- */
-type MemberGroupKind = 'owner' | 'role' | 'online';
-
-interface MemberGroup {
-  key: string;
-  kind: MemberGroupKind;
-  /** The role name for `kind: 'role'`; null for the translated buckets. */
-  label: string | null;
-  color: string | undefined;
-  position: number;
-}
-
-/**
- * Derives the display group for a member based on their highest-positioned role
- * or owner status.
- */
-function getMemberGroup(member: MemberWithUser, ownerId: string | undefined): MemberGroup {
-  if (ownerId && member.userId === ownerId) {
-    // Owner always sorts first — position Infinity so it's above all roles
-    const ownerRole = member.roles?.find(r => r.position > 0);
-    return {
-      key: '__owner__',
-      kind: 'owner',
-      label: null,
-      color: ownerRole?.color ?? 'rgb(var(--accent-rose))',
-      position: Infinity,
-    };
-  }
-  if (member.roles && member.roles.length > 0) {
-    // Sort by position descending — highest position = most important role
-    const sorted = [...member.roles].sort((a, b) => b.position - a.position);
-    const top = sorted[0]!;
-    return {
-      key: top.id,
-      kind: 'role',
-      label: top.name.toUpperCase(),
-      color: top.color,
-      position: top.position,
-    };
-  }
-  // No explicit roles — just @everyone
-  return {
-    key: '__online__',
-    kind: 'online',
-    label: null,
-    color: undefined,
-    position: -1,
-  };
-}
+import { groupMembers, memberNameColor, type MemberGroupKind } from '../../utils/memberGroups';
 
 function memberNameTone(isOffline: boolean, colored: boolean): string {
   if (colored) return isOffline ? 'opacity-60' : '';
@@ -153,27 +101,7 @@ export function MemberSidebar() {
   const memberMenu = useMemberContextMenu(space);
   const spaceOrigin = space?._instanceOrigin ?? '';
 
-  const { roleGroups, offlineMembers } = useMemo(() => {
-    const online = members.filter(m => m.user.status !== 'offline');
-    const offline = members.filter(m => m.user.status === 'offline');
-
-    // Group online members by their highest role
-    const groups = new Map<string, { kind: MemberGroupKind; label: string | null; color: string | undefined; position: number; members: MemberWithUser[] }>();
-    for (const m of online) {
-      const group = getMemberGroup(m, ownerId);
-      if (!groups.has(group.key)) {
-        groups.set(group.key, { kind: group.kind, label: group.label, color: group.color, position: group.position, members: [] });
-      }
-      groups.get(group.key)!.members.push(m);
-    }
-
-    // Sort groups by position descending (highest role first), then ONLINE last
-    const sorted = [...groups.entries()].sort(
-      (a, b) => b[1].position - a[1].position
-    );
-
-    return { roleGroups: sorted, offlineMembers: offline };
-  }, [members, ownerId]);
+  const { groups: roleGroups, offline: offlineMembers } = useMemo(() => groupMembers(members, ownerId), [members, ownerId]);
 
   const isLoadingSpace = !!loadingSpaceId && loadingSpaceId === currentSpaceId;
   const showMemberSkeleton = useDelayedLoading(isLoadingSpace);
@@ -181,14 +109,8 @@ export function MemberSidebar() {
   if (!memberListOpen) return null;
 
   const getMemberColor = (member: MemberWithUser): React.CSSProperties | undefined => {
-    if (member.roles && member.roles.length > 0) {
-      const sorted = [...member.roles].sort((a, b) => b.position - a.position);
-      return { color: sorted[0]!.color };
-    }
-    if (ownerId && member.userId === ownerId) {
-      return { color: 'rgb(var(--accent-rose))' };
-    }
-    return undefined;
+    const color = memberNameColor(member, ownerId);
+    return color ? { color } : undefined;
   };
 
   const handleMemberClick = (e: React.MouseEvent, member: MemberWithUser, user: MemberWithUser['user']) => {
@@ -252,8 +174,8 @@ export function MemberSidebar() {
       ) : (
       <div className="p-3">
         {/* Role-based groups */}
-        {roleGroups.map(([key, group]) => (
-          <div key={key} className="mb-4">
+        {roleGroups.map((group) => (
+          <div key={group.key} className="mb-4">
             {group.kind === 'owner' && space ? (
               <OwnerTitleHeading key={space.id} space={space} count={group.members.length} />
             ) : (

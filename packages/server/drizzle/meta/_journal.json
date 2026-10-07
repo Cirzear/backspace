@@ -183,6 +183,20 @@
       "when": 1790854034749,
       "tag": "0025_reaction_uniqueness",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1790696637343,
+      "tag": "0026_outbox_queue_keys",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "6",
+      "when": 1791335942928,
+      "tag": "0027_peer_resync",
+      "breakpoints": true
     }
   ]
 }

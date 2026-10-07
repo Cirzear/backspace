@@ -23,14 +23,16 @@ import { activePeerOrigins, awaitingApprovalPeerOrigins, rejectedPeerOrigins } f
 type ReadyEvent = Extract<ServerEvent, { type: 'ready' }>;
 
 /** Preserve hydration order; each phase owns one store or connection concern. */
-export function handleReady(origin: string, event: ReadyEvent): void {
+export function handleReady(origin: string, event: ReadyEvent, readyAlreadyDelivered = false): void {
   const { currentSpaceId } = useSpaceStore.getState();
   initializeReadyAccount(origin, event);
   normalizeReadySpaces(origin, event);
   populateReadySpaces(origin, event);
   syncReadyIdentity(origin, event);
   reloadReadySpace(origin, event, currentSpaceId);
-  resetReadyMessages(origin, event);
+  if (!readyAlreadyDelivered) {
+    resetReadyMessages(origin, event);
+  }
   hydrateReadyReadStates(origin, event);
   hydrateReadyVoicePresence(origin, event);
   hydrateReadyActivities(origin, event);
@@ -124,10 +126,6 @@ function reloadReadySpace(origin: string, event: ReadyEvent, currentSpaceId: str
     const { currentSpaceId: curSpaceId, loadSpaceDetail: loadDetail } = useSpaceStore.getState();
     if (curSpaceId && event.spaces.some((s: any) => s.id === curSpaceId)) {
       loadDetail(curSpaceId);
-      const { currentChannelId, loadMessages } = useChatStore.getState();
-      if (currentChannelId) {
-        loadMessages(currentChannelId, true);
-      }
     }
   }
 }

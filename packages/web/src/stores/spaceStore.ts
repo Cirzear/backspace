@@ -40,6 +40,23 @@ import {
 import { useAuthStore } from './authStore';
 import { useChatStore } from './chatStore';
 import {
+  putChannels,
+  putSpaceListings,
+  dropChannels,
+  replaceSpaceChannels,
+  channelIdsWhere,
+  deriveChannelLookups,
+  deriveChannelOriginMap,
+  channelKindIn,
+  channelTablesOf,
+  channelTableFields,
+  byPosition,
+  isOpenSpace,
+  withCategoryOrigins,
+  type SpaceChannelIndex,
+  type SpaceChannelTables,
+} from './spaceChannels';
+import {
   conversationCopyIndex,
   copyIdOnOrigin,
   copyOnOrigin,
@@ -62,7 +79,15 @@ import { createAddSpaceFromReadySlice } from './spaceAddSpaceFromReadySlice';
 import { createSpaceLayoutSlice, pushLayoutToOrigin } from './spaceLayoutSlice';
 import { createPopulateFromReadySlice } from './spacePopulateFromReadySlice';
 import { createRemoveInstanceSpacesSlice } from './spaceRemoveInstanceSpacesSlice';
-import type { SpaceState } from './spaceStoreTypes';
+import type { ChannelKind, SpaceState, UserViewEntry } from './spaceStoreTypes';
+import {
+  nextDetailRequestSeq,
+  newestDetailRequests,
+  inFlightRosterLogs,
+  recordRosterChange,
+  replayRosterChange,
+  type RosterChange,
+} from './spaceDetailLoaders';
 
 // ─── Instance-aware types ─────────────────────────────────────────────────────
 
@@ -96,33 +121,6 @@ export interface UserViewEntry {
   updatedAt: number;
 }
 
-// ─── Roster changes during a detail fetch ────────────────────────────────────
-
-type RosterChange =
-  | { kind: 'join'; member: MemberWithUser }
-  | { kind: 'leave'; userId: string };
-
-/** spaceId → the change logs of the loads in flight for it (one per load). */
-const inFlightRosterLogs = new Map<string, Set<RosterChange[]>>();
-
-function recordRosterChange(spaceId: string, change: RosterChange): void {
-  const logs = inFlightRosterLogs.get(spaceId);
-  if (!logs) return;
-  for (const log of logs) log.push(change);
-}
-
-/** A change replayed onto a fetched roster: a join never replaces a fetched row. */
-function replayRosterChange(members: MemberWithUser[], change: RosterChange): MemberWithUser[] {
-  if (change.kind === 'join' && members.some(m => m.userId === change.member.userId)) return members;
-  return applyRosterChange(members, change);
-}
-
-function applyRosterChange(members: MemberWithUser[], change: RosterChange): MemberWithUser[] {
-  if (change.kind === 'join') {
-    return [...members.filter(m => m.userId !== change.member.userId), change.member];
-  }
-  return members.filter(m => m.userId !== change.userId);
-}
 
 // ─── DM conversations: the derived view ──────────────────────────────────────
 
@@ -130,23 +128,19 @@ export type DmView = Pick<SpaceState, 'dmConversations' | 'dmChannels' | 'dmAlte
 
 /**
  * The store fields derived from `conversations`. `previousRows` are the DM
- * rows the maps held entries for until now; those entries are replaced, the
- * space-channel entries are kept.
+ * rows `channelLastMessageIds` held entries for until now; those entries are
+ * replaced, the space-channel entries are kept. `channelOriginMap` is derived
+ * whole from the space-channel index and the conversations.
  */
 export function deriveDmView(
   conversations: DmConversations,
   previousRows: readonly DmChannel[],
-  channelOriginMap: ReadonlyMap<string, string>,
+  spaceChannelIndex: SpaceChannelIndex,
   channelLastMessageIds: ReadonlyMap<string, string>,
 ): DmView {
-  const origins = new Map(channelOriginMap);
   const lastMessageIds = new Map(channelLastMessageIds);
-  for (const dm of previousRows) {
-    origins.delete(dm.id);
-    lastMessageIds.delete(dm.id);
-  }
+  for (const dm of previousRows) lastMessageIds.delete(dm.id);
   const rows = pinnedDmChannels(conversations);
-  for (const [channelId, origin] of pinnedOriginByChannelId(conversations)) origins.set(channelId, origin);
   for (const dm of rows) {
     if (dm.lastMessage?.id) lastMessageIds.set(dm.id, dm.lastMessage.id);
   }
@@ -155,10 +149,11 @@ export function deriveDmView(
     dmConversations: conversations,
     dmChannels: sortDmChannels(rows, unreadChannels, currentChannelId),
     dmAlternatives: conversationCopyIndex(conversations),
-    channelOriginMap: origins,
+    channelOriginMap: deriveChannelOriginMap(spaceChannelIndex, pinnedOriginByChannelId(conversations)),
     channelLastMessageIds: lastMessageIds,
   };
 }
+
 
 /** The pin rule's view of the session: the user's home is `getLayoutHomeOrigin()`. */
 export function dmPinContext(): DmPinContext {
@@ -174,7 +169,7 @@ export function dmPinContext(): DmPinContext {
 export function commitDmOperation(op: DmOperation): void {
   if (op.next !== useSpaceStore.getState().dmConversations) {
     useSpaceStore.setState((state) =>
-      deriveDmView(op.next, state.dmChannels, state.channelOriginMap, state.channelLastMessageIds),
+      deriveDmView(op.next, state.dmChannels, state.spaceChannelIndex, state.channelLastMessageIds),
     );
   }
   if (op.pinMoves.length === 0) return;
@@ -196,6 +191,7 @@ export const useSpaceStore = create<SpaceState>((set, get, apiStore) => ({
   spaceLayout: null,
   dmConversations: EMPTY_DM_CONVERSATIONS,
   dmChannels: [],
+  spaceChannelIndex: new Map(),
   channelToSpaceMap: new Map(),
   channelLastMessageIds: new Map(),
   spacePermissions: new Map(),
@@ -208,6 +204,36 @@ export const useSpaceStore = create<SpaceState>((set, get, apiStore) => ({
   loadingSpaceId: null,
   loadedSpaceIds: new Set(),
   _layoutUpdatedAt: 0,
+
+  reset: () => {
+    clearMyUserIdCache();
+    set({
+      spaces: [],
+      currentSpaceId: null,
+      lastSelectedSpaceId: null,
+      channels: [],
+      categories: [],
+      members: [],
+      roles: [],
+      folders: [],
+      spaceLayout: null,
+      dmConversations: EMPTY_DM_CONVERSATIONS,
+      dmChannels: [],
+      spaceChannelIndex: new Map(),
+      channelToSpaceMap: new Map(),
+      channelLastMessageIds: new Map(),
+      spacePermissions: new Map(),
+      channelPermissions: new Map(),
+      channelOriginMap: new Map(),
+      voiceChannelIds: new Set(),
+      categoryOriginMap: new Map(),
+      dmAlternatives: new Map(),
+      userViews: new Map(),
+      loadingSpaceId: null,
+      loadedSpaceIds: new Set(),
+      _layoutUpdatedAt: 0,
+    });
+  },
 
   setSpaces: (spaces) => set({ spaces }),
   setCurrentSpace: (spaceId) =>
@@ -352,64 +378,94 @@ export const useSpaceStore = create<SpaceState>((set, get, apiStore) => ({
     }
   },
 
-  loadSpaceDetail: async (spaceId: string) => {
-    const rosterChanges: RosterChange[] = [];
-    try {
-      const space = get().spaces.find(s => s.id === spaceId);
-      if (!space) return;
-      set({ loadingSpaceId: spaceId });
-      const origin = space._instanceOrigin ?? '';
-      const client = getApiForOrigin(origin);
+  loadSpaceDetail: (spaceId: string, options?: { quiet?: boolean }) => {
+    const quiet = options?.quiet === true;
+    const seq = nextDetailRequestSeq();
+    // Whether a load of this space started after this one.
+    const overtaken = (): boolean => newestDetailRequests.get(spaceId)?.seq !== seq;
+    const newestResult = (): Promise<Channel[] | undefined> =>
+      newestDetailRequests.get(spaceId)?.result ?? Promise.resolve(undefined);
+    // Ends the loading state of this space's open, whichever load started it.
+    const endLoading = (state: SpaceState): string | null =>
+      state.loadingSpaceId === spaceId ? null : state.loadingSpaceId;
 
-      const logs = inFlightRosterLogs.get(spaceId) ?? new Set<RosterChange[]>();
-      logs.add(rosterChanges);
-      inFlightRosterLogs.set(spaceId, logs);
+    const result = (async (): Promise<Channel[] | undefined> => {
+      // Joins and leaves that arrive during the fetch, replayed onto its roster.
+      const rosterChanges: RosterChange[] = [];
+      try {
+        // Resolve the correct API client based on the server's instance origin
+        const space = get().spaces.find(s => s.id === spaceId);
+        if (!space) return undefined; // Not populated yet — remote WS ready will trigger reload
+        if (!quiet) set({ loadingSpaceId: spaceId });
+        const origin = space._instanceOrigin ?? '';
+        const client = getApiForOrigin(origin);
 
-      const detail = await client.spaces.get(spaceId);
-      if (origin) {
-        if (detail.icon) detail.icon = resolveAssetUrl(detail.icon, origin) ?? detail.icon;
+        const logs = inFlightRosterLogs.get(spaceId) ?? new Set<RosterChange[]>();
+        logs.add(rosterChanges);
+        inFlightRosterLogs.set(spaceId, logs);
+
+        const detail = await client.spaces.get(spaceId);
+        if (overtaken()) return newestResult();
+        // Normalize remote asset URLs (avatars, server icon)
+        if (origin) {
+          if (detail.icon) detail.icon = resolveAssetUrl(detail.icon, origin) ?? detail.icon;
+          for (const member of detail.members) {
+            normalizeUserAssets(member.user, origin);
+          }
+        }
+        // Upsert every member into the userViews cache (home or remote).
+        // Assets are already normalized above for the remote case.
         for (const member of detail.members) {
-          normalizeUserAssets(member.user, origin);
+          get().upsertUserView(member.user, origin);
         }
-      }
-      for (const member of detail.members) {
-        get().upsertUserView(member.user, origin);
-      }
 
-      const spacePermissions = new Map(get().spacePermissions);
-      const channelPermissions = new Map(get().channelPermissions);
-      if (detail.myPermissions) {
-        spacePermissions.set(spaceId, detail.myPermissions);
+        // The detail lists every channel of the space the user can see: the
+        // space's index entries become exactly these, whether or not it is
+        // open. `channels`, `categories`, `members` and `roles` belong to the
+        // open space. Every caller opens the space before loading it, so a
+        // space that is not open when its detail lands was left (or never
+        // opened, for a refresh): it only gets its index and permission
+        // entries.
+        let dropped: string[] = [];
+        set((state) => {
+          const replaced = replaceSpaceChannels(channelTablesOf(state), spaceId, origin, detail.channels);
+          dropped = replaced.dropped;
+          const spacePermissions = new Map(state.spacePermissions);
+          if (detail.myPermissions) spacePermissions.set(spaceId, detail.myPermissions);
+          const categories = detail.categories ?? [];
+          const fields = {
+            ...channelTableFields(state, replaced.tables),
+            categoryOriginMap: withCategoryOrigins(state.categoryOriginMap, categories, origin),
+            spacePermissions,
+            loadingSpaceId: endLoading(state),
+          };
+          if (state.currentSpaceId !== spaceId) return fields;
+          const loadedSpaceIds = new Set(state.loadedSpaceIds);
+          loadedSpaceIds.add(spaceId);
+          return {
+            ...fields,
+            lastSelectedSpaceId: spaceId,
+            channels: byPosition(detail.channels),
+            categories: byPosition(categories),
+            members: rosterChanges.reduce(replayRosterChange, detail.members),
+            roles: detail.roles.sort((a, b) => b.position - a.position),
+            loadedSpaceIds,
+          };
+        });
+        if (dropped.length > 0) useChatStore.getState().removeChannelStates(new Set(dropped));
+        return detail.channels;
+      } catch {
+        if (overtaken()) return newestResult();
+        set((state) => ({ loadingSpaceId: endLoading(state) }));
+        return undefined;
+      } finally {
+        const logs = inFlightRosterLogs.get(spaceId);
+        logs?.delete(rosterChanges);
+        if (logs?.size === 0) inFlightRosterLogs.delete(spaceId);
       }
-      for (const ch of detail.channels) {
-        if (ch.myPermissions) {
-          channelPermissions.set(ch.id, ch.myPermissions);
-        }
-      }
-
-      set((state) => {
-        const loadedSpaceIds = new Set(state.loadedSpaceIds);
-        loadedSpaceIds.add(spaceId);
-        return {
-          loadingSpaceId: null,
-          currentSpaceId: spaceId,
-          lastSelectedSpaceId: spaceId,
-          channels: detail.channels.sort((a, b) => a.position - b.position),
-          categories: (detail.categories || []).sort((a, b) => a.position - b.position),
-          members: rosterChanges.reduce(replayRosterChange, detail.members),
-          roles: detail.roles.sort((a, b) => b.position - a.position),
-          spacePermissions,
-          channelPermissions,
-          loadedSpaceIds,
-        };
-      });
-    } catch {
-      set({ loadingSpaceId: null });
-    } finally {
-      const logs = inFlightRosterLogs.get(spaceId);
-      logs?.delete(rosterChanges);
-      if (logs?.size === 0) inFlightRosterLogs.delete(spaceId);
-    }
+    })();
+    newestDetailRequests.set(spaceId, { seq, result });
+    return result;
   },
 
   createSpace: async (data: CreateSpaceRequest) => {
@@ -528,24 +584,65 @@ export const useSpaceStore = create<SpaceState>((set, get, apiStore) => ({
 
   upsertChannel: (channel: Channel, spaceId: string, origin: string) => {
     set((state) => {
-      state.channelToSpaceMap.set(channel.id, spaceId);
-      state.channelOriginMap.set(channel.id, origin);
-      if (channel.type === 'voice') state.voiceChannelIds.add(channel.id);
-
-      const channelPermissions = new Map(state.channelPermissions);
-      if (channel.myPermissions) {
-        channelPermissions.set(channel.id, channel.myPermissions);
-      }
-
-      if (state.currentSpaceId !== spaceId) {
-        return { channelPermissions };
-      }
+      const fields = channelTableFields(state, putChannels(channelTablesOf(state), spaceId, origin, [channel]));
+      // `channels` holds only the open space's list.
+      if (!isOpenSpace(state, spaceId, origin)) return fields;
       const exists = state.channels.some(c => c.id === channel.id);
-      const channels = (exists
+      const channels = byPosition(exists
         ? state.channels.map(c => (c.id === channel.id ? channel : c))
-        : [...state.channels, channel]
-      ).sort((a, b) => a.position - b.position);
-      return { channels, channelPermissions };
+        : [...state.channels, channel]);
+      return { ...fields, channels };
+    });
+  },
+
+  removeChannel: (channelId: string) => {
+    set((state) => {
+      const channels = state.channels.some(c => c.id === channelId)
+        ? state.channels.filter(c => c.id !== channelId)
+        : state.channels;
+      return { ...channelTableFields(state, dropChannels(channelTablesOf(state), [channelId])), channels };
+    });
+    useChatStore.getState().removeChannelStates(new Set([channelId]));
+  },
+
+  applyChannelLayout: (spaceId, origin, channels, categories) => {
+    let dropped: string[] = [];
+    set((state) => {
+      const replaced = replaceSpaceChannels(channelTablesOf(state), spaceId, origin, channels);
+      dropped = replaced.dropped;
+      const fields = {
+        ...channelTableFields(state, replaced.tables),
+        categoryOriginMap: withCategoryOrigins(state.categoryOriginMap, categories, origin),
+      };
+      if (!isOpenSpace(state, spaceId, origin)) return fields;
+      return { ...fields, channels: byPosition(channels), categories: byPosition(categories) };
+    });
+    if (dropped.length > 0) useChatStore.getState().removeChannelStates(new Set(dropped));
+  },
+
+  upsertCategory: (category, origin) => {
+    set((state) => {
+      const categoryOriginMap = withCategoryOrigins(state.categoryOriginMap, [category], origin);
+      if (!isOpenSpace(state, category.spaceId, origin)) return { categoryOriginMap };
+      const exists = state.categories.some(c => c.id === category.id);
+      const categories = byPosition(exists
+        ? state.categories.map(c => (c.id === category.id ? category : c))
+        : [...state.categories, category]);
+      return { categoryOriginMap, categories };
+    });
+  },
+
+  removeCategory: (categoryId, spaceId, origin) => {
+    set((state) => {
+      const categoryOriginMap = new Map(state.categoryOriginMap);
+      categoryOriginMap.delete(categoryId);
+      if (!isOpenSpace(state, spaceId, origin)) return { categoryOriginMap };
+      return {
+        categoryOriginMap,
+        categories: state.categories.filter(c => c.id !== categoryId),
+        // The server uncategorized them too.
+        channels: state.channels.map(ch => (ch.categoryId === categoryId ? { ...ch, categoryId: null } : ch)),
+      };
     });
   },
 
@@ -560,9 +657,8 @@ export const useSpaceStore = create<SpaceState>((set, get, apiStore) => ({
     const origin = get().channelOriginMap.get(channelId) ?? '';
     const channelApi = getApiForOrigin(origin);
     await channelApi.channels.delete(channelId);
-    set((state) => ({
-      channels: state.channels.filter(c => c.id !== channelId),
-    }));
+    // The channel_deleted WS event does the same; removing is idempotent.
+    get().removeChannel(channelId);
   },
 
   createCategory: async (spaceId: string, name: string) => {
@@ -570,10 +666,9 @@ export const useSpaceStore = create<SpaceState>((set, get, apiStore) => ({
     const origin = space?._instanceOrigin ?? '';
     const client = getApiForOrigin(origin);
     const category = await client.categories.create(spaceId, name);
-    set((state) => {
-      if (state.categories.some(c => c.id === category.id)) return state;
-      return { categories: [...state.categories, category].sort((a, b) => a.position - b.position) };
-    });
+    // The category_created WS event carries the same row; applying the
+    // response too means the caller sees it without waiting.
+    get().upsertCategory(category, origin);
     return category;
   },
 
@@ -582,11 +677,9 @@ export const useSpaceStore = create<SpaceState>((set, get, apiStore) => ({
     const space = known ? get().spaces.find(s => s.id === known.spaceId) : undefined;
     const origin = space?._instanceOrigin ?? get().categoryOriginMap.get(categoryId) ?? '';
     const category = await getApiForOrigin(origin).categories.update(categoryId, data);
-    set((state) => ({
-      categories: state.categories
-        .map(c => (c.id === category.id ? category : c))
-        .sort((a, b) => a.position - b.position),
-    }));
+    // The category_updated WS event carries the same row; applying the
+    // response too means the caller sees the stored value without waiting.
+    get().upsertCategory(category, origin);
     return category;
   },
 
@@ -614,39 +707,22 @@ export const useSpaceStore = create<SpaceState>((set, get, apiStore) => ({
   },
 
   removeSpace: (spaceId: string) => {
-    const currentState = get();
-    const channelIdsToRemove = new Set<string>();
-    for (const [channelId, sid] of currentState.channelToSpaceMap) {
-      if (sid === spaceId) channelIdsToRemove.add(channelId);
-    }
+    // Collect channel IDs before set() so we can clean up chatStore after
+    const channelIdsToRemove = new Set(channelIdsWhere(get().spaceChannelIndex, (e) => e.spaceId === spaceId));
 
     set((state) => {
-      const channelToSpaceMap = new Map(state.channelToSpaceMap);
-      const channelPermissions = new Map(state.channelPermissions);
-      const channelOriginMap = new Map(state.channelOriginMap);
-      const channelLastMessageIds = new Map(state.channelLastMessageIds);
       const spacePermissions = new Map(state.spacePermissions);
-
-      for (const channelId of channelIdsToRemove) {
-        channelToSpaceMap.delete(channelId);
-        channelPermissions.delete(channelId);
-        channelOriginMap.delete(channelId);
-        channelLastMessageIds.delete(channelId);
-      }
       spacePermissions.delete(spaceId);
 
       const loadedSpaceIds = new Set(state.loadedSpaceIds);
       loadedSpaceIds.delete(spaceId);
 
       return {
+        ...channelTableFields(state, dropChannels(channelTablesOf(state), channelIdsToRemove)),
         spaces: state.spaces.filter(s => s.id !== spaceId),
         currentSpaceId: state.currentSpaceId === spaceId ? null : state.currentSpaceId,
         lastSelectedSpaceId:
           state.lastSelectedSpaceId === spaceId ? null : state.lastSelectedSpaceId,
-        channelToSpaceMap,
-        channelPermissions,
-        channelOriginMap,
-        channelLastMessageIds,
         spacePermissions,
         loadedSpaceIds,
       };
@@ -661,12 +737,17 @@ export const useSpaceStore = create<SpaceState>((set, get, apiStore) => ({
     const key = activityKey(subject, origin);
     set((state) => {
       const typedStatus = status as 'online' | 'idle' | 'dnd' | 'offline';
-      let nextUserViews = state.userViews;
+      // Mirror the status into the userViews cache so any component reading via
+      // useCanonicalUserView (e.g. the FriendItem avatar dot) re-renders with
+      // fresh status — not just spaceStore.members which only feeds space UIs.
+      // Each entry is keyed as the origin that delivered it saw the user.
+      let changedViews: Map<string, UserViewEntry> | null = null;
       for (const [viewKey, entry] of state.userViews) {
         if (activityKey(entry.user, entry.deliveredBy) !== key) continue;
-        if (nextUserViews === state.userViews) nextUserViews = new Map(state.userViews);
-        nextUserViews.set(viewKey, { ...entry, user: { ...entry.user, status: typedStatus } });
+        changedViews ??= new Map(state.userViews);
+        changedViews.set(viewKey, { ...entry, user: { ...entry.user, status: typedStatus } });
       }
+      const nextUserViews = changedViews ?? state.userViews;
 
       const spaceOrigins = new Map<string, string>();
       const spaceOriginOf = (spaceId: string): string => {
@@ -749,35 +830,6 @@ export const useSpaceStore = create<SpaceState>((set, get, apiStore) => ({
     return null;
   },
 
-  reset: () => {
-    clearMyUserIdCache();
-    set({
-      spaces: [],
-      currentSpaceId: null,
-      lastSelectedSpaceId: null,
-      channels: [],
-      categories: [],
-      members: [],
-      roles: [],
-      folders: [],
-      spaceLayout: null,
-      dmConversations: EMPTY_DM_CONVERSATIONS,
-      dmChannels: [],
-      channelToSpaceMap: new Map(),
-      channelLastMessageIds: new Map(),
-      spacePermissions: new Map(),
-      channelPermissions: new Map(),
-      channelOriginMap: new Map(),
-      voiceChannelIds: new Set(),
-      categoryOriginMap: new Map(),
-      dmAlternatives: new Map(),
-      userViews: new Map(),
-      loadingSpaceId: null,
-      loadedSpaceIds: new Set(),
-      _layoutUpdatedAt: 0,
-    });
-  },
-
   // Slices
   ...createPopulateFromReadySlice(set, get, apiStore),
   ...createAddSpaceFromReadySlice(set, get, apiStore),
@@ -788,19 +840,41 @@ export const useSpaceStore = create<SpaceState>((set, get, apiStore) => ({
 export { pushLayoutToOrigin };
 
 /**
- * Data-driven DM channel detection. Returns true if the given channelId
- * belongs to a DM channel. Authoritative because dmChannels is populated
- * from the WS ready event and DM/server channel IDs never overlap.
+ * What the client knows a channel id to be. `unknown` until a listing or an
+ * event names it: before the `ready` of the instance that holds it, or after
+ * it was deleted or hidden. Space channel ids and DM channel ids never
+ * overlap, so the answer comes from the data alone, never from the URL.
  */
+export type ChannelKind = 'space' | 'dm' | 'unknown';
+
+function channelKindIn(
+  state: Pick<SpaceState, 'spaceChannelIndex' | 'dmChannels' | 'dmAlternatives'>,
+  channelId: string,
+): ChannelKind {
+  if (state.spaceChannelIndex.has(channelId)) return 'space';
+  // A DM is a listed row or another instance's copy of one (ADR 0002).
+  if (locateDmChannel(state.dmChannels, state.dmAlternatives, channelId)) return 'dm';
+  return 'unknown';
+}
+
+/** `ChannelKind` of `channelId` now. For event-time code; render reads `useIsDmChannel`. */
+export function getChannelKind(channelId: string): ChannelKind {
+  return channelKindIn(useSpaceStore.getState(), channelId);
+}
+
+/** Whether `channelId` is a known DM now. An unknown channel is not one. */
 export function isDmChannel(channelId: string): boolean {
-  const dmChannels = useSpaceStore.getState().dmChannels;
-  if (dmChannels.length > 0) {
-    return dmChannels.some(dm => dm.id === channelId);
-  }
-  if (typeof window !== 'undefined') {
-    return window.location.pathname.startsWith('/channels/@me/');
-  }
-  return false;
+  return getChannelKind(channelId) === 'dm';
+}
+
+/**
+ * Reactive `isDmChannel` for render: true for a DM, false for a space
+ * channel, undefined while the channel is unknown (see `ChannelKind`). Each
+ * caller decides what unknown means for it.
+ */
+export function useIsDmChannel(channelId: string): boolean | undefined {
+  const kind = useSpaceStore((s) => channelKindIn(s, channelId));
+  return kind === 'unknown' ? undefined : kind === 'dm';
 }
 
 /**
@@ -812,15 +886,19 @@ export function getChannelOrigin(channelId: string): string {
 }
 
 /**
- * Returns the owner's home-instance origin for a group DM, or '' for the
- * local home instance.
+ * The owner's home instance of a group DM as the channel records it
+ * (`ownerHomeInstance`, an origin or host), or '' when none is recorded.
+ * `utils/groupDmOwnerActions.ts` sends owner-only requests there.
+ *
+ * Distinct from getChannelOrigin: that function returns the channel's
+ * pinned serving origin (where the client's WS connection mirrors the
+ * channel), which can differ from the owner's home instance after a
+ * manual transfer.
  */
 export function getOwnerInstanceForDm(channelId: string): string {
   const dm = useSpaceStore.getState().dmChannels.find(d => d.id === channelId);
   return dm?.ownerHomeInstance ?? '';
 }
-
-setOwnerInstanceForDmResolver(getOwnerInstanceForDm);
 
 /**
  * Resolves a raw DM channel ID to its primary `dmChannels` entry ID.

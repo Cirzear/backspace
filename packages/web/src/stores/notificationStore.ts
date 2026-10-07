@@ -30,9 +30,9 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
     const roles = Object.fromEntries(Object.entries(get().roleIds).filter(([key]) => JSON.parse(key)[0] !== origin));
     for (const setting of settings) next[notificationKey({ origin, ...setting })] = setting;
     for (const space of spaces) {
-      const member = space.members.find(m => m.userId === userId);
+      const member = space.members?.find(m => m.userId === userId);
       roles[notificationKey({ origin, targetType: 'space', targetId: space.id })] = [
-        ...space.roles.filter(r => r.isEveryone).map(r => r.id),
+        ...(space.roles ?? []).filter(r => r.isEveryone).map(r => r.id),
         ...(member?.roles ?? []).map(r => r.id),
       ];
     }

@@ -311,7 +311,7 @@ export function OverviewPanel({ spaceId }: OverviewPanelProps) {
               type="button"
               onClick={() => canManageSpace && fileInputRef.current?.click()}
               disabled={!canManageSpace || uploadingIcon}
-              className={`relative w-16 h-16 rounded-full bg-surface-input border-2 border-dashed border-border-subtle flex items-center justify-center overflow-hidden group ${
+              className={`relative w-16 h-16 rounded-full bg-surface-input border-2 border-dashed border-border-soft flex items-center justify-center overflow-hidden group ${
                 canManageSpace ? 'hover:border-accent-primary cursor-pointer' : 'cursor-default'
               } transition-colors`}
             >
@@ -400,7 +400,7 @@ export function OverviewPanel({ spaceId }: OverviewPanelProps) {
               type="button"
               onClick={() => canManageSpace && bannerFileInputRef.current?.click()}
               disabled={!canManageSpace || uploadingBanner}
-              className={`relative w-full h-24 rounded-lg bg-surface-input border-2 border-dashed border-border-subtle flex items-center justify-center overflow-hidden group ${
+              className={`relative w-full h-24 rounded-lg bg-surface-input border-2 border-dashed border-border-soft flex items-center justify-center overflow-hidden group ${
                 canManageSpace ? 'hover:border-accent-primary cursor-pointer' : 'cursor-default'
               } transition-colors`}
             >

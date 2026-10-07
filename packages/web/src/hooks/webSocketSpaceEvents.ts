@@ -2,6 +2,7 @@ import { useChatStore } from '../stores/chatStore';
 import { useSpaceStore } from '../stores/spaceStore';
 import { useVoiceStore } from '../stores/voiceStore';
 import { resolveAssetUrl } from '../utils/assetUrls';
+import { channelIdsWhere } from '../stores/spaceChannels';
 import type { WebSocketEventHandlers } from './webSocketEvents';
 
 export const spaceEvents = {
@@ -9,49 +10,15 @@ export const spaceEvents = {
     useSpaceStore.getState().upsertChannel(event.channel, event.spaceId, origin);
   },
   channel_updated: (origin, event) => {
-    const { currentSpaceId } = useSpaceStore.getState();
-    const { currentSpaceId: curSpaceId2, channels: curChannels2, setChannels: setChannels2, channelPermissions: chPermsMap2 } = useSpaceStore.getState();
-    if (event.spaceId === curSpaceId2) {
-      const exists = curChannels2.some(c => c.id === event.channel.id);
-      if (exists) {
-        setChannels2(curChannels2.map(c => c.id === event.channel.id ? event.channel : c).sort((a, b) => a.position - b.position));
-      } else {
-        setChannels2([...curChannels2, event.channel].sort((a, b) => a.position - b.position));
-        const { channelToSpaceMap: ctsMmap, channelOriginMap: coMap } = useSpaceStore.getState();
-        ctsMmap.set(event.channel.id, event.spaceId);
-        coMap.set(event.channel.id, origin);
-      }
-    }
-    if (event.channel.myPermissions) {
-      chPermsMap2.set(event.channel.id, event.channel.myPermissions);
-    }
+    // Also how a channel comes back into view after an override change,
+    // in whichever space: the index entry is written wherever the space is.
+    useSpaceStore.getState().upsertChannel(event.channel, event.spaceId, origin);
   },
   channel_deleted: (origin, event) => {
-    const { currentSpaceId } = useSpaceStore.getState();
-    const { currentSpaceId: curSpaceId3, channels: curChannels3, setChannels: setChannels3, channelPermissions: chPermsMap3, channelToSpaceMap: ctsMap3, channelOriginMap: coMap3 } = useSpaceStore.getState();
-    if (event.spaceId === curSpaceId3) {
-      setChannels3(curChannels3.filter(c => c.id !== event.channelId));
-    }
-    // If the user is currently viewing the deleted channel, clear it
-    const { currentChannelId: deletedViewChannelId } = useChatStore.getState();
-    if (deletedViewChannelId === event.channelId) {
+    // Deleted, or hidden from this user by an override change.
+    useSpaceStore.getState().removeChannel(event.channelId);
+    if (useChatStore.getState().currentChannelId === event.channelId) {
       useChatStore.getState().setCurrentChannel(null);
-    }
-    chPermsMap3.delete(event.channelId);
-    ctsMap3.delete(event.channelId);
-    coMap3.delete(event.channelId);
-    // Clean up unread and read state for the deleted channel
-    {
-      const { channelLastMessageIds: clmIds } = useSpaceStore.getState();
-      clmIds.delete(event.channelId);
-      const cs = useChatStore.getState();
-      if (cs.unreadChannels.has(event.channelId) || cs.readStates.has(event.channelId)) {
-        const newUnread = new Set(cs.unreadChannels);
-        newUnread.delete(event.channelId);
-        const newRS = new Map(cs.readStates);
-        newRS.delete(event.channelId);
-        useChatStore.setState({ unreadChannels: newUnread, readStates: newRS });
-      }
     }
     // Clean up voice users for the deleted channel
     {
@@ -77,31 +44,16 @@ export const spaceEvents = {
     setSpaces(currentSpaces.map(s => s.id === event.space.id ? { ...s, ...event.space } : s));
   },
   category_created: (origin, event) => {
-    const { currentSpaceId } = useSpaceStore.getState();
-    const { currentSpaceId: catSpaceId, categories: curCategories, setCategories: setCats, categoryOriginMap: catOriginMap } = useSpaceStore.getState();
-    catOriginMap.set(event.category.id, origin);
-    if (event.spaceId === catSpaceId) {
-      if (!curCategories.some(c => c.id === event.category.id)) {
-        setCats([...curCategories, event.category].sort((a, b) => a.position - b.position));
-      }
-    }
+    useSpaceStore.getState().upsertCategory(event.category, origin);
   },
   category_updated: (origin, event) => {
-    const { currentSpaceId } = useSpaceStore.getState();
-    const { currentSpaceId: catSpaceId2, categories: curCategories2, setCategories: setCats2 } = useSpaceStore.getState();
-    if (event.spaceId === catSpaceId2) {
-      setCats2(curCategories2.map(c => c.id === event.category.id ? event.category : c).sort((a, b) => a.position - b.position));
-    }
+    useSpaceStore.getState().upsertCategory(event.category, origin);
   },
   category_deleted: (origin, event) => {
-    const { currentSpaceId } = useSpaceStore.getState();
-    const { currentSpaceId: catSpaceId3, categories: curCategories3, setCategories: setCats3, channels: curChsForCat, setChannels: setChsForCat, categoryOriginMap: catOriginMap3 } = useSpaceStore.getState();
-    catOriginMap3.delete(event.categoryId);
-    if (event.spaceId === catSpaceId3) {
-      setCats3(curCategories3.filter(c => c.id !== event.categoryId));
-      // Null out categoryId on affected channels (server already did this, but sync local state)
-      setChsForCat(curChsForCat.map(ch => ch.categoryId === event.categoryId ? { ...ch, categoryId: null } : ch));
-    }
+    useSpaceStore.getState().removeCategory(event.categoryId, event.spaceId, origin);
+  },
+  channel_layout_updated: (origin, event) => {
+    useSpaceStore.getState().applyChannelLayout(event.spaceId, origin, event.channels, event.categories);
   },
   space_layout_updated: (origin, event) => {
     // LWW: only accept if incoming timestamp >= current
@@ -130,4 +82,25 @@ export const spaceEvents = {
     if (!isHome) return;
     console.log('[WebSocket] Join request declined for space', event.request.spaceId);
   },
+  space_access_changed: (origin, event) => {
+    void refreshSpaceAccess(origin, event.spaceId);
+  },
 } satisfies WebSocketEventHandlers;
+
+async function refreshSpaceAccess(origin: string, spaceId: string): Promise<void> {
+  const { spaces, loadSpaceDetail } = useSpaceStore.getState();
+  if (!spaces.some(s => s.id === spaceId && (s._instanceOrigin ?? '') === origin)) return;
+  const { channelToSpaceMap, channelOriginMap } = useSpaceStore.getState();
+  const known = [...channelToSpaceMap]
+    .filter(([channelId, sId]) => sId === spaceId && (channelOriginMap.get(channelId) ?? '') === origin)
+    .map(([channelId]) => channelId);
+  const visible = await loadSpaceDetail(spaceId, { quiet: true });
+  if (!visible) return;
+  const { upsertChannel } = useSpaceStore.getState();
+  for (const channel of visible) upsertChannel(channel, spaceId, origin);
+  const visibleIds = new Set(visible.map(c => c.id));
+  for (const channelId of known) {
+    if (!visibleIds.has(channelId)) spaceEvents.channel_deleted(origin, { type: 'channel_deleted', channelId, spaceId });
+  }
+}
+

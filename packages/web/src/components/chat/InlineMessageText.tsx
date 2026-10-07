@@ -1,6 +1,6 @@
 import { MassMentionBadge } from './MassMentionBadge';
 import { MentionBadge } from './MentionBadge';
-import { replaceEmojiShortcodesInMarkdownSource } from '../../utils/emojiShortcodes';
+import { replaceEmojiShortcodesInMarkdownSource, useEmojiShortcodeNames } from '../../utils/emojiShortcodes';
 import { splitMentionTokens } from '../../utils/mentionTokens';
 
 const MASS_MENTION_SPLIT = /(<@&[a-zA-Z0-9_-]+>|(?<![\w@])@(?:everyone|here)(?![\w-]))/g;
@@ -34,6 +34,7 @@ function renderTextSegment(text: string, baseKey: number) {
  * else is plain text.
  */
 export function InlineMessageText({ content, channelId }: InlineMessageTextProps) {
+  useEmojiShortcodeNames();
   return (
     <>
       {splitMentionTokens(content).map((segment, i) =>

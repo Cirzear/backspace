@@ -12,6 +12,7 @@ import { isElectron } from '../../platform/platform';
 import { RESOLUTION_LABELS } from '@backspace/shared/src/constants';
 import i18n from '../../i18n';
 import { formatters } from '../../i18n/formatters';
+import { SYSTEM_AUDIO_NOTE_I18N_KEYS, systemAudioNote, useOwnAudioInSystemAudio } from '../../utils/systemAudioNote';
 
 /**
  * The stream quality controls (resolution, frame rate, content mode, codec,
@@ -129,6 +130,8 @@ export function StreamQualityControls() {
   const liveAudio = useVoiceStore((s) => s.screenShareAudio);
   const native = isNativeScreenShare();
   const audioSwitch = systemAudioSwitch(isScreenSharing, liveAudio, config.shareAudio);
+  const ownAudio = useOwnAudioInSystemAudio();
+  const audioNote = systemAudioNote(electronPlatform ?? null, ownAudio, audioSwitch.checked);
 
   // Unknown limits (not yet fetched, or a host that cannot be asked) show the
   // same defaults the stream itself falls back to.
@@ -313,15 +316,11 @@ export function StreamQualityControls() {
               </div>
             )}
             {native && <div className="text-xs text-txt-secondary mt-1">{t('voice:nativeScreenShare.audioNote')}</div>}
-            {!native && audioSwitch.checked && !audioSwitch.adding && (
-              <div className="text-[10px] text-accent-amber/80 mt-0.5">
-                {electronPlatform === 'win32'
-                  ? t('voice:streamSettings.electronWindowsAudioNote')
-                  : electronPlatform === 'darwin'
-                    ? t('voice:streamSettings.electronMacAudioNote')
-                    : electronPlatform === 'linux'
-                      ? t('voice:streamSettings.electronLinuxAudioNote')
-                      : t('voice:streamSettings.chromeEchoNote')}
+            {!native && audioNote && !audioSwitch.adding && (
+              <div
+                className={`text-[10px] mt-0.5 ${audioNote.tone === 'warning' ? 'text-accent-amber/80' : 'text-txt-tertiary'}`}
+              >
+                {t(SYSTEM_AUDIO_NOTE_I18N_KEYS[audioNote.key])}
               </div>
             )}
           </div>

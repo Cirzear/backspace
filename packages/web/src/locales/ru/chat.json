@@ -4,6 +4,7 @@
       "hint": "Esc для <cancel>отмены</cancel> • Enter для <save>сохранения</save>"
     },
     "edited": "(изменено)",
+    "rowLabel": "{{author}}, {{time}}",
     "gifAlt": "GIF-анимация",
     "upload": {
       "failed": "Не удалось загрузить файл",
@@ -34,11 +35,17 @@
     "noHistoryPermission": "У вас нет права просматривать историю сообщений в этом канале",
     "loading": "Загрузка сообщений",
     "loadingOlder": "Загрузка предыдущих сообщений",
+    "loadFailed": "Не удалось загрузить сообщения",
     "jumpToPresent": "К новым сообщениям",
     "jump": {
       "unavailable": "Это сообщение больше недоступно",
       "failed": "Не удалось загрузить сообщение",
       "presentFailed": "Не удалось загрузить новые сообщения"
+    },
+    "unread": {
+      "label": "Новые",
+      "divider": "Новые сообщения",
+      "dividerWithDate": "Новые сообщения, {{date}}"
     },
     "welcome": {
       "channel": {
@@ -195,5 +202,14 @@
     "selectedCount_many": "Выбрано {{count}} стикеров",
     "selectedCount_other": "Выбрано {{count}} стикеров",
     "dropMore": "Нажмите или перетащите еще изображения"
+  },
+  "embed": {
+    "loadAction": "Нажмите, чтобы загрузить",
+    "loadNamed": "Загрузить: {{name}}",
+    "loadUnnamed": "Загрузить встроенный контент",
+    "frameTitle": "Встроенный контент",
+    "playNamed": "Воспроизвести: {{title}}",
+    "playUnnamed": "Воспроизвести видео",
+    "videoTitle": "Видео"
   }
 }

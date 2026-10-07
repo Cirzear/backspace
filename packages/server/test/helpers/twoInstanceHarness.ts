@@ -74,6 +74,9 @@ async function allocateEphemeralPort(): Promise<number> {
 // genuine hang is still caught well inside the 90-180s hook timeouts.
 const READY_TIMEOUT_MS = 60_000;
 
+/** See `FEDERATION_BACKOFF_DIVISOR` in `spawnOnPort`. */
+const HARNESS_BACKOFF_DIVISOR = 30;
+
 /**
  * How many extra ports a harness-allocated instance may try before giving up.
  *
@@ -239,6 +242,9 @@ async function spawnOnPort(port: number, opts: SpawnInstanceOptions): Promise<Sp
   // inherited DISABLE_FEDERATION_WORKERS would otherwise silently re-disable the
   // workers a caller asked for.
   env.DISABLE_FEDERATION_WORKERS = opts.enableFederationWorkers ? '0' : '1';
+  // Shortened retry waits for every harness instance. Why: docs/systems/
+  // federation.md, "Retry backoff divisor (test only)".
+  env.FEDERATION_BACKOFF_DIVISOR = String(HARNESS_BACKOFF_DIVISOR);
   // Same reason: the directory pinger starts OUTSIDE the workers guard, so a
   // developer's own DIRECTORY_ENDPOINT would otherwise reach every spawned
   // instance and start a live pinger at the real hub from unrelated tests. The

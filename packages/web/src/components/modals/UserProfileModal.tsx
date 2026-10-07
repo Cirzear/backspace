@@ -18,7 +18,7 @@ import { parseFederatedUsername } from '../../utils/identity';
 import { loadFederatedMutuals, type TaggedMutualFriend, type MutualSpace } from '../../utils/mutuals';
 import { friendRequestTarget } from '../../utils/friendRequestTarget';
 import { presenceLabel } from '../../i18n/presence';
-import { replaceEmojiShortcodes } from '../../utils/emojiShortcodes';
+import { replaceEmojiShortcodes, useEmojiShortcodeNames } from '../../utils/emojiShortcodes';
 import { getProfileMember, useProfileMemberRoles } from '../../hooks/useProfileMember';
 import { useShownStatus } from '../../hooks/useShownStatus';
 import { ProfileRoles } from '../ui/ProfileRoles';
@@ -29,6 +29,7 @@ import { getFriendshipStatus, type FriendshipStatus } from '../../utils/friendsh
 type Tab = 'about' | 'friends' | 'spaces';
 
 export function UserProfileModal() {
+  useEmojiShortcodeNames();
   const { t } = useTranslation(['social', 'common']);
   const activeModal = useUIStore((s) => s.activeModal);
   const modalData = useUIStore((s) => s.modalData);

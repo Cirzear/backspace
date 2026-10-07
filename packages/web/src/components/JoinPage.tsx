@@ -271,7 +271,9 @@ export function JoinPage() {
               src={preview.icon ? getUploadUrl(preview.icon, parsed?.origin) : null}
               name={preview.spaceName}
               size={72}
+              userId={preview.spaceId}
               avatarColor={preview.avatarColor}
+              palette="space"
             />
           </div>
           <p className="text-xs text-txt-tertiary uppercase tracking-wide mb-1">{t('auth:join.invitedTo')}</p>

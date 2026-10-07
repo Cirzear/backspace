@@ -33,6 +33,7 @@ import { activeHomeNavItem } from '../../utils/homeNav';
 import { BackspaceMark } from '../projectHub/BackspaceMark';
 import { HubUpdateDot } from '../projectHub/HubUpdateDot';
 import { DropdownItem } from '../modals/settingsPanels/_shared/SettingsPickerPrimitives';
+import type { UserSettingsTab } from '../modals/UserSettings';
 
 export function ChannelSidebar() {
   const { t } = useTranslation(['spaces', 'common', 'project']);
@@ -874,7 +875,7 @@ function UserAreaPanel({
   isPermissionMuted: boolean;
   onMicToggle: () => void;
   onDeafenToggle: () => void;
-  onSettingsClick: (tab?: string) => void;
+  onSettingsClick: (tab?: UserSettingsTab) => void;
 }) {
   const { t } = useTranslation(['spaces', 'common', 'admin']);
   const [openPanel, setOpenPanel] = useState<'input' | 'output' | null>(null);
@@ -1298,7 +1299,7 @@ function ChannelItem({
     isDragOver: boolean;
     isValidTarget: boolean;
   };
-  channelPermissions: Map<string, string>;
+  channelPermissions: ReadonlyMap<string, string>;
   handleVoiceJoin: (channelId: string) => void;
 }) {
   const notificationMuted = useNotificationMuted({ origin: getChannelOrigin(channel.id), targetType: 'channel', targetId: channel.id });

@@ -32,6 +32,9 @@
     "you": "Du"
   },
   "chat": {
-    "channelFallback": "Kanal"
+    "channelFallback": "Kanal",
+    "openCall": "Anruf öffnen",
+    "cancelCall": "Anruf abbrechen",
+    "unknownChannel": "Kanal"
   }
 }

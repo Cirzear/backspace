@@ -1,11 +1,11 @@
+import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { useComposerMention } from './useComposerMention';
 import { MentionTextarea } from './MentionTextarea';
 import { composerMentions } from './composerMentions';
 import { useComposerClearance } from './useComposerClearance';
-import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useChatStore } from '../../stores/chatStore';
-import { isDmChannel, getChannelOrigin, useSpaceStore } from '../../stores/spaceStore';
+import { isDmChannel, useIsDmChannel, getChannelOrigin, useSpaceStore } from '../../stores/spaceStore';
 import { wsSend } from '../../hooks/useWebSocket';
 import { MentionPopover } from './MentionPopover';
 import { TypingIndicator } from './TypingIndicator';
@@ -91,6 +91,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   const previewUrlsRef = useRef<Map<string, string>>(new Map());
 
   const sendMessage = useChatStore((s) => s.sendMessage);
+  const returnToPresent = useChatStore((s) => s.returnToPresent);
   const chatReplyTo = useChatStore((s) => s.replyTo);
   const chatSetReplyTo = useChatStore((s) => s.setReplyTo);
   const editingMessageId = useChatStore((s) => s.editingMessageId);
@@ -109,9 +110,10 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
 
   // Permission gating: DM channels always allow sending; space channels check SEND_MESSAGES
   const channelPerms = useSpaceStore((s) => s.channelPermissions.get(channelId));
-  const isDm = isDmChannel(channelId);
-  const canSendMessages = isDm || hasPermissionBit(channelPerms, PermissionBits.SEND_MESSAGES);
-  const canAttachFiles = isDm || hasPermissionBit(channelPerms, PermissionBits.ATTACH_FILES);
+  // Undefined until the ready that lists the channel: nothing can be routed yet, so the composer stays locked.
+  const isDm = useIsDmChannel(channelId);
+  const canSendMessages = isDm === true || hasPermissionBit(channelPerms, PermissionBits.SEND_MESSAGES);
+  const canAttachFiles = isDm === true || hasPermissionBit(channelPerms, PermissionBits.ATTACH_FILES);
 
   // Derive staged transfers from composerStore staged ids + transferStore map
   const stagedTransfers: Transfer[] = useMemo(() => {
@@ -379,6 +381,9 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
       .filter((x): x is number => typeof x === 'number' && x > 0);
     const tusExpiresAt = expirations.length > 0 ? Math.min(...expirations) : fallbackExpires;
 
+    // As for a text send (chatStore.sendMessage): sending from a window of
+    // older history goes back to the present, where the message will appear.
+    void returnToPresent(channelId);
     appendBubble({
       clientId,
       channelId,
@@ -732,8 +737,10 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     return (
       <div ref={setComposerRef} data-pip-obstacle="bottom" className={composerClass} style={composerStyle}>
         <div className="flex items-center justify-center py-[14px] px-4">
+          {/* While the channel is unknown (before its ready) nothing is refused yet:
+              the shell alone, a non-breaking space keeping its height. */}
           <span className="text-txt-tertiary text-[14px]">
-            {t('chat:composer.noPermission')}
+            {isDm === undefined ? '\u00a0' : t('chat:composer.noPermission')}
           </span>
         </div>
       </div>

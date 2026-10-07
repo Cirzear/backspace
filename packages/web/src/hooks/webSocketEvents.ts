@@ -10,7 +10,7 @@ import { spaceEvents } from './webSocketSpaceEvents';
 import { voiceEvents } from './webSocketVoiceEvents';
 
 export type WebSocketEventHandlers = {
-  [Kind in ServerEvent['type']]?: (origin: string, event: Extract<ServerEvent, { type: Kind }>) => void;
+  [Kind in ServerEvent['type']]?: (origin: string, event: Extract<ServerEvent, { type: Kind }>, readyAlreadyDelivered?: boolean) => void;
 };
 
 const handlers = {
@@ -25,8 +25,9 @@ const handlers = {
   ...miscEvents,
 };
 
-export function handleEvent(origin: string, event: ServerEvent): void {
+export function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered = false): void {
   // The discriminator selects the matching payload type from the same event.
   const handler = handlers[event.type as keyof typeof handlers];
-  handler?.(origin, event as never);
+  handler?.(origin, event as never, readyAlreadyDelivered as never);
 }
+

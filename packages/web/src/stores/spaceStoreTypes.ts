@@ -17,6 +17,7 @@ import type {
 import type { PresenceSubject } from '../utils/identity';
 import type { PeerDmChannel } from '../utils/dmConversationKey';
 import type { DmConversations } from './dmConversations';
+import type { SpaceChannelIndex } from './spaceChannels';
 import type { TaggedSpace, UserViewEntry } from './spaceStore';
 
 export interface SpaceState {
@@ -49,19 +50,31 @@ export interface SpaceState {
   dmConversations: DmConversations;
   /** Derived: the pinned copy of each conversation, sorted by `sortDmChannels`. The DM list. */
   dmChannels: DmChannel[];
-  channelToSpaceMap: Map<string, string>;
-  channelLastMessageIds: Map<string, string>;
-  spacePermissions: Map<string, string>; // spaceId → myPermissions decimal string
-  channelPermissions: Map<string, string>; // channelId → myPermissions decimal string
-  channelOriginMap: Map<string, string>; // channelId → instance origin ('' = home)
-  voiceChannelIds: Set<string>; // channelIds that are voice channels (excluded from unread)
-  categoryOriginMap: Map<string, string>; // categoryId → instance origin ('' = home)
+  /**
+   * Every space channel the user can see on every connected instance, open
+   * space or not: channelId → { spaceId, origin, type } (`stores/spaceChannels.ts`).
+   * The only space-channel record actions write; the lookup maps below are
+   * derived from it.
+   */
+  spaceChannelIndex: SpaceChannelIndex;
+  /** Derived: space channelId → spaceId. */
+  channelToSpaceMap: ReadonlyMap<string, string>;
+  /** channelId → last message id a listing reported: space channels by the space actions, DMs derived. */
+  channelLastMessageIds: ReadonlyMap<string, string>;
+  spacePermissions: ReadonlyMap<string, string>; // spaceId → myPermissions decimal string
+  /** Space channelId → myPermissions decimal string. Changes with the index. */
+  channelPermissions: ReadonlyMap<string, string>;
+  /** Derived: channelId → instance origin ('' = home), space channels and pinned DM copies. */
+  channelOriginMap: ReadonlyMap<string, string>;
+  /** Derived: the voice channels (excluded from unread). */
+  voiceChannelIds: ReadonlySet<string>;
+  categoryOriginMap: ReadonlyMap<string, string>; // categoryId → instance origin ('' = home)
   /**
    * Derived: conversation key → (origin → that origin's channel id), for every
    * copy of every keyed conversation, the pinned one included. The index
    * `resolveDmChannelId` reads to place an id another instance sent.
    */
-  dmAlternatives: Map<string, Map<string, string>>;
+  dmAlternatives: ReadonlyMap<string, ReadonlyMap<string, string>>;
   /**
    * canonicalUserKey → best-known view of that user. Populated from every wire
    * surface that delivers a User object (DM members, message authors, friends,
@@ -71,7 +84,7 @@ export interface SpaceState {
    * `getCanonicalUserView` / `useCanonicalUserView` to surface the home view
    * even when the carrying channel was deduped away.
    */
-  userViews: Map<string, UserViewEntry>;
+  userViews: ReadonlyMap<string, UserViewEntry>;
   loadingSpaceId: string | null; // non-null while loadSpaceDetail is fetching
   /**
    * Set of spaceIds whose `loadSpaceDetail` has completed at least once this
@@ -81,7 +94,7 @@ export interface SpaceState {
    * — see `MobileSpacesScreen`'s mascot empty state, which must not appear
    * during the pre-skeleton load window.
    */
-  loadedSpaceIds: Set<string>;
+  loadedSpaceIds: ReadonlySet<string>;
   _layoutUpdatedAt: number;
   setSpaces: (spaces: TaggedSpace[]) => void;
   setCurrentSpace: (spaceId: string | null) => void;
@@ -122,7 +135,7 @@ export interface SpaceState {
   closeDm: (id: string) => Promise<void>;
   leaveDm: (id: string) => Promise<void>;
   loadSpaces: () => Promise<void>;
-  loadSpaceDetail: (spaceId: string) => Promise<void>;
+  loadSpaceDetail: (spaceId: string, options?: { quiet?: boolean }) => Promise<Channel[] | null>;
   createSpace: (data: CreateSpaceRequest) => Promise<Space>;
   updateSpace: (spaceId: string, data: UpdateSpaceRequest) => Promise<void>;
   deleteSpace: (spaceId: string) => Promise<void>;
@@ -132,14 +145,23 @@ export interface SpaceState {
   generateInvite: (spaceId: string) => Promise<string>;
   createChannel: (spaceId: string, name: string, type: 'text' | 'voice', topic?: string, categoryId?: string) => Promise<Channel>;
   upsertChannel: (channel: Channel, spaceId: string, origin: string) => void;
+  removeChannel: (channelId: string) => void;
   /** Updates a space channel on its own instance and applies the stored row,
    *  which the server may have normalized (see `normalizeChannelName`). */
   updateChannel: (channelId: string, data: UpdateChannelRequest) => Promise<Channel>;
   deleteChannel: (channelId: string) => Promise<void>;
+  applyChannelLayout: (
+    spaceId: string,
+    origin: string,
+    channels: readonly Channel[],
+    categories: readonly ChannelCategory[],
+  ) => void;
   createCategory: (spaceId: string, name: string) => Promise<ChannelCategory>;
+  upsertCategory: (category: ChannelCategory, origin: string) => void;
   /** Updates a category on its space's instance and applies the stored row. */
   updateCategory: (categoryId: string, data: { name?: string; position?: number }) => Promise<ChannelCategory>;
   deleteCategory: (categoryId: string) => Promise<void>;
+  removeCategory: (categoryId: string, spaceId: string, origin: string) => void;
   updateChannelLayout: (spaceId: string, data: { channels: Array<{ id: string; position: number; categoryId: string | null }>; categories: Array<{ id: string; position: number }> }) => Promise<void>;
   addSpace: (space: Space) => void;
   removeSpace: (spaceId: string) => void;

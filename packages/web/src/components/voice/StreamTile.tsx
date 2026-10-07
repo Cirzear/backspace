@@ -10,7 +10,7 @@ import { handleScreenShareAction } from '../../utils/voiceActions';
 import { openScreenShareSetup } from '../../stores/screenShareSetupStore';
 import { useStreamHostLimits } from '../../utils/streamHostLimits';
 import { DEFAULT_STREAMING_LIMITS } from '../../stores/settingsStore';
-import { encodeStreamWatch } from '../../utils/streamWatchProtocol';
+import { encodeStreamWatch, streamWatchFor, type StreamWatchTarget } from '../../utils/streamWatchProtocol';
 import { AudioManager } from '../../audio/AudioManager';
 import { getSfxVolume } from '../../utils/sfx';
 import { ScreenShareSettingsPopover } from './ScreenShareSettingsPopover';
@@ -191,14 +191,14 @@ function StreamAttenuationItem() {
  * the streamer), so the viewer gets identical feedback on every platform —
  * Safari and the Electron desktop app alike.
  */
-function handleViewerWatchToggle(streamerUserId: string, watching: boolean): void {
+function handleViewerWatchToggle(sharer: StreamWatchTarget, watching: boolean): void {
   AudioManager.getInstance().playSound(
     watching ? 'stream_user_joined' : 'stream_user_left',
     { volume: getSfxVolume() },
   );
   const room = getActiveRoom();
   if (!room) return;
-  const payload = encodeStreamWatch({ type: 'stream_watch', target: streamerUserId, watching });
+  const payload = encodeStreamWatch(streamWatchFor(sharer, watching));
   // Reliable delivery; data channels are room-scoped and small (under 1KB).
   void room.localParticipant.publishData(payload, { reliable: true });
 }
@@ -360,7 +360,7 @@ export function StreamTile({ tile, large, stats }: StreamTileProps) {
             onClick: () => {
               useVoiceStore.getState().unwatchStream(userId);
               setStreamSubscription(getActiveRoom(), identity, false);
-              handleViewerWatchToggle(userId, false);
+              handleViewerWatchToggle({ userId, identity }, false);
             },
           });
         } else {
@@ -374,7 +374,7 @@ export function StreamTile({ tile, large, stats }: StreamTileProps) {
             onClick: () => {
               useVoiceStore.getState().watchStream(userId);
               setStreamSubscription(getActiveRoom(), identity, true);
-              handleViewerWatchToggle(userId, true);
+              handleViewerWatchToggle({ userId, identity }, true);
             },
           });
         }
@@ -418,7 +418,7 @@ export function StreamTile({ tile, large, stats }: StreamTileProps) {
   const handleWatch = useCallback(() => {
     useVoiceStore.getState().watchStream(userId);
     setStreamSubscription(getActiveRoom(), screenPublisherIdentity, true);
-    handleViewerWatchToggle(userId, true);
+    handleViewerWatchToggle({ userId, identity: screenPublisherIdentity }, true);
   }, [userId, screenPublisherIdentity]);
 
   const hasVideo = liveScreenTrack !== null;

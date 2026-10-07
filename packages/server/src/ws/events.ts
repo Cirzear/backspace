@@ -19,6 +19,8 @@ import { dmMessageMutationTarget, queueDmRelay, queueDmMessageDeleteRelay, sendT
 import { handleReactionAdd, handleReactionRemove } from './reactionEvents.js';
 import { handleVoiceJoin, handleVoiceLeave, handleVoiceStatus, handleVoiceSpaceMute, handleVoiceSpaceDeafen, handleVoiceMove, handleVoiceDisconnect } from './voiceEvents.js';
 import { handleDmCallStart, handleDmCallAccept, handleDmCallReject, handleDmCallEnd } from './dmCallEvents.js';
+import { ERROR_MESSAGES } from '../utils/httpErrors.js';
+import { dmMessageEditRefusal } from '../utils/dmSystemMessages.js';
 
 // Keep the established public entry points while implementations stay domain-scoped.
 export { checkVoicePermissions } from './voiceEvents.js';
@@ -451,7 +453,7 @@ function handleActivityUpdate(event: Record<string, unknown>, userId: string): v
   for (const uid of targets) connectionManager.sendToUser(uid, payload);
   connectionManager.sendToUser(userId, payload);
 
-  // S2S: project to all active peers (activities + current status).
+  // S2S: broadcast to peers (activities + current status); see queueOutboxEvent.
   void import('../utils/federationPresence.js').then(({ queuePresenceRelay }) => {
     try { queuePresenceRelay(userId, status as 'online' | 'idle' | 'dnd' | 'offline', activities); } catch (e) { console.warn('[ws] queuePresenceRelay(activity) failed', e); }
   });
@@ -622,8 +624,9 @@ function handleDmMessageEdit(event: Record<string, unknown>, userId: string): vo
     return;
   }
 
-  if (msg.userId !== userId) {
-    connectionManager.sendToUser(userId, { type: 'error', message: 'You can only edit your own messages' });
+  const editRefusal = dmMessageEditRefusal(msg, userId);
+  if (editRefusal) {
+    connectionManager.sendToUser(userId, { type: 'error', message: ERROR_MESSAGES[editRefusal], code: editRefusal });
     return;
   }
 

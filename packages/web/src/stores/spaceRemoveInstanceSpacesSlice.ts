@@ -1,11 +1,21 @@
-import { useChatStore } from './chatStore';
-
 import type { StateCreator } from 'zustand';
+import { useChatStore } from './chatStore';
 import { dropOrigin } from './dmConversations';
-import { commitDmOperation, dmPinContext, type UserViewEntry } from './spaceStore';
-import type { SpaceState } from './spaceStoreTypes';
+import {
+  channelIdsWhere,
+  channelTableFields,
+  channelTablesOf,
+  dropChannels,
+} from './spaceChannels';
+import { commitDmOperation, dmPinContext } from './spaceStore';
+import type { SpaceState, UserViewEntry } from './spaceStoreTypes';
 
-export const createRemoveInstanceSpacesSlice: StateCreator<SpaceState, [], [], Pick<SpaceState, 'removeInstanceSpaces'>> = (set, get) => ({
+export const createRemoveInstanceSpacesSlice: StateCreator<
+  SpaceState,
+  [],
+  [],
+  Pick<SpaceState, 'removeInstanceSpaces'>
+> = (set, get) => ({
   removeInstanceSpaces: (origin: string) => {
     // Collect channel IDs before set() for chatStore cleanup
     const currentState = get();
@@ -15,26 +25,19 @@ export const createRemoveInstanceSpacesSlice: StateCreator<SpaceState, [], [], P
     }
 
     set((state) => {
-      const remainingSpaces = state.spaces.filter(s => s._instanceOrigin !== origin);
+      const remainingSpaces = state.spaces.filter((s) => s._instanceOrigin !== origin);
 
-      // Clean up maps for channels that belonged to this origin
-      const channelToSpaceMap = new Map(state.channelToSpaceMap);
-      const channelLastMessageIds = new Map(state.channelLastMessageIds);
-      const channelPermissions = new Map(state.channelPermissions);
-      const channelOriginMap = new Map(state.channelOriginMap);
       const spacePermissions = new Map(state.spacePermissions);
-
-      for (const channelId of channelIdsToRemove) {
-        channelToSpaceMap.delete(channelId);
-        channelLastMessageIds.delete(channelId);
-        channelPermissions.delete(channelId);
-        channelOriginMap.delete(channelId);
-      }
       for (const s of state.spaces) {
         if (s._instanceOrigin === origin) {
           spacePermissions.delete(s.id);
         }
       }
+      const categoryOriginMap = new Map<string, string>();
+      for (const [categoryId, categoryOrigin] of state.categoryOriginMap) {
+        if (categoryOrigin !== origin) categoryOriginMap.set(categoryId, categoryOrigin);
+      }
+      const spaceChannelIds = channelIdsWhere(state.spaceChannelIndex, (e) => e.origin === origin);
 
       // Prune userViews: drop entries delivered by this origin. Symmetrical
       // with the DM copies — full removal evicts; transient disconnect leaves
@@ -48,7 +51,7 @@ export const createRemoveInstanceSpacesSlice: StateCreator<SpaceState, [], [], P
 
       // Drop loadedSpaceIds entries for spaces removed by this instance teardown
       const removedSpaceIds = new Set(
-        state.spaces.filter(s => s._instanceOrigin === origin).map(s => s.id)
+        state.spaces.filter((s) => s._instanceOrigin === origin).map((s) => s.id)
       );
       const loadedSpaceIds = new Set<string>();
       for (const id of state.loadedSpaceIds) {
@@ -56,17 +59,15 @@ export const createRemoveInstanceSpacesSlice: StateCreator<SpaceState, [], [], P
       }
 
       return {
+        ...channelTableFields(state, dropChannels(channelTablesOf(state), spaceChannelIds)),
         spaces: remainingSpaces,
-        channelToSpaceMap,
-        channelLastMessageIds,
-        channelPermissions,
-        channelOriginMap,
         spacePermissions,
+        categoryOriginMap,
         userViews,
-        currentSpaceId: remainingSpaces.find(s => s.id === state.currentSpaceId)
+        currentSpaceId: remainingSpaces.find((s) => s.id === state.currentSpaceId)
           ? state.currentSpaceId
           : null,
-        lastSelectedSpaceId: remainingSpaces.find(s => s.id === state.lastSelectedSpaceId)
+        lastSelectedSpaceId: remainingSpaces.find((s) => s.id === state.lastSelectedSpaceId)
           ? state.lastSelectedSpaceId
           : null,
         loadedSpaceIds,

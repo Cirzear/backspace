@@ -3,6 +3,7 @@ import type { ClientEvent, ServerEvent } from '@backspace/shared';
 import React, { useEffect, useRef } from 'react';
 import { detectClientKind } from '../platform/clientKind';
 import { useAuthStore } from '../stores/authStore';
+import { useVoiceStore } from '../stores/voiceStore';
 import { handleEvent } from './webSocketEvents';
 
 // ─── Connection state ─────────────────────────────────────────────────────────
@@ -57,14 +58,6 @@ function stopHeartbeat(conn: ConnectionState): void {
   }
 }
 
-// ─── Call relay helpers ───────────────────────────────────────────────────────
-
-import { buildCallUndeliverableToast } from '../utils/callUndeliverableToast';
-
-export { buildCallUndeliverableToast };
-
-// ─── Event handling ───────────────────────────────────────────────────────────
-
 const HOME_ORIGIN = '';
 
 // ─── Connection management ────────────────────────────────────────────────────
@@ -103,6 +96,8 @@ function connectToOrigin(origin: string, token: string): void {
     startHeartbeat(conn);
   };
 
+  // Whether this socket has delivered its session's `ready` yet.
+  let readyDelivered = false;
   ws.onmessage = (e) => {
     let event: ServerEvent;
     try {
@@ -111,8 +106,10 @@ function connectToOrigin(origin: string, token: string): void {
       console.error(`Failed to parse WebSocket message (${origin || 'home'})`);
       return;
     }
+    const readyAlreadyDelivered = readyDelivered;
+    if (event.type === 'ready') readyDelivered = true;
     try {
-      handleEvent(origin, event);
+      handleEvent(origin, event, readyAlreadyDelivered);
     } catch (err) {
       console.error('Error handling WS event "%s" (%s):', event.type, origin || 'home', err);
     }

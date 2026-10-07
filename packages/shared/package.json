@@ -1,6 +1,6 @@
 {
   "name": "@backspace/shared",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "private": true,
   "license": "AGPL-3.0-only",
   "author": "Jannis Braun",
@@ -20,7 +20,9 @@
     "./src/errors": "./src/errors.ts",
     "./src/errors.js": "./src/errors.ts",
     "./src/stickers": "./src/stickers.ts",
-    "./src/stickers.js": "./src/stickers.ts"
+    "./src/stickers.js": "./src/stickers.ts",
+    "./src/dmSystemEvents": "./src/dmSystemEvents.ts",
+    "./src/dmSystemEvents.js": "./src/dmSystemEvents.ts"
   },
   "scripts": {
     "build": "tsc",

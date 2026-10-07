@@ -1,11 +1,22 @@
 import type { SpaceWithChannelsAndMembers } from '@backspace/shared';
-import { resolveAssetUrl } from '../utils/assetUrls';
-
 import type { StateCreator } from 'zustand';
-import { type TaggedSpace } from './spaceStore';
+import { resolveAssetUrl } from '../utils/assetUrls';
+import { useChatStore } from './chatStore';
+import {
+  channelTableFields,
+  channelTablesOf,
+  replaceSpaceChannels,
+  withCategoryOrigins,
+} from './spaceChannels';
+import type { TaggedSpace } from './spaceStore';
 import type { SpaceState } from './spaceStoreTypes';
 
-export const createAddSpaceFromReadySlice: StateCreator<SpaceState, [], [], Pick<SpaceState, 'addSpaceFromReady'>> = (set, get) => ({
+export const createAddSpaceFromReadySlice: StateCreator<
+  SpaceState,
+  [],
+  [],
+  Pick<SpaceState, 'addSpaceFromReady'>
+> = (set, _get) => ({
   addSpaceFromReady: (origin: string, space: SpaceWithChannelsAndMembers) => {
     // Normalize remote asset URLs before creating the tagged object
     if (origin) {
@@ -29,34 +40,19 @@ export const createAddSpaceFromReadySlice: StateCreator<SpaceState, [], [], Pick
       _instanceOrigin: origin,
     };
 
-    const channelToSpaceMap = new Map(get().channelToSpaceMap);
-    const channelLastMessageIds = new Map(get().channelLastMessageIds);
-    const spacePermissions = new Map(get().spacePermissions);
-    const channelPermissions = new Map(get().channelPermissions);
-    const channelOriginMap = new Map(get().channelOriginMap);
-
-    if (space.myPermissions) {
-      spacePermissions.set(space.id, space.myPermissions);
-    }
-    for (const ch of space.channels) {
-      channelToSpaceMap.set(ch.id, space.id);
-      channelOriginMap.set(ch.id, origin);
-      if (ch.lastMessageId) {
-        channelLastMessageIds.set(ch.id, ch.lastMessageId);
-      }
-      if (ch.myPermissions) {
-        channelPermissions.set(ch.id, ch.myPermissions);
-      }
-    }
-
-    set((state) => ({
-      spaces: [...state.spaces.filter(s => s.id !== space.id), tagged],
-      channelToSpaceMap,
-      channelLastMessageIds,
-      spacePermissions,
-      channelPermissions,
-      channelOriginMap,
-    }));
+    let dropped: string[] = [];
+    set((state) => {
+      const replaced = replaceSpaceChannels(channelTablesOf(state), space.id, origin, space.channels);
+      dropped = replaced.dropped;
+      const spacePermissions = new Map(state.spacePermissions);
+      if (space.myPermissions) spacePermissions.set(space.id, space.myPermissions);
+      return {
+        ...channelTableFields(state, replaced.tables),
+        spaces: [...state.spaces.filter((s) => s.id !== space.id), tagged],
+        spacePermissions,
+        categoryOriginMap: withCategoryOrigins(state.categoryOriginMap, space.categories ?? [], origin),
+      };
+    });
+    if (dropped.length > 0) useChatStore.getState().removeChannelStates(new Set(dropped));
   },
-
 });

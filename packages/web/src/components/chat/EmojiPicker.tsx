@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next';
 import { StickerPicker } from './StickerPicker';
 import React, { useRef, useEffect, useState } from 'react';
 import Picker from '@emoji-mart/react';
-import data from '@emoji-mart/data';
+import { loadEmojiData } from '../../utils/emojiData';
 
 interface EmojiPickerProps {
   onEmojiSelect: (emoji: { native: string }) => void;
@@ -86,8 +86,11 @@ export function EmojiPicker({ onEmojiSelect, mobile = false, stickers = true }: 
           </button>
         </div>
       )}
-      {stickers && showStickers ? <StickerPicker mobile={mobile} onSelect={token => onEmojiSelect({ native: token })} /> : <Picker
-        data={data}
+      {stickers && showStickers ? (
+        <StickerPicker mobile={mobile} onSelect={token => onEmojiSelect({ native: token })} />
+      ) : (
+        <Picker
+          data={loadEmojiData}
         onEmojiSelect={onEmojiSelect}
         theme="dark"
         set="native"

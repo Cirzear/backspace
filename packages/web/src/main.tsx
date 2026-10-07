@@ -9,7 +9,7 @@ import { StartupError } from './mobile/StartupError';
 import i18n, { initI18n } from './i18n';
 import './styles/globals.css';
 import { initializeInterfaceScale } from './platform/interfaceScale';
-import { loadDiscordEmojiAliases } from './utils/emojiShortcodes';
+import { waitForEmojiShortcodeNames } from './utils/emojiShortcodes';
 
 
 class ErrorBoundary extends React.Component<
@@ -135,10 +135,14 @@ window.addEventListener('backspace:session-storage-error', event => {
   showStartupError((event as CustomEvent<unknown>).detail);
 });
 
+const EMOJI_NAMES_MAX_WAIT_MS = 1000;
+
 async function bootstrap(): Promise<void> {
   const stopInterfaceScale = initializeInterfaceScale();
   if (import.meta.hot) import.meta.hot.dispose(stopInterfaceScale);
-  await Promise.all([initI18n(), loadDiscordEmojiAliases()]);
+  const i18nReady = initI18n()
+    .catch((err) => { console.error('[i18n] Failed to initialise, rendering in English:', err); });
+  await Promise.all([i18nReady, waitForEmojiShortcodeNames(EMOJI_NAMES_MAX_WAIT_MS)]);
   if (blocked) return;
   if (Capacitor.isNativePlatform()) {
     const origin = getSelectedMobileOrigin();

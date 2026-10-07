@@ -1,7 +1,7 @@
 # Database Schema Reference
 
 Source of truth: `packages/server/src/db/schema.ts` (Drizzle ORM)
-Migrations: drizzle-kit generates SQL from `schema.ts` (`pnpm db:generate` from `packages/server/`). On startup, `initDatabase()` runs `drizzle.migrate()` against `packages/server/drizzle/`, then `ensureDefaults()` (settings row, Snowflake worker ID, instance epoch, `installedAt` backfill, first-admin promotion), `backfillOneOnOneDmMembership()` and `backfillOneOnOneKeys()` (every 1-on-1 `dm_channels` row gets the key of its two members; see dm-system.md "Federated ID Algorithm"). Migration history was squashed to a single baseline on 2026-04-24 (backlog #31 Phase 2).
+Migrations: drizzle-kit generates SQL from `schema.ts` (`pnpm db:generate` from `packages/server/`). On startup, `initDatabase()` runs `drizzle.migrate()` against `packages/server/drizzle/`, then `ensureDefaults()` (settings row, Snowflake worker ID, instance epoch, `installedAt` backfill, first-admin promotion), `backfillOneOnOneDmMembership()` and `backfillOneOnOneKeys()` (every 1-on-1 `dm_channels` row gets the key of its two members; see dm-system.md "Federated ID Algorithm"). Migration history was squashed to a single baseline on 2026-04-24 (backlog #31 Phase 2). Databases created before the squash keep the tables the old hand-written statements made, which differ from what the baseline creates (inline `UNIQUE` constraints instead of named unique indexes, text primary keys without `NOT NULL`, extra columns), so a migration must not assume an index or column only the baseline creates. `packages/server/test/fixtures/pre-squash-schema.sql` holds that shape, and `src/db/preSquashUpgrade.test.ts` boots it, a squashed install and an empty database through `initDatabase()` and checks the outbox ends identical on all three.
 Engine: SQLite via `better-sqlite3`
 IDs: Snowflake text, permissions: bigint decimal strings
 
@@ -178,6 +178,7 @@ PK: (dmChannelId, userId)
 | dmChannelId | text NOT NULL | | FK → dm_channels.id CASCADE |
 | userId | text NOT NULL | | FK → users.id CASCADE |
 | closed | integer | 0 | Soft-close flag |
+| closedChangedAt | integer NOT NULL | 0 | When `closed` took its value: insertion or local change (local clock), or a relayed close/reopen's timestamp. Last-writer-wins against relayed close/reopen; written only by `utils/dmMemberClosed.ts` (dm-system.md "Closed state is last-writer-wins"). Rows present at migration 0022 were stamped with the migration time |
 
 ### dm_messages
 | Column | Type | Default | Notes |
@@ -410,6 +411,7 @@ The user INSERT, `usedCount` increment, and redemption row INSERT all run in a s
 | directoryBrowseEnabled | integer NOT NULL | 1 | The admin allows people on this instance to see spaces from other instances in Explore ("Outer Space"). The incoming half of the directory, independent of `directoryEnabled`, which is the outgoing half. `GET /api/directory` answers `404 directory_disabled` while it is 0, and `instance/info` reports `directoryAvailable: false`. Default 1, which is what every instance did before the column existed. `DIRECTORY_ENDPOINT` sits above it: with no endpoint there is nothing to browse whatever it says. Nowhere in the served document, so changing it never marks `directoryDirty`. See [directory.md](directory.md). |
 | supportCardEnabled | integer (boolean mode) NOT NULL | 1 | The web client's Backspace page shows the Support card, which links to the project's Ko-fi page. Read only by the web client, through `supportCardEnabled` on `GET /api/instance/info`; it hides only that card and changes nothing the server does. Default 1; migration `0017_fat_rafael_vega.sql` adds it, and an existing row takes the default. Written through `PATCH /api/settings/instance`. |
 | installedAt | integer | | First-boot timestamp (epoch ms). Backfilled by `ensureDefaults` from the oldest local non-deleted account, or `Date.now()` on a fresh DB, so it is non-null after boot and never overwritten. |
+| ledgerStartedAt | integer | | When this instance began recording applied relay events in `federation_applied_events` (epoch ms): set by migration 0022 on an existing instance, null on one that ran it before its first boot. The pull reads no friend event older than it (federation.md "Pull sync", "Cursor") |
 | updatedAt | integer NOT NULL | | |
 
 ---
@@ -526,21 +528,23 @@ Inserted by `onPeerActivated` (`'approved'`), the outbound `/deny` handler (`'de
 **Migration `0018_peering_reason_instance_connect` (data only).** Before `instance_connect` existed, `POST /api/federation/peer/ensure` stored every call as `trigger_reason = 'friend_add'` with the remote's `URL.origin` as `trigger_target`, although only connection flows called it. The migration relabels those rows in both `peer_approval_subscribers` and `peer_approval_notifications` to `'instance_connect'`, keeping the target, which is already the shape the current code writes. It matches a `friend_add` row only when the target starts with `http://` or `https://` and contains no `@`; a genuine friend-add target is `name@domain` with a `[a-z0-9_]` username, so it never matches. On subscribers it first deletes a legacy row whose `instance_connect` twin (same request, user and target) already exists, which would otherwise break the unique key. It is idempotent. Unread notifications are never auto-cleaned, which is why this is a migration and not left to expiry: an unmigrated approved row keeps offering to retry a friend request prefilled with a URL.
 
 ### federation_outbox
-UNIQUE: (peerId, entityId)
+Index `idx_outbox_queue` on (peerId, queueKey, createdAt); `idx_outbox_retry` on (nextRetryAt). Several rows may share (peerId, entityId): see federation.md "Outbox queues" for what a queue is and how events are folded into it.
 | Column | Type | Default | Notes |
 |--------|------|---------|-------|
 | id | text PK | | |
 | peerId | text NOT NULL | | FK → federation_peers.id CASCADE |
 | contextId | text NOT NULL | | DM channel / friend context |
-| entityId | text NOT NULL | | Message / reaction / request ID |
-| contextType | text NOT NULL | `'dm'` | dm/friend |
+| entityId | text NOT NULL | | The id the peer knows the event by (relay `messageId`) |
+| queueKey | text | | The entity's queue (`outboxQueueKey`). Null only on rows from before migration 0021 until the boot backfill |
+| contextType | text NOT NULL | `'dm'` | dm/friend/profile |
 | eventType | text NOT NULL | | create/update/delete/reaction_add/etc |
 | payload | text NOT NULL | | JSON event data |
 | encryptionVersion | integer | 0 | |
 | attempts | integer | 0 | |
 | nextRetryAt | integer NOT NULL | | |
 | expiresAt | integer NOT NULL | | TTL-based |
-| createdAt | integer NOT NULL | | |
+| createdAt | integer NOT NULL | | Queue order, and the relayed event's `timestamp` |
+| offeredAt | integer | | When some path first possibly handed the row to the peer (worker POST or `/sync` pull). Null: the peer cannot have it. Never cleared |
 
 ### federation_file_queue
 | Column | Type | Default | Notes |
@@ -566,11 +570,62 @@ UNIQUE: (peerId, entityId)
 | id | text PK | | |
 | entityId | text NOT NULL | | |
 | contextId | text NOT NULL | | |
-| contextType | text NOT NULL | `'dm'` | dm/friend |
-| mutationType | text NOT NULL | | create/update/delete |
-| mutatedAt | integer NOT NULL | | Checkpoint for sync |
+| contextType | text NOT NULL | `'dm'` | dm/friend/profile |
+| mutationType | text NOT NULL | | the relay event type (federation.md "Mutation log coverage") |
+| mutatedAt | integer NOT NULL | | With `id`, the `(mutated_at, id)` order `/sync` pages in |
 | payload | text | | JSON |
 Retention: 90 days (cleaned by federation janitor)
+
+### federation_sync_cursors
+Pull-sync position per peer and context (federation.md "Pull sync"). Migration 0022 created all three for every peer with `last_synced_at > 0`, at that time.
+PK: (peerId, contextType)
+| Column | Type | Default | Notes |
+|--------|------|---------|-------|
+| peerId | text NOT NULL | | FK → federation_peers.id CASCADE |
+| contextType | text NOT NULL | | dm/friend/profile |
+| cursorTs | integer NOT NULL | 0 | `mutated_at` of the last log row consumed, in the PEER's clock |
+| cursorId | text | | That row's id; null against a server that does not return `checkpointId` |
+| peerEpoch | text | | The peer's instance id the cursor was taken against; a different one restarts the cursor at 0 |
+| lastPulledAt | integer | | Local time of the last completed pass |
+
+### federation_sync_retry
+Pulled events kept for a later retry: refused for a reason that can pass (federation.md "Pull sync", "Outcomes"), or held behind one of the same subject.
+| Column | Type | Default | Notes |
+|--------|------|---------|-------|
+| id | text PK | | snowflake; tiebreak for order |
+| peerId | text NOT NULL | | FK → federation_peers.id CASCADE |
+| contextType | text NOT NULL | | dm/friend/profile |
+| subjectKey | text NOT NULL | | The subject the event changes (`syncSubjectKey`): a message, a group member, a friend pair, ... |
+| eventType | text NOT NULL | | |
+| messageId | text NOT NULL | | The event's `messageId` |
+| eventTs | integer NOT NULL | | The event's `timestamp` (peer clock); replay order |
+| eventHash | text NOT NULL | | sha256 of the event's canonical JSON (keys sorted): one row per distinct event |
+| eventJson | text NOT NULL | | The whole event, replayed locally |
+| lastReason | text NOT NULL | | Last refusal, or `held_behind_earlier_event` |
+| attempts | integer NOT NULL | 1 | |
+| firstFailedAt | integer NOT NULL | | Dropped 7 days after this |
+| nextRetryAt | integer NOT NULL | | When the subject's first row is next tried |
+Indexes: `idx_sync_retry_event` UNIQUE (peerId, eventHash); `idx_sync_retry_subject` (peerId, subjectKey); `idx_sync_retry_order` (peerId, eventTs)
+
+### federation_applied_events
+Ledger of relay events applied here, for events a processor cannot recognize as applied from state alone (federation.md "Receiver guarantees").
+PK: (sourceOrigin, eventKey)
+| Column | Type | Default | Notes |
+|--------|------|---------|-------|
+| sourceOrigin | text NOT NULL | | `normalizeOriginForCompare` of the origin the event is attributed to |
+| eventKey | text NOT NULL | | `dm_delete:<messageId>` (a delete's tombstone) or `<eventType>:<messageId>` |
+| appliedAt | integer NOT NULL | | Local time |
+Index: `idx_applied_events_applied_at`. Retention: 100 days (janitor `sweepAppliedEvents`)
+
+### federation_subject_clocks
+The last applied change per federated subject: a group member or a friend pair. Relayed member and friend events apply last-writer-wins against it on the live relay and the pull; local changes record it too (federation.md "Subject clocks"). Read and written only through `utils/federationSubjectClock.ts`. Migration 0022 creates it empty.
+PK: subjectKey
+| Column | Type | Default | Notes |
+|--------|------|---------|-------|
+| subjectKey | text NOT NULL | | JSON array: `["member", <federatedId>, <homeUserId>, <home domain>]` or `["friend", <homeUserId>, <home domain>, <homeUserId>, <home domain>]` (the two sides sorted) |
+| changedAt | integer NOT NULL | | Timestamp of the last change: the relayed event's `timestamp`, or local time for a change made here. Never moves back |
+| recordedAt | integer NOT NULL | | Local time of the last write, for the sweep |
+Index: `idx_subject_clocks_recorded_at`. Retention: 400 days after the last write (janitor `sweepSubjectClocks`)
 
 ### user_federation_registry
 Persistent registry of all instances a user has federated with. Tracks full lifecycle.
