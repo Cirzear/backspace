@@ -31,6 +31,14 @@ export interface User {
   showActivity?: boolean;
   /** Self-view only: this federated account's home instance was reset/lost — it now operates as a sovereign local account (detach spec). */
   federationHomeOrphaned?: boolean;
+  /**
+   * Self-view only: the home instance a detached account was federated from
+   * before it was detached, or null. A detached account is homed on the
+   * instance that holds it (`homeInstance` and `homeUserId` are null), so this
+   * is the only place its former home is still named; re-attach needs it.
+   * Read it through {@link detachedHomeOf}.
+   */
+  detachedHomeInstance?: string | null;
 }
 
 export interface ReplicatedInstance {
@@ -63,12 +71,25 @@ export function isChosenUserStatus(value: unknown): value is ChosenUserStatus {
   return typeof value === 'string' && (CHOSEN_USER_STATUSES as readonly string[]).includes(value);
 }
 
+/** Whether an account row carries the detached flag (integer on the server row, boolean on the client `User`). */
+function isDetached(account: { federationHomeOrphaned?: number | boolean | null }): boolean {
+  return account.federationHomeOrphaned === 1 || account.federationHomeOrphaned === true;
+}
+
 /**
  * Whether an account owns its chosen status, so its own row is where the choice
- * is stored and read (`users.chosen_status`). True for a native account and for
- * a detached one (its home instance was reset, so it is sovereign here); false
- * for a replicated account, whose choice lives on its home instance. The same
- * authority rule the server applies to profile edits and credential issuance.
+ * is stored and read (`users.chosen_status`). True for an account homed on the
+ * instance that holds the row: a native account, and a detached one (its home
+ * instance was reset, so it is homed here now); false for a replicated
+ * account, whose choice lives on its home instance. The same authority rule
+ * the server applies to profile edits and credential issuance.
+ *
+ * Since #310 a detached row carries no `homeInstance` (federation.md,
+ * "Detached accounts are homed here"), so `!homeInstance` alone decides for
+ * rows from this version. The detached flag still counts on its own for a row
+ * served by an instance that predates that rewrite, where a detached account
+ * kept its former home in `homeInstance`.
+ *
  * Accepts the server row (integer flag) and the client `User` (boolean flag).
  * activity-presence.md, "DB Persistence".
  */
@@ -76,7 +97,22 @@ export function ownsChosenStatus(account: {
   homeInstance?: string | null;
   federationHomeOrphaned?: number | boolean | null;
 }): boolean {
-  return !account.homeInstance || account.federationHomeOrphaned === 1 || account.federationHomeOrphaned === true;
+  return !account.homeInstance || isDetached(account);
+}
+
+/**
+ * The home instance a detached account was federated from, or null when the
+ * account is not detached. Rows from this version name it in
+ * `detachedHomeInstance`; a row served by an instance that predates #310 kept
+ * it in `homeInstance`, which is read as the fallback.
+ */
+export function detachedHomeOf(account: {
+  homeInstance?: string | null;
+  detachedHomeInstance?: string | null;
+  federationHomeOrphaned?: number | boolean | null;
+}): string | null {
+  if (!isDetached(account)) return null;
+  return account.detachedHomeInstance || account.homeInstance || null;
 }
 
 export interface UserWithPassword extends User {

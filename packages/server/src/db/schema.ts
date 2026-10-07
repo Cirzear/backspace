@@ -34,6 +34,18 @@ export const users = sqliteTable('users', {
   federationRegistryUpdatedAt: integer('federation_registry_updated_at').default(0),
   federationHealPending: integer('federation_heal_pending').default(0),
   federationHomeOrphaned: integer('federation_home_orphaned').default(0),
+  /**
+   * The identity a detached account (`federation_home_orphaned = 1`) had before
+   * it was detached: its former home instance and its id there. Detaching
+   * moves `home_instance`/`home_user_id` here and clears them, so the row is
+   * homed on this instance and presents itself to peers as one of its users
+   * (federation.md, "Detached accounts are homed here"). Read only to resolve
+   * a reference to the former identity back to this row (`resolveRelayActor`),
+   * for re-attach, and for the reset-cleanup admin listing. Kept on a
+   * tombstone; cleared by re-attach.
+   */
+  detachedHomeInstance: text('detached_home_instance'),
+  detachedHomeUserId: text('detached_home_user_id'),
   /** UTC day (YYYY-MM-DD) of the last authenticated WebSocket activity; written at most once per day. */
   lastActiveDay: text('last_active_day'),
   /** 'web' | 'desktop' | 'mobile', from the client's auth message. */
@@ -48,6 +60,8 @@ export const users = sqliteTable('users', {
    * composite's second column cannot be used.
    */
   homeUserIdx: index('idx_users_home_user_id').on(table.homeUserId),
+  /** `resolveRelayActor` matches a former (detached) identity in the same query as `home_user_id`. */
+  detachedHomeUserIdx: index('idx_users_detached_home_user_id').on(table.detachedHomeUserId),
 }));
 
 export const spaces = sqliteTable('spaces', {

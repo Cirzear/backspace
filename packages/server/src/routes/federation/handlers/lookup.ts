@@ -3,6 +3,7 @@ import { and, eq, isNull, or } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { isLookupRateLimited } from '../rateLimits.js';
 import { authenticateS2SPeer } from './s2sAuth.js';
+import { relayHandleOf } from '../stubName.js';
 
 export function registerLookupRoutes(app: FastifyInstance): void {
   // ─── POST /api/federation/users/lookup ─────────────────────────────────────
@@ -59,7 +60,7 @@ export function registerLookupRoutes(app: FastifyInstance): void {
         found: true,
         user: {
           homeUserId: user.id,
-          username: user.username,
+          username: relayHandleOf(user) ?? user.username,
           profile: {
             displayName: user.displayName,
             avatar: user.avatar,
@@ -125,7 +126,10 @@ export function registerLookupRoutes(app: FastifyInstance): void {
         found: true,
         user: {
           homeUserId: user.homeUserId ?? user.id,
-          username: user.username,
+          // The handle the caller names its row after (`handleFromHint`). For
+          // a detached account homed here it is not the login name, which
+          // keeps its former home (`relayHandleOf`).
+          username: relayHandleOf(user) ?? user.username,
           profile: {
             displayName: user.displayName,
             avatar: user.avatar,

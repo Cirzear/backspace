@@ -474,6 +474,28 @@ describe('healResetIncarnation — real-account detach (Phase 2)', () => {
     }
   });
 
+  it('counts accounts an earlier reset of the origin detached in the refreshed journal count', async () => {
+    // An account detached by an earlier reset: homed here, former home kept aside.
+    testDb.insert(schema.users).values({
+      id: 'earlier', username: 'gina@orbit.ddns.net', passwordHash: '$2b$10$realbcrypthash',
+      homeInstance: null, homeUserId: null,
+      detachedHomeInstance: QORIGIN, detachedHomeUserId: 'gina-old',
+      federationHomeOrphaned: 1, isDeleted: 0, createdAt: Date.now(),
+    }).run();
+    seedJournal({ origin: QORIGIN, deadEpoch: 'E1' });
+    seedRealAccount({ homeInstance: QORIGIN, username: 'hank@orbit.ddns.net', healPending: 1 });
+
+    const { healResetIncarnation } = await import('./federationReset.js');
+    healResetIncarnation(QORIGIN, 'E2', 'initiate_accepted');
+
+    const j = testDb.select().from(schema.federationResetEvents)
+      .where(eq(schema.federationResetEvents.origin, QORIGIN)).get()!;
+    expect(j.orphanedAccountCount).toBe(2);
+    const earlier = testDb.select().from(schema.users).where(eq(schema.users.id, 'earlier')).get()!;
+    expect(earlier.homeInstance).toBeNull();
+    expect(earlier.detachedHomeUserId).toBe('gina-old');
+  });
+
   it('false-positive branch (same incarnation) does NOT detach real accounts', async () => {
     seedJournal({ origin: QORIGIN, deadEpoch: 'E0' });
     const uid = seedRealAccount({ homeInstance: QORIGIN, username: 'carol@orbit.ddns.net', healPending: 1 });

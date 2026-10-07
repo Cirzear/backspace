@@ -27,8 +27,17 @@ vi.mock('../db/index.js', () => ({
   schema,
 }));
 
-vi.mock('./federationAuth.js', () => ({
+vi.mock('./federationAuth.js', async (importActual) => ({
+  ...(await importActual<typeof import('./federationAuth.js')>()),
   getOurOrigin: () => 'https://nova.ddns.net',
+}));
+
+// snapshotPresenceForPeer reads the live activities of each user it snapshots.
+vi.mock('../ws/handler.js', () => ({
+  connectionManager: {
+    getUserActivities: () => [],
+    sendToUser: vi.fn(),
+  },
 }));
 
 vi.mock('./federationOutbox.js', () => ({
@@ -118,5 +127,77 @@ describe('queuePresenceRelay', () => {
     const { queuePresenceRelay } = await import('./federationPresence.js');
     queuePresenceRelay('does-not-exist', 'online', []);
     expect(queueCalls).toEqual([]);
+  });
+});
+
+describe('presence of a detached account (#310)', () => {
+  /** A federated account of the reset home `reset.example`, as detaching found it. */
+  function insertDetachedLegacyRow(): void {
+    testDb.insert(schema.users).values({
+      id: 'detached-1',
+      username: 'kai@reset.example',
+      passwordHash: 'real-hash',
+      status: 'dnd',
+      isAdmin: 0,
+      homeInstance: 'reset.example',
+      homeUserId: 'old-home-uid',
+      federationHomeOrphaned: 1,
+      replicatedInstances: JSON.stringify([{ origin: 'https://orbit.example', username: 'kai@nova.ddns.net' }]),
+      createdAt: Date.now(),
+    }).run();
+  }
+
+  it('relays the status under its identity here once detaching has homed it', async () => {
+    insertDetachedLegacyRow();
+    const { rehomeDetachedAccount } = await import('./detachedIdentity.js');
+    rehomeDetachedAccount(sqlite, 'detached-1', 'https://nova.ddns.net');
+
+    const { queuePresenceRelay } = await import('./federationPresence.js');
+    queuePresenceRelay('detached-1', 'dnd', [{ type: 'playing', name: 'Factorio' }]);
+
+    expect(queueCalls).toHaveLength(1);
+    const call = queueCalls[0]!;
+    expect(call.eventType).toBe('presence_update');
+    expect(call.targetPeerOrigins).toBeUndefined(); // broadcast, like any native user
+    const update = JSON.parse(call.payload).presenceUpdate;
+    // Its local id at this instance's origin: never the former identity.
+    expect(update.homeUserId).toBe('detached-1');
+    expect(update.homeInstance).toBe('https://nova.ddns.net');
+    expect(update.status).toBe('dnd');
+    expect(update.activities).toEqual([{ type: 'playing', name: 'Factorio' }]);
+    expect(JSON.stringify(update)).not.toContain('old-home-uid');
+    expect(JSON.stringify(update)).not.toContain('reset.example');
+  });
+
+  it('sends a peer-activation snapshot for it like for any native user', async () => {
+    insertDetachedLegacyRow();
+    const { rehomeDetachedAccount } = await import('./detachedIdentity.js');
+    rehomeDetachedAccount(sqlite, 'detached-1', 'https://nova.ddns.net');
+
+    const { snapshotPresenceForPeer } = await import('./federationPresence.js');
+    await snapshotPresenceForPeer('https://orbit.example');
+
+    const forDetached = queueCalls.filter(c => c.entityId === 'detached-1');
+    expect(forDetached).toHaveLength(1);
+    expect(forDetached[0]!.targetPeerOrigins).toEqual(['https://orbit.example']);
+    const update = JSON.parse(forDetached[0]!.payload).presenceUpdate;
+    expect(update.homeUserId).toBe('detached-1');
+    expect(update.homeInstance).toBe('https://nova.ddns.net');
+    expect(update.status).toBe('dnd');
+  });
+
+  it('is not counted as a user of its former home when that peer activates', async () => {
+    insertDetachedLegacyRow();
+    const { rehomeDetachedAccount } = await import('./detachedIdentity.js');
+    rehomeDetachedAccount(sqlite, 'detached-1', 'https://nova.ddns.net');
+    // erin is friends with the detached account; were it still counted as one
+    // of reset.example's users, erin's status would be snapshotted to the new
+    // incarnation of that domain.
+    testDb.insert(schema.friends).values({ userId: 'native-1', friendId: 'detached-1', createdAt: 1 }).run();
+
+    const { snapshotPresenceForPeer } = await import('./federationPresence.js');
+    await snapshotPresenceForPeer('https://reset.example');
+
+    expect(queueCalls.filter(c => c.entityId === 'native-1')).toEqual([]);
   });
 });
