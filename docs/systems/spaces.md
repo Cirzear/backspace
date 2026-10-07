@@ -72,8 +72,8 @@ Cross-references: [database.md](database.md) (table schemas), [permissions.md](p
 
 **Get space detail:** `GET /api/spaces/:id` — membership required. Returns `SpaceWithChannelsAndMembers`:
 - Channels filtered by `VIEW_CHANNEL` permission per-channel (computed per-user)
-- Each channel includes `isPrivate` (true if @everyone has VIEW_CHANNEL deny override) and `myPermissions`
-- Categories include `isPrivate` flag
+- Each channel includes `isPrivate` (true if @everyone has VIEW_CHANNEL deny override, `isHiddenFromEveryone`; see permissions.md, "Private channels and categories") and `myPermissions`
+- Categories include `isPrivate` flag (same rule)
 - Roles include `permissions` field only if requesting user has `MANAGE_ROLES`
 - `myPermissions` at space level included
 
@@ -555,7 +555,7 @@ Position: `max(existing positions) + 1`.
 - categoryId: `null` to unassign, or valid category ID in same space
 
 **Broadcast behavior:**
-- If `categoryId` changed: calls `broadcastOverrideChange` (per-user VIEW_CHANNEL recheck, may send `channel_deleted` to users who lost access)
+- If `categoryId` changed: calls `broadcastOverrideChange` (per-user VIEW_CHANNEL recheck, may send `channel_deleted` to users who lost access, and `space_voice_state` to viewers of a voice channel; see "Channel/Category Permission Overrides" below), and `checkVoicePermissions` for a voice channel
 - Otherwise: simple `channel_updated` broadcast to channel viewers
 
 **Client:** the Overview tab of channel settings renames through the `updateChannel` store action, which sends the request to the space's own instance and applies the returned row, so the editor shows the stored (normalized) name at once. The editor is the shared `InlineNameEditor` (`components/ui/`): Save or Enter commits, Cancel or Escape abandons, blur does nothing, and Escape never reaches the settings modal's own close handler. It compares edits with `normalizeChannelName` and sends nothing when the stored name would not change. The control shows when the user holds `MANAGE_CHANNELS` on that channel (see "Client gating" in permissions.md).
@@ -581,7 +581,7 @@ Position: `max(existing positions) + 1`.
 
 **Update:** `PATCH /api/categories/:id` — permission: `MANAGE_CHANNELS`, updatable: name (a string, stored as `normalizeCategoryName(name)`, which trims and keeps case and spacing, 1-100 chars; a non-string answers `category_name_required`), position. Broadcasts `category_updated` (includes `isPrivate` flag). The category settings Overview renames through the `updateCategory` store action with the same `InlineNameEditor` as channels.
 
-**Delete:** `DELETE /api/categories/:id` — permission: `MANAGE_CHANNELS`. Transaction nulls `categoryId` on child channels, then deletes category. Broadcasts `category_deleted` then `channel_layout_updated` (per-user filtered).
+**Delete:** `DELETE /api/categories/:id` — permission: `MANAGE_CHANNELS`. Transaction nulls `categoryId` on child channels, then deletes category. Broadcasts `category_deleted` then `channel_layout_updated` (per-user filtered). The child channels lose the category's overrides, so they count as moved for `broadcastChannelLayout` (below), and `checkVoicePermissions` runs when one of them is a voice channel.
 
 ### Channel Layout Reorder
 
@@ -602,7 +602,7 @@ Position: `max(existing positions) + 1`.
 - All positions must be non-negative numbers
 - Channel categoryId references must point to valid space categories
 
-Applied atomically in a transaction. Broadcasts via `broadcastChannelLayout()` which sends `channel_layout_updated` per-user (each user sees only channels they have VIEW_CHANNEL on).
+Applied atomically in a transaction. Broadcasts via `broadcastChannelLayout(spaceId, movedChannelIds)` which sends `channel_layout_updated` per-user (each user sees only channels they have VIEW_CHANNEL on). A channel whose `categoryId` changed takes the overrides of its new category, so who can see it may change: a member who can see a moved voice channel is then also sent `space_voice_state` (`pushSpaceVoiceState`), since the layout carries no voice presence, and `checkVoicePermissions` runs when a voice channel moved. A layout that only reorders sends neither.
 
 ### Channel/Category Permission Overrides
 
@@ -619,7 +619,7 @@ Override endpoints documented here for API completeness:
 | `PUT /api/categories/:id/overrides` | `MANAGE_ROLES` | Upsert; role hierarchy on the target, held-bits rule against the stored row |
 | `DELETE /api/categories/:id/overrides/:targetType/:targetId` | `MANAGE_ROLES` | Remove override; refused for a target at or above the actor, or when it sets a bit the actor does not hold |
 
-All override mutations call `broadcastOverrideChange` (channel) or `broadcastCategoryOverrideChange` (category) which re-evaluates VIEW_CHANNEL per-user and sends `channel_updated` (gained access) or `channel_deleted` (lost access). Voice permission enforcement via `checkVoicePermissions` runs after every override change.
+All override mutations call `broadcastOverrideChange` (channel) or `broadcastCategoryOverrideChange` (category, every channel in it). Both go through `broadcastChannelVisibility(spaceId, channelIds)`, which re-evaluates VIEW_CHANNEL per-user and sends `channel_updated` (can see it, with `isPrivate` and their `myPermissions`) or `channel_deleted` (cannot). A member who can see a voice channel among them is then sent `space_voice_state` once (`ConnectionManager.pushSpaceVoiceState`), as after a role change: `channel_updated` carries no voice presence, so a voice channel an override just showed them would otherwise appear empty until the space is loaded again. Voice permission enforcement via `checkVoicePermissions` runs after every override change.
 
 ### Drag-and-Drop (`useDragManager.ts`)
 

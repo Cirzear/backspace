@@ -219,3 +219,55 @@ export function overrideChangeRefusal(
   if ((((oldAllow & ~newAllow) | (oldDeny & ~newDeny)) & unheld) !== 0n) return 'cannot_change_unowned_permissions';
   return null;
 }
+
+// ─── Private Channels and Categories ────────────────────────────────────────
+// "Private" is not stored on its own: a channel or category is private when
+// its @everyone override (the role whose id is the space id) denies View
+// Channels. The server reports it as `isPrivate` on channels and categories
+// and the client derives the Private switch from the overrides it edits, so
+// both read the rule from here. See docs/systems/permissions.md, "Private
+// channels and categories".
+
+/** An override row as the private rule reads it: its target and its deny bits. */
+export interface OverrideDenyRow {
+  targetType: string;
+  targetId: string;
+  deny: string;
+}
+
+/**
+ * Whether the overrides of one channel or category hide it from everyone:
+ * the @everyone override denies View Channels. A member override whose id
+ * happens to equal the space id is not the @everyone override.
+ */
+export function isHiddenFromEveryone(overrides: readonly OverrideDenyRow[], spaceId: string): boolean {
+  const everyone = overrides.find((o) => o.targetType === 'role' && o.targetId === spaceId);
+  return everyone !== undefined && (stringToPermissions(everyone.deny) & PermissionBits.VIEW_CHANNEL) !== 0n;
+}
+
+/**
+ * The ids of the channels or categories that override rows of several of
+ * them hide from everyone (`isHiddenFromEveryone` per entity). `entityIdOf`
+ * names the channel or category a row belongs to, and `spaceIdOf` the space
+ * of that entity (undefined when it is not known, which is not private), so
+ * the rows of entities in different spaces can be read in one pass.
+ */
+export function idsHiddenFromEveryone<T extends OverrideDenyRow>(
+  rows: readonly T[],
+  entityIdOf: (row: T) => string,
+  spaceIdOf: (entityId: string) => string | undefined,
+): Set<string> {
+  const byEntity = new Map<string, T[]>();
+  for (const row of rows) {
+    const id = entityIdOf(row);
+    const group = byEntity.get(id);
+    if (group) group.push(row);
+    else byEntity.set(id, [row]);
+  }
+  const hidden = new Set<string>();
+  for (const [id, group] of byEntity) {
+    const spaceId = spaceIdOf(id);
+    if (spaceId !== undefined && isHiddenFromEveryone(group, spaceId)) hidden.add(id);
+  }
+  return hidden;
+}

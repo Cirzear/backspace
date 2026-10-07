@@ -5,6 +5,7 @@ import { getDb, schema } from '../db/index.js';
 import { eq, and, or, inArray, desc, sql } from 'drizzle-orm';
 import { handleClientEvent } from './events.js';
 import { computePermissions, PermissionBits, permissionsToString } from '../utils/permissions.js';
+import { idsHiddenFromEveryone } from '@backspace/shared/src/permissions.js';
 import type {
   User,
   Space,
@@ -1284,29 +1285,43 @@ export function buildReadyPayload(userId: string): {
       arr.push(ch);
     }
 
-    // Batch: determine which channels are private (VIEW_CHANNEL denied on @everyone)
-    // @everyone role ID equals the space ID, so we query for overrides targeting role = spaceId
-    const allEveroneOverrides = batchInArray(
-      spaceIds,
-      ids => db.select().from(schema.channelOverrides).where(
-        and(
-          eq(schema.channelOverrides.targetType, 'role'),
-          inArray(schema.channelOverrides.targetId, ids),
-        )
-      ).all(),
+    // Batch: which channels are private (`isHiddenFromEveryone`). The @everyone
+    // role id equals the space id, so only overrides on a role whose id is one
+    // of these spaces are read, each against the space of its own channel.
+    const channelSpaceIds = new Map(allChannels.map((ch) => [ch.id, ch.spaceId]));
+    const privateChannelIds = idsHiddenFromEveryone(
+      batchInArray(
+        spaceIds,
+        ids => db.select().from(schema.channelOverrides).where(
+          and(
+            eq(schema.channelOverrides.targetType, 'role'),
+            inArray(schema.channelOverrides.targetId, ids),
+          )
+        ).all(),
+      ),
+      (o) => o.channelId,
+      (channelId) => channelSpaceIds.get(channelId),
     );
-    const privateChannelIds = new Set<string>();
-    for (const o of allEveroneOverrides) {
-      const denyBits = BigInt(o.deny || '0');
-      if ((denyBits & PermissionBits.VIEW_CHANNEL) !== 0n) {
-        privateChannelIds.add(o.channelId);
-      }
-    }
 
     // Batch: all categories for all spaces (1 query instead of N)
     const allCategories = batchInArray(
       spaceIds,
       ids => db.select().from(schema.channelCategories).where(inArray(schema.channelCategories.spaceId, ids)).all(),
+    );
+    // Batch: which categories are private, read the same way as channels.
+    const categorySpaceIds = new Map(allCategories.map((cat) => [cat.id, cat.spaceId]));
+    const privateCategoryIds = idsHiddenFromEveryone(
+      batchInArray(
+        spaceIds,
+        ids => db.select().from(schema.categoryOverrides).where(
+          and(
+            eq(schema.categoryOverrides.targetType, 'role'),
+            inArray(schema.categoryOverrides.targetId, ids),
+          )
+        ).all(),
+      ),
+      (o) => o.categoryId,
+      (categoryId) => categorySpaceIds.get(categoryId),
     );
     const categoriesBySpace = new Map<string, ChannelCategory[]>();
     for (const cat of allCategories) {
@@ -1317,6 +1332,7 @@ export function buildReadyPayload(userId: string): {
         spaceId: cat.spaceId,
         name: cat.name,
         position: cat.position ?? 0,
+        isPrivate: privateCategoryIds.has(cat.id),
         createdAt: cat.createdAt,
       });
     }

@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSpaceStore } from '../../stores/spaceStore';
-import { PermissionBits, permissionsToString, stringToPermissions } from '../../utils/permissions';
+import { PermissionBits, permissionsToString, stringToPermissions, isHiddenFromEveryone } from '../../utils/permissions';
 import { OverrideEntry, type PermissionDef } from './OverrideEntry';
 import { LOCK_ICON } from './LockNote';
 import { describeError } from '../../i18n/errors';
 import { userDisplayName } from '../../utils/identity';
-import { isHiddenFromEveryone, type StoredOverride } from '../../utils/overrideBits';
+import type { StoredOverride } from '../../utils/overrideBits';
 import {
   useViewerHeldPermissions,
   unswitchableBits,

@@ -4,7 +4,16 @@ import { getDb, schema } from '../db/index.js';
 import { authenticate } from '../utils/auth.js';
 import { generateSnowflake } from '../utils/snowflake.js';
 import { isMember, hasPermission, getChannelSpaceId, PermissionBits, computePermissions } from '../utils/permissions.js';
-import { permissionsToString, stringToPermissions, parsePermissionString, overrideChangeRefusal, type HeldBitsRefusal, type OverrideBits } from '@backspace/shared/src/permissions.js';
+import {
+  permissionsToString,
+  stringToPermissions,
+  parsePermissionString,
+  overrideChangeRefusal,
+  isHiddenFromEveryone,
+  idsHiddenFromEveryone,
+  type HeldBitsRefusal,
+  type OverrideBits,
+} from '@backspace/shared/src/permissions.js';
 import {
   CATEGORY_NAME_MAX_LENGTH,
   CATEGORY_NAME_MIN_LENGTH,
@@ -48,89 +57,83 @@ function rowToCategory(row: typeof schema.channelCategories.$inferSelect): Chann
   };
 }
 
-/**
- * Check if a channel is private by looking for a VIEW_CHANNEL deny on @everyone.
- * The @everyone role ID equals the space ID.
- */
-function isChannelPrivate(channelId: string, spaceId: string): boolean {
-  const db = getDb();
-  const override = db.select().from(schema.channelOverrides).where(
-    and(
-      eq(schema.channelOverrides.channelId, channelId),
-      eq(schema.channelOverrides.targetType, 'role'),
-      eq(schema.channelOverrides.targetId, spaceId),
-    )
-  ).get();
-  if (!override) return false;
-  const denyBits = BigInt(override.deny || '0');
-  return (denyBits & PermissionBits.VIEW_CHANNEL) !== 0n;
+/** Whether a category is private (`isHiddenFromEveryone` on its overrides). */
+function isCategoryPrivate(categoryId: string, spaceId: string): boolean {
+  const overrides = getDb().select().from(schema.categoryOverrides)
+    .where(eq(schema.categoryOverrides.categoryId, categoryId))
+    .all();
+  return isHiddenFromEveryone(overrides, spaceId);
 }
 
 /**
- * After a channel override changes, notify each space member:
- * - VIEW_CHANNEL holders receive channel_updated (with their myPermissions)
- * - Non-viewers receive channel_deleted to remove the channel from their UI
+ * After a change that may move who can see `channelIds` (an override on them
+ * or on their category, or a move to another category), tell each connected
+ * member of the space where each channel now stands for them:
+ * - a VIEW_CHANNEL holder gets channel_updated (with their myPermissions),
+ * - anyone else gets channel_deleted, which removes it from their UI.
+ * A member who can see one of these channels that is a voice channel is then
+ * sent the voice state they can see now (`pushSpaceVoiceState`), since
+ * channel_updated carries no voice presence: a voice channel they just gained
+ * shows who is in it at once, as after a role change (websocket.md,
+ * `space_voice_state`).
  */
-function broadcastOverrideChange(spaceId: string, channelId: string): void {
+function broadcastChannelVisibility(spaceId: string, channelIds: readonly string[]): void {
+  if (channelIds.length === 0) return;
   const db = getDb();
-  const channel = db.select().from(schema.channels).where(eq(schema.channels.id, channelId)).get();
-  if (!channel) return;
+  const channels = db.select().from(schema.channels)
+    .where(and(eq(schema.channels.spaceId, spaceId), inArray(schema.channels.id, [...channelIds])))
+    .all();
+  if (channels.length === 0) return;
 
-  const channelData = rowToChannel(channel);
-  const priv = isChannelPrivate(channelId, spaceId);
+  const overrides = db.select().from(schema.channelOverrides)
+    .where(inArray(schema.channelOverrides.channelId, channels.map((ch) => ch.id)))
+    .all();
+  const privateIds = idsHiddenFromEveryone(overrides, (o) => o.channelId, () => spaceId);
 
   for (const [userId, spaceIds] of connectionManager.getUserSpaceEntries()) {
     if (!spaceIds.has(spaceId)) continue;
 
-    const perms = computePermissions(userId, spaceId, channelId);
-    if ((perms & PermissionBits.VIEW_CHANNEL) !== 0n) {
-      connectionManager.sendToUser(userId, {
-        type: 'channel_updated',
-        channel: { ...channelData, isPrivate: priv, myPermissions: permissionsToString(perms) },
-        spaceId,
-      });
-    } else {
-      connectionManager.sendToUser(userId, {
-        type: 'channel_deleted',
-        channelId,
-        spaceId,
-      });
+    let seesVoiceChannel = false;
+    for (const channel of channels) {
+      const perms = computePermissions(userId, spaceId, channel.id);
+      if ((perms & PermissionBits.VIEW_CHANNEL) !== 0n) {
+        if (channel.type === 'voice') seesVoiceChannel = true;
+        connectionManager.sendToUser(userId, {
+          type: 'channel_updated',
+          channel: { ...rowToChannel(channel), isPrivate: privateIds.has(channel.id), myPermissions: permissionsToString(perms) },
+          spaceId,
+        });
+      } else {
+        connectionManager.sendToUser(userId, {
+          type: 'channel_deleted',
+          channelId: channel.id,
+          spaceId,
+        });
+      }
     }
+    if (seesVoiceChannel) connectionManager.pushSpaceVoiceState(userId, spaceId);
   }
 }
 
-/**
- * Check if a category is private by looking for VIEW_CHANNEL deny on @everyone.
- */
-function isCategoryPrivate(categoryId: string, spaceId: string): boolean {
-  const db = getDb();
-  const override = db.select().from(schema.categoryOverrides).where(
-    and(
-      eq(schema.categoryOverrides.categoryId, categoryId),
-      eq(schema.categoryOverrides.targetType, 'role'),
-      eq(schema.categoryOverrides.targetId, spaceId),
-    )
-  ).get();
-  if (!override) return false;
-  const denyBits = BigInt(override.deny || '0');
-  return (denyBits & PermissionBits.VIEW_CHANNEL) !== 0n;
+/** After a channel's overrides change, or it moves to another category (`broadcastChannelVisibility`). */
+function broadcastOverrideChange(spaceId: string, channelId: string): void {
+  broadcastChannelVisibility(spaceId, [channelId]);
 }
 
 /**
  * When a category's overrides change, re-evaluate visibility for all channels
- * in that category and send channel_updated/channel_deleted per user.
+ * in that category and send channel_updated/channel_deleted per user
+ * (`broadcastChannelVisibility`, one voice state push per member at most).
  * Also broadcasts category_updated with isPrivate for the lock icon.
  */
 function broadcastCategoryOverrideChange(spaceId: string, categoryId: string): void {
   const db = getDb();
 
-  const channelsInCategory = db.select().from(schema.channels)
+  const channelsInCategory = db.select({ id: schema.channels.id }).from(schema.channels)
     .where(and(eq(schema.channels.spaceId, spaceId), eq(schema.channels.categoryId, categoryId)))
     .all();
 
-  for (const ch of channelsInCategory) {
-    broadcastOverrideChange(spaceId, ch.id);
-  }
+  broadcastChannelVisibility(spaceId, channelsInCategory.map((ch) => ch.id));
 
   const category = db.select().from(schema.channelCategories)
     .where(eq(schema.channelCategories.id, categoryId)).get();
@@ -945,6 +948,10 @@ export async function channelRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const spaceId = category.spaceId;
+    // Leaving the category drops its overrides from these channels, so who
+    // can see them may change.
+    const releasedChannels = db.select({ id: schema.channels.id, type: schema.channels.type }).from(schema.channels)
+      .where(eq(schema.channels.categoryId, id)).all();
 
     db.transaction((tx) => {
       // Null out categoryId on all channels in this category
@@ -963,7 +970,10 @@ export async function channelRoutes(app: FastifyInstance): Promise<void> {
     });
 
     // Also broadcast updated layout so channels reflect null categoryId
-    broadcastChannelLayout(spaceId);
+    broadcastChannelLayout(spaceId, releasedChannels.map((ch) => ch.id));
+    if (releasedChannels.some((ch) => ch.type === 'voice')) {
+      checkVoicePermissions(spaceId);
+    }
 
     return reply.code(200).send({ success: true });
   });
@@ -1044,8 +1054,19 @@ export async function channelRoutes(app: FastifyInstance): Promise<void> {
       }
     });
 
+    // Channels whose category changed inherit other overrides now, so who can
+    // see them may have changed.
+    const previousCategory = new Map(spaceChannels.map((ch) => [ch.id, ch.categoryId ?? null]));
+    const movedChannelIds = channelUpdates
+      .filter((ch) => previousCategory.get(ch.id) !== ch.categoryId)
+      .map((ch) => ch.id);
+
     // Broadcast the updated layout to all space members with per-user channel filtering
-    broadcastChannelLayout(id);
+    broadcastChannelLayout(id, movedChannelIds);
+    const movedIds = new Set(movedChannelIds);
+    if (spaceChannels.some((ch) => ch.type === 'voice' && movedIds.has(ch.id))) {
+      checkVoicePermissions(id);
+    }
 
     return reply.code(200).send({ success: true });
   });
@@ -1054,29 +1075,52 @@ export async function channelRoutes(app: FastifyInstance): Promise<void> {
 /**
  * Broadcast updated channel layout to all space members.
  * Each user gets only the channels they can view (VIEW_CHANNEL check).
+ * `movedChannelIds` are the channels that changed category: a member who can
+ * see one of them that is a voice channel is also sent the voice state they
+ * can see now (`pushSpaceVoiceState`), as `broadcastChannelVisibility` does,
+ * since the layout carries no voice presence.
  */
-function broadcastChannelLayout(spaceId: string): void {
+function broadcastChannelLayout(spaceId: string, movedChannelIds: readonly string[]): void {
   const db = getDb();
   const allChannels = db.select().from(schema.channels)
     .where(eq(schema.channels.spaceId, spaceId)).all();
   const allCategories = db.select().from(schema.channelCategories)
     .where(eq(schema.channelCategories.spaceId, spaceId)).all();
+  const channelPrivateIds = idsHiddenFromEveryone(
+    db.select().from(schema.channelOverrides).where(inArray(
+      schema.channelOverrides.channelId,
+      db.select({ id: schema.channels.id }).from(schema.channels).where(eq(schema.channels.spaceId, spaceId)),
+    )).all(),
+    (o) => o.channelId,
+    () => spaceId,
+  );
+  const categoryPrivateIds = idsHiddenFromEveryone(
+    db.select().from(schema.categoryOverrides).where(inArray(
+      schema.categoryOverrides.categoryId,
+      db.select({ id: schema.channelCategories.id }).from(schema.channelCategories).where(eq(schema.channelCategories.spaceId, spaceId)),
+    )).all(),
+    (o) => o.categoryId,
+    () => spaceId,
+  );
+  const moved = new Set(movedChannelIds);
 
   const categoryData = allCategories.map(c => ({
     ...rowToCategory(c),
-    isPrivate: isCategoryPrivate(c.id, spaceId),
+    isPrivate: categoryPrivateIds.has(c.id),
   }));
 
   for (const [userId, spaceIds] of connectionManager.getUserSpaceEntries()) {
     if (!spaceIds.has(spaceId)) continue;
 
     const visibleChannels: Channel[] = [];
+    let seesMovedVoiceChannel = false;
     for (const ch of allChannels) {
       const perms = computePermissions(userId, spaceId, ch.id);
       if ((perms & PermissionBits.VIEW_CHANNEL) !== 0n) {
+        if (ch.type === 'voice' && moved.has(ch.id)) seesMovedVoiceChannel = true;
         visibleChannels.push({
           ...rowToChannel(ch),
-          isPrivate: isChannelPrivate(ch.id, spaceId),
+          isPrivate: channelPrivateIds.has(ch.id),
           myPermissions: permissionsToString(perms),
         });
       }
@@ -1088,5 +1132,6 @@ function broadcastChannelLayout(spaceId: string): void {
       channels: visibleChannels,
       categories: categoryData,
     });
+    if (seesMovedVoiceChannel) connectionManager.pushSpaceVoiceState(userId, spaceId);
   }
 }

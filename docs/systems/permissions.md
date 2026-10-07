@@ -35,6 +35,10 @@ nor a JSON list of permission names, or a list naming something that is not
 a permission) is logged as it is replaced, with its table, row key, column
 and old text, so it can be put back by hand. It logs how many values it
 rewrote and is a no-op once applied, so each such value is logged once.
+`db/permissionStrings.resolution.test.ts` seeds a space with roles and
+overrides in each of these forms and checks that `computePermissions` gives
+every member the same defined bits in the space and in every channel before
+and after the pass.
 
 
 ---
@@ -117,6 +121,31 @@ if channelOverride:  base = (base & ~deny) | allow
 ```
 
 **Key rule:** Channel bits always win — applied after category, overwriting conflicting bits. Deny applied first (clears bits), then allow (sets bits).
+
+---
+
+## Private channels and categories
+
+"Private" is not stored on its own. A channel or category is private when its
+own @everyone override (`targetType = 'role'`, `targetId` = the space id)
+denies View Channels; a member override whose id happens to equal the space id
+does not count, and the deny is read with `stringToPermissions`, as every
+permission check reads it. The rule is written once, in
+`packages/shared/src/permissions.ts`:
+
+| Function | Purpose |
+|----------|---------|
+| `isHiddenFromEveryone(overrides, spaceId)` | The rule, on the override rows of one channel or category |
+| `idsHiddenFromEveryone(rows, entityIdOf, spaceIdOf)` | The ids it holds for, over the rows of several channels or categories, each read against its own space |
+
+Every `isPrivate` the server sends comes from it: the `ready` payload
+(channels and categories, overrides of all the user's spaces read in one
+pass), `GET /api/spaces/:id`, `channel_updated` after a visibility change,
+`category_updated` and `channel_layout_updated`. The client derives the
+Private switch in channel and category settings, and the private-category
+note in the permissions editor, from the same function (re-exported by
+`web/src/utils/permissions.ts`). So the lock icon cannot disagree between
+views.
 
 ---
 
