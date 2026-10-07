@@ -262,6 +262,11 @@ PK: (channelId, targetType, targetId)
 PK: (categoryId, targetType, targetId)
 Same structure as channel_overrides, with categoryId FK → channel_categories.id CASCADE.
 
+Neither override table nor `roles` stores an edit version. The version a
+concurrent-edit check compares (`overrideVersion`, `rolePermissionsVersion`)
+is derived from `allow`/`deny` and `permissions` themselves, so it needs no
+column and no migration (permissions.md, "Concurrent edits").
+
 ---
 
 ## State Tables

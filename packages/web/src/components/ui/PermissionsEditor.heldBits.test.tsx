@@ -12,7 +12,7 @@ vi.mock('../../audio/AudioManager', () => ({
 
 import { PermissionsEditor, type Override } from './PermissionsEditor';
 import { useSpaceStore } from '../../stores/spaceStore';
-import { ALL_PERMISSIONS, PermissionBits, permissionsToString } from '../../utils/permissions';
+import { ALL_PERMISSIONS, PermissionBits, permissionsToString, overrideVersion } from '../../utils/permissions';
 import type { PermissionDef } from './OverrideEntry';
 
 // The channel and category override editor locks the permissions the viewer
@@ -109,6 +109,7 @@ describe('a permission the viewer does not hold', () => {
       targetId: 'r-guest',
       allow: permissionsToString(PermissionBits.MANAGE_MESSAGES),
       deny: permissionsToString(PermissionBits.SEND_MESSAGES),
+      version: overrideVersion(override('r-guest', PermissionBits.MANAGE_MESSAGES, 0n)),
     }));
   });
 });

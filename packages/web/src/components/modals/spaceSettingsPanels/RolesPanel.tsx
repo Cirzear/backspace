@@ -2,8 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSpaceStore, getApiForOrigin } from '../../../stores/spaceStore';
 import { useUIStore } from '../../../stores/uiStore';
-import { HttpError } from '../../../api/client';
-import { PermissionBits, stringToPermissions, permissionsToString } from '../../../utils/permissions';
+import { HttpError, type RoleUpdateBody } from '../../../api/client';
+import { PermissionBits, stringToPermissions, permissionsToString, rolePermissionsVersion } from '../../../utils/permissions';
 import { PERMISSION_GROUPS, type PermDef, type PermissionGroupId } from '../../../utils/permissionGroups';
 import { usePermissionNames } from '../../ui/OverrideEntry';
 import { describeError } from '../../../i18n/errors';
@@ -189,9 +189,24 @@ function RoleEditView({ role, spaceId, isNew, onBack, onDeleted, onCopied }: Rol
   };
 
   const [draftColor, setDraftColor] = useState(role.color);
+  // The permissions this edit started from, and the draft made from them.
+  // The save names the version of the base (permissions.md, "Concurrent
+  // edits"), so a change someone else saved meanwhile is refused rather than
+  // overwritten. While there is no local edit, the base follows the role, so
+  // such a change shows here instead of reading as an edit of the viewer's.
+  const storedPermissions = role.permissions ?? '0';
+  const [basePermissions, setBasePermissions] = useState(storedPermissions);
   const [draftPermissions, setDraftPermissions] = useState<bigint>(
-    stringToPermissions(role.permissions)
+    stringToPermissions(storedPermissions)
   );
+  const [syncedPermissions, setSyncedPermissions] = useState(storedPermissions);
+  if (syncedPermissions !== storedPermissions) {
+    setSyncedPermissions(storedPermissions);
+    if (draftPermissions === stringToPermissions(basePermissions)) {
+      setBasePermissions(storedPermissions);
+      setDraftPermissions(stringToPermissions(storedPermissions));
+    }
+  }
   const addToast = useUIStore((s) => s.addToast);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -200,7 +215,7 @@ function RoleEditView({ role, spaceId, isNew, onBack, onDeleted, onCopied }: Rol
 
   const hasNameChange = !isEveryone && draftName.trim() !== role.name;
   const hasColorChange = !isEveryone && draftColor !== role.color;
-  const hasPermChange = permissionsToString(draftPermissions) !== (role.permissions ?? '0');
+  const hasPermChange = draftPermissions !== stringToPermissions(basePermissions);
   const hasChanges = hasNameChange || hasColorChange || hasPermChange;
 
   const togglePermission = (bit: bigint) => {
@@ -213,11 +228,18 @@ function RoleEditView({ role, spaceId, isNew, onBack, onDeleted, onCopied }: Rol
     setSaving(true);
     setSaveError('');
     try {
-      const data: { name?: string; color?: string; permissions?: string } = {};
+      const data: RoleUpdateBody = {};
       if (hasNameChange) data.name = draftName.trim();
       if (hasColorChange) data.color = draftColor;
-      if (hasPermChange) data.permissions = permissionsToString(draftPermissions);
+      if (hasPermChange) {
+        data.permissions = permissionsToString(draftPermissions);
+        data.permissionsVersion = rolePermissionsVersion(basePermissions);
+      }
       const saved = await roleApi().update(spaceId, role.id, data);
+      // What the server now holds is the base of the next edit.
+      const savedPermissions = saved.permissions ?? data.permissions ?? basePermissions;
+      setBasePermissions(savedPermissions);
+      setDraftPermissions(stringToPermissions(savedPermissions));
       // Show what was saved at once; space_access_changed refreshes the rest.
       setRoles(withSavedRole(useSpaceStore.getState().roles, saved));
       addToast(t('spaces:roles.saved'), 'success', 2000);
@@ -225,6 +247,15 @@ function RoleEditView({ role, spaceId, isNew, onBack, onDeleted, onCopied }: Rol
       // A duplicate name belongs on the name field, not in the save banner.
       if (err instanceof HttpError && err.code === 'role_name_taken') {
         setNameError(t('spaces:roles.nameDuplicate'));
+      } else if (err instanceof HttpError && err.code === 'role_permissions_conflict') {
+        // Someone else saved this role's permissions meanwhile: show theirs,
+        // so the viewer reviews them and saves again.
+        await loadSpaceDetail(spaceId, { quiet: true });
+        const fresh = useSpaceStore.getState().roles.find((r) => r.id === role.id);
+        const freshPermissions = fresh?.permissions ?? basePermissions;
+        setBasePermissions(freshPermissions);
+        setDraftPermissions(stringToPermissions(freshPermissions));
+        setSaveError(describeError(err));
       } else {
         setSaveError(describeError(err));
       }
@@ -236,7 +267,8 @@ function RoleEditView({ role, spaceId, isNew, onBack, onDeleted, onCopied }: Rol
   const handleDiscard = () => {
     setDraftName(role.name);
     setDraftColor(role.color);
-    setDraftPermissions(stringToPermissions(role.permissions));
+    setBasePermissions(storedPermissions);
+    setDraftPermissions(stringToPermissions(storedPermissions));
     setConfirmDelete(false);
     setSaveError('');
     setNameError('');

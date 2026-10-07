@@ -6,7 +6,7 @@ import { authenticate } from '../utils/auth.js';
 import { markDirectoryDirty } from '../directory/state.js';
 import { generateSnowflake } from '../utils/snowflake.js';
 import { isMember, isSpaceOwner, isBanned, hasPermission, computePermissions, PermissionBits } from '../utils/permissions.js';
-import { DEFAULT_EVERYONE_PERMISSIONS, ALL_PERMISSIONS, permissionsToString, stringToPermissions, parsePermissionString, roleBitsChangeRefusal, idsHiddenFromEveryone, type HeldBitsRefusal } from '@backspace/shared/src/permissions.js';
+import { DEFAULT_EVERYONE_PERMISSIONS, ALL_PERMISSIONS, permissionsToString, stringToPermissions, parsePermissionString, roleBitsChangeRefusal, idsHiddenFromEveryone, rolePermissionsVersion, type HeldBitsRefusal } from '@backspace/shared/src/permissions.js';
 import crypto from 'crypto';
 import { connectionManager } from '../ws/handler.js';
 import { deleteAttachmentFiles, deleteUploadFile, deleteAttachmentByFilename } from '../utils/fileCleanup.js';
@@ -1231,11 +1231,11 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // PATCH /api/spaces/:id/roles/:roleId - Update a role
-  app.patch<{ Params: { id: string; roleId: string }; Body: { name?: string; color?: string; position?: number; above?: unknown; below?: unknown; permissions?: string } }>('/api/spaces/:id/roles/:roleId', {
+  app.patch<{ Params: { id: string; roleId: string }; Body: { name?: string; color?: string; position?: number; above?: unknown; below?: unknown; permissions?: string; permissionsVersion?: unknown } }>('/api/spaces/:id/roles/:roleId', {
     preHandler: authenticate,
   }, async (request, reply) => {
     const { id, roleId } = request.params;
-    const { name, color, permissions, above, below } = request.body;
+    const { name, color, permissions, above, below, permissionsVersion } = request.body;
     let position = request.body.position;
     const db = getDb();
 
@@ -1312,6 +1312,17 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
       if (requested === null) {
         return sendError(reply, 400, 'permissions_invalid');
       }
+      // Concurrent edits (permissions.md): a value saved from an outdated copy
+      // of the role is refused. Without `permissionsVersion` (a client from
+      // before the check) the write is not compared, as before.
+      if (permissionsVersion !== undefined) {
+        if (typeof permissionsVersion !== 'string' || permissionsVersion.length === 0) {
+          return sendError(reply, 400, 'validation_failed');
+        }
+        if (rolePermissionsVersion(role.permissions) !== permissionsVersion) {
+          return sendError(reply, 409, 'role_permissions_conflict');
+        }
+      }
       // Held-bits rule: only bits the actor holds may be switched, on or off.
       const refusal = roleBitsChangeRefusal(
         computePermissions(request.userId, id),
@@ -1371,8 +1382,10 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
       return sendError(reply, 403, 'role_hierarchy');
     }
 
-    // Held-bits rule: deleting a role switches its bits off for everyone who
-    // holds it, including members ranked above the actor.
+    // Held-bits rule: deleting a role switches every bit of it off, the same
+    // change as a PATCH to no bits, so each bit must be held. Who holds the
+    // role (members ranked above the actor included) does not matter: the
+    // hierarchy decides who may change a role, not who the change reaches.
     const deleteRefusal = roleBitsChangeRefusal(computePermissions(request.userId, id), stringToPermissions(role.permissions), 0n);
     if (deleteRefusal) {
       return sendError(reply, 403, deleteRefusal);
