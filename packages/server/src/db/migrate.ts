@@ -1,5 +1,7 @@
 import Database from 'better-sqlite3';
 import crypto from 'crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { insertDmMember } from '../utils/dmMemberClosed.js';
 
 /**
@@ -100,3 +102,49 @@ export function backfillOneOnOneDmMembership(db: Database.Database): void {
   run();
   if (restored > 0) console.log(`[backfill] restored ${restored} deleted-partner DM membership row(s)`);
 }
+
+/**
+ * Migration 0026 was originally published with an inverted journal timestamp
+ * (earlier than 0025). When an upgrade encountered 0027, Drizzle recorded 0027's
+ * timestamp in `__drizzle_migrations` and permanently skipped 0026.
+ *
+ * This function detects if 0026 was skipped (outbox exists without queue_key, but
+ * migrations have already progressed past 0026), executes 0026's migration SQL,
+ * and records it in `__drizzle_migrations`. Idempotent — no-op on healthy databases.
+ */
+export function healSkippedOutboxMigration(db: Database.Database, migrationsFolder: string): void {
+  const outboxExists = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'federation_outbox'").get();
+  if (!outboxExists) return;
+
+  const columns = db.prepare('PRAGMA table_info(federation_outbox)').all() as Array<{ name: string }>;
+  const hasQueueKey = columns.some((col) => col.name === 'queue_key');
+  if (hasQueueKey) return;
+
+  const migrationsTableExists = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = '__drizzle_migrations'").get();
+  if (!migrationsTableExists) return;
+
+  // If migrations have already recorded timestamps >= 0026's timestamp (1790860000000),
+  // Drizzle's migrator will skip 0026 because max(created_at) is already past it.
+  const OUTBOX_MIGRATION_TIMESTAMP = 1790860000000;
+  const newerApplied = db.prepare('SELECT 1 FROM __drizzle_migrations WHERE created_at >= ? LIMIT 1').get(OUTBOX_MIGRATION_TIMESTAMP);
+  if (!newerApplied) return;
+
+  console.log('[migrate] Detected skipped migration 0026_outbox_queue_keys. Healing schema...');
+  const migrationPath = path.join(migrationsFolder, '0026_outbox_queue_keys.sql');
+  const sql = fs.readFileSync(migrationPath, 'utf8');
+  const hash = crypto.createHash('sha256').update(sql).digest('hex');
+  const statements = sql.split(/-->\s*statement-breakpoint/).map((s) => s.trim()).filter(Boolean);
+
+  const run = db.transaction(() => {
+    for (const stmt of statements) {
+      db.exec(stmt);
+    }
+    const alreadyRecorded = db.prepare('SELECT 1 FROM __drizzle_migrations WHERE hash = ? OR created_at = ?').get(hash, OUTBOX_MIGRATION_TIMESTAMP);
+    if (!alreadyRecorded) {
+      db.prepare('INSERT INTO __drizzle_migrations ("hash", "created_at") VALUES (?, ?)').run(hash, OUTBOX_MIGRATION_TIMESTAMP);
+    }
+  });
+  run();
+  console.log('[migrate] Successfully healed migration 0026_outbox_queue_keys');
+}
+
