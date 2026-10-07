@@ -287,6 +287,23 @@ PK: (userId, channelId)
 | lastReadMessageId | text NOT NULL | |
 | updatedAt | integer NOT NULL | |
 
+### notification_settings
+A user's notification setting for a space (`channelId` NULL) or for one channel of it (migration `0026_notification_settings`). Stored on the instance that hosts the space and keyed by the user's row **on this instance**: for a federated member that is their account here, never a home id. Read and written only through `routes/notificationSettings.ts` (api.md, "Notification settings"); what the values do is in sounds.md ("Notification settings").
+
+| Column | Type | Default | Notes |
+|--------|------|---------|-------|
+| userId | text NOT NULL | | FK → users.id CASCADE |
+| spaceId | text NOT NULL | | FK → spaces.id CASCADE. Set on channel rows too, so a space's rows go with it |
+| channelId | text | | FK → channels.id CASCADE. NULL = the space-wide row |
+| level | text | | `all` / `mentions` / `nothing`; NULL = not chosen (a channel inherits its space, a space uses `mentions`) |
+| muted | integer NOT NULL | 0 | 1 = muted |
+| mutedUntil | integer | | Epoch ms (server clock) a timed mute ends; NULL with `muted = 1` = until lifted. An ended mute is read as none and dropped at the next write |
+| updatedAt | integer NOT NULL | | Server write time, strictly increasing per row; clients merge last-write-wins on it |
+
+**Indexes:** `idx_notification_settings_space_row` UNIQUE `(user_id, space_id) WHERE channel_id IS NULL` and `idx_notification_settings_channel_row` UNIQUE `(user_id, channel_id) WHERE channel_id IS NOT NULL`: one space row and one row per channel, per user. Two partial indexes because a plain unique index never treats two NULL `channel_id`s as equal. No primary key: the rowid is the row's identity.
+
+A row with nothing chosen (level NULL and not muted) is deleted rather than stored. Rows are kept when the user leaves the space or loses sight of the channel (the list route filters them out), so they apply again on rejoin.
+
 ### space_folders
 | Column | Type | Default | Notes |
 |--------|------|---------|-------|

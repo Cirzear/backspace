@@ -622,5 +622,31 @@
     "loading": "正在加载成员…",
     "success": "已将所有权转让给 {{name}}",
     "failed": "转让所有权失败"
+  },
+  "notifications": {
+    "open": "通知设置",
+    "channelTitle": "#{{channel}} 的通知",
+    "spaceTitle": "{{space}} 的通知",
+    "levelHeading": "通知我",
+    "level": {
+      "all": "所有消息",
+      "mentions": "仅 @提及",
+      "nothing": "不通知",
+      "inherit": "空间默认（{{level}}）"
+    },
+    "dmNote": "私信始终会通知你。",
+    "muteHeading": "静音",
+    "mute": {
+      "oneHour": "1 小时",
+      "eightHours": "8 小时",
+      "oneDay": "24 小时",
+      "indefinite": "直到我取消静音"
+    },
+    "unmute": "取消静音",
+    "mutedUntil": "静音至 {{time}}",
+    "mutedIndefinitely": "已静音，直到你取消",
+    "spaceMuted": "此空间已静音，其频道也随之静音。",
+    "mutedIndicator": "已静音",
+    "saveFailed": "无法保存通知设置"
   }
 }

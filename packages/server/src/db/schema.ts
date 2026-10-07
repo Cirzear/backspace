@@ -329,6 +329,34 @@ export const readStates = sqliteTable('read_states', {
   userIdx: index('idx_read_states_user_id').on(table.userId),
 }));
 
+/**
+ * A user's notification setting for a space (`channel_id` NULL) or for one
+ * channel of it. Lives on the instance that hosts the space and is keyed by
+ * the user's row here (for a federated member, their account on this
+ * instance). `level` NULL is "not chosen": the channel inherits the space,
+ * the space uses the default. `muted` with `muted_until` NULL lasts until
+ * lifted. A row with no choice left is deleted, not kept.
+ * See docs/systems/sounds.md ("Notification settings").
+ */
+export const notificationSettings = sqliteTable('notification_settings', {
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  spaceId: text('space_id').notNull().references(() => spaces.id, { onDelete: 'cascade' }),
+  channelId: text('channel_id').references(() => channels.id, { onDelete: 'cascade' }),
+  level: text('level'),
+  muted: integer('muted').notNull().default(0),
+  mutedUntil: integer('muted_until'),
+  updatedAt: integer('updated_at').notNull(),
+}, (table) => ({
+  // One space-wide row and one row per channel, per user. Two partial
+  // indexes because a NULL channel_id never collides in a plain unique index.
+  spaceRowIdx: uniqueIndex('idx_notification_settings_space_row')
+    .on(table.userId, table.spaceId)
+    .where(sql`${table.channelId} IS NULL`),
+  channelRowIdx: uniqueIndex('idx_notification_settings_channel_row')
+    .on(table.userId, table.channelId)
+    .where(sql`${table.channelId} IS NOT NULL`),
+}));
+
 export const spaceFolders = sqliteTable('space_folders', {
   id: text('id').primaryKey(),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),

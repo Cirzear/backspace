@@ -7,6 +7,7 @@ Source files:
 - `packages/desktop/src/updateStatus.ts` — Update status union, store, and the shared prompt predicate
 - `packages/desktop/src/updateDismissal.ts` — Per-version dismissal persisted to userData
 - `packages/desktop/src/updaterCache.ts` — Reclaims the updater download cache on manual-mode builds
+- `packages/desktop/src/notificationRetention.ts` — Holds each shown native notification until it is clicked, closed or fails (see Notifications)
 - `packages/desktop/src/activityDetector.ts` — Process polling, game dictionary loading/sync, activity change detection
 - `packages/desktop/src/keybindManager.ts` — Global keybinds via uIOhook, native keycode mapping, press/release tracking
 - `packages/web/src/stores/keybindStore.ts` — Client-side keybind persistence (Zustand + localStorage)
@@ -757,6 +758,7 @@ Executed before each release. See `docs/superpowers/specs/2026-05-03-electron-re
 - Checks `Notification.isSupported()` before showing
 - `silent: false` (plays system sound)
 - Click handler: defaults to show + focus the main window; an optional `onClick` parameter overrides this (used by the update-ready notification to call `autoUpdater.quitAndInstall()` directly)
+- **Kept referenced until done** (`notificationRetention.ts`, `NotificationRetainer`): each `Notification` is held in a module-level set from just before `show()` until its first `click`, `close` or `failed`. Without the reference the object can be garbage-collected while the toast is still on screen, and on Windows its click handler then never runs, so clicking a chat toast did nothing (#394). Windows does not promise a `close` (a toast that times out into the Action Center may never send one), so the set is capped at 100: past it the oldest is released. A `failed` event is logged (`[notifications]`).
 
 Chat notifications carry optional `{ channelId, spaceId, userId }` context through
 `showNotification(title, body, options?)`. Clicking restores a minimized window,

@@ -633,5 +633,31 @@
     "loading": "Mitglieder werden geladen…",
     "success": "Besitz an {{name}} übertragen",
     "failed": "Besitz konnte nicht übertragen werden"
+  },
+  "notifications": {
+    "open": "Benachrichtigungseinstellungen",
+    "channelTitle": "Benachrichtigungen für #{{channel}}",
+    "spaceTitle": "Benachrichtigungen für {{space}}",
+    "levelHeading": "Benachrichtigungen",
+    "level": {
+      "all": "Alle Nachrichten",
+      "mentions": "Nur @Erwähnungen",
+      "nothing": "Keine",
+      "inherit": "Standard des Space ({{level}})"
+    },
+    "dmNote": "Bei Direktnachrichten wirst du immer benachrichtigt.",
+    "muteHeading": "Stummschalten",
+    "mute": {
+      "oneHour": "Für 1 Stunde",
+      "eightHours": "Für 8 Stunden",
+      "oneDay": "Für 24 Stunden",
+      "indefinite": "Bis ich es wieder aufhebe"
+    },
+    "unmute": "Stummschaltung aufheben",
+    "mutedUntil": "Stummgeschaltet bis {{time}}",
+    "mutedIndefinitely": "Stummgeschaltet, bis du es aufhebst",
+    "spaceMuted": "Dieser Space ist stummgeschaltet, damit auch seine Kanäle.",
+    "mutedIndicator": "Stummgeschaltet",
+    "saveFailed": "Benachrichtigungseinstellungen konnten nicht gespeichert werden"
   }
 }

@@ -1,5 +1,8 @@
 import { isErrorCode, type ErrorCode, type ErrorDetails } from '@backspace/shared/src/errors';
 import type {
+  NotificationSetting,
+  NotificationSettingsResponse,
+  UpdateNotificationSettingRequest,
   AuthResponse,
   PeerEnsureRequest,
   RegisterRequest,
@@ -236,6 +239,16 @@ export class BackspaceApiClient {
 
   readonly spaceLayout: {
     update: (data: { items: SpaceLayoutItem[]; folders: Record<string, { name: string | null; color: string | null; spaceIds: string[] }>; updatedAt?: number }) => Promise<{ items: SpaceLayoutItem[]; folders: SpaceFolder[]; updatedAt?: number }>;
+  };
+
+  /**
+   * The signed-in user's notification settings on this instance. Called on
+   * the client of the instance that hosts the space (origin routing).
+   */
+  readonly notificationSettings: {
+    list: () => Promise<NotificationSettingsResponse>;
+    updateSpace: (spaceId: string, data: UpdateNotificationSettingRequest) => Promise<NotificationSetting>;
+    updateChannel: (channelId: string, data: UpdateNotificationSettingRequest) => Promise<NotificationSetting>;
   };
 
   readonly spaces: {
@@ -560,6 +573,14 @@ export class BackspaceApiClient {
     this.spaceLayout = {
       update: (data) =>
         request<{ items: SpaceLayoutItem[]; folders: SpaceFolder[]; updatedAt?: number }>('PUT', '/users/@me/space-layout', data),
+    };
+
+    this.notificationSettings = {
+      list: () => request<NotificationSettingsResponse>('GET', '/users/@me/notification-settings'),
+      updateSpace: (spaceId, data) =>
+        request<NotificationSetting>('PATCH', `/spaces/${encodeURIComponent(spaceId)}/notification-settings`, data),
+      updateChannel: (channelId, data) =>
+        request<NotificationSetting>('PATCH', `/channels/${encodeURIComponent(channelId)}/notification-settings`, data),
     };
 
     this.spaces = {
