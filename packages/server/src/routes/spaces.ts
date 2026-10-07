@@ -6,7 +6,7 @@ import { authenticate } from '../utils/auth.js';
 import { markDirectoryDirty } from '../directory/state.js';
 import { generateSnowflake } from '../utils/snowflake.js';
 import { isMember, isSpaceOwner, isBanned, hasPermission, computePermissions, PermissionBits } from '../utils/permissions.js';
-import { DEFAULT_EVERYONE_PERMISSIONS, ALL_PERMISSIONS, permissionsToString, stringToPermissions, parsePermissionString, roleBitsChangeRefusal, type HeldBitsRefusal } from '@backspace/shared/src/permissions.js';
+import { DEFAULT_EVERYONE_PERMISSIONS, ALL_PERMISSIONS, permissionsToString, stringToPermissions, parsePermissionString, roleBitsChangeRefusal, idsHiddenFromEveryone, type HeldBitsRefusal } from '@backspace/shared/src/permissions.js';
 import crypto from 'crypto';
 import { connectionManager } from '../ws/handler.js';
 import { deleteAttachmentFiles, deleteUploadFile, deleteAttachmentByFilename } from '../utils/fileCleanup.js';
@@ -394,20 +394,15 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
       .where(eq(schema.channelCategories.spaceId, id))
       .all();
 
-    // Batch-fetch category overrides for @everyone to determine isPrivate
+    // Batch-fetch the @everyone category overrides to determine isPrivate
+    // (`isHiddenFromEveryone`, read per category).
     const catEveryoneOverrides = db.select().from(schema.categoryOverrides)
       .where(and(
         eq(schema.categoryOverrides.targetType, 'role'),
         eq(schema.categoryOverrides.targetId, id),
       ))
       .all();
-    const privateCategoryIds = new Set<string>();
-    for (const o of catEveryoneOverrides) {
-      const denyBits = BigInt(o.deny || '0');
-      if ((denyBits & PermissionBits.VIEW_CHANNEL) !== 0n) {
-        privateCategoryIds.add(o.categoryId);
-      }
-    }
+    const privateCategoryIds = idsHiddenFromEveryone(catEveryoneOverrides, (o) => o.categoryId, () => id);
 
     const categories: ChannelCategory[] = categoryRows.map(c => ({
       id: c.id,
@@ -421,20 +416,15 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
     // Compute space-level permissions for the requesting user
     const spacePerms = computePermissions(request.userId, id);
 
-    // Batch-fetch all channel overrides for @everyone (role = spaceId) to determine isPrivate
+    // Batch-fetch the @everyone channel overrides (role = spaceId) to determine
+    // isPrivate (`isHiddenFromEveryone`, read per channel).
     const everyoneOverrides = db.select().from(schema.channelOverrides)
       .where(and(
         eq(schema.channelOverrides.targetType, 'role'),
         eq(schema.channelOverrides.targetId, id),
       ))
       .all();
-    const privateChannelIds = new Set<string>();
-    for (const o of everyoneOverrides) {
-      const denyBits = BigInt(o.deny || '0');
-      if ((denyBits & PermissionBits.VIEW_CHANNEL) !== 0n) {
-        privateChannelIds.add(o.channelId);
-      }
-    }
+    const privateChannelIds = idsHiddenFromEveryone(everyoneOverrides, (o) => o.channelId, () => id);
 
     // Filter channels by VIEW_CHANNEL permission and attach per-channel myPermissions
     const visibleChannels: (Channel & { isPrivate: boolean; myPermissions: string })[] = [];

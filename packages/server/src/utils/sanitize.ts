@@ -58,6 +58,7 @@ export function sanitizeUser(row: typeof schema.users.$inferSelect, isSelf = fal
       ? {
           showActivity: row.showActivity !== 0,
           federationHomeOrphaned: row.federationHomeOrphaned === 1,
+          detachedHomeInstance: row.detachedHomeInstance ?? null,
         }
       : {}),
   };

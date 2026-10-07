@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { PermissionBits, permissionsToString } from './permissions';
-import { isHiddenFromEveryone, withOverrideBits } from './overrideBits';
+import { PermissionBits } from './permissions';
+import { withOverrideBits } from './overrideBits';
 
 const VIEW = PermissionBits.VIEW_CHANNEL;
 const SEND = PermissionBits.SEND_MESSAGES;
@@ -27,20 +27,5 @@ describe('withOverrideBits', () => {
 
   it('starts a row where there is none', () => {
     expect(withOverrideBits(null, VIEW, 'deny')).toEqual({ allow: 0n, deny: VIEW });
-  });
-});
-
-describe('isHiddenFromEveryone', () => {
-  const row = (targetId: string, deny: bigint) => ({ targetType: 'role', targetId, allow: '0', deny: permissionsToString(deny) });
-
-  it('is the View Channels deny on the @everyone override', () => {
-    expect(isHiddenFromEveryone([row('space', VIEW | SEND)], 'space')).toBe(true);
-    expect(isHiddenFromEveryone([row('space', SEND)], 'space')).toBe(false);
-    expect(isHiddenFromEveryone([row('r-mod', VIEW)], 'space')).toBe(false);
-    expect(isHiddenFromEveryone([], 'space')).toBe(false);
-  });
-
-  it('ignores a member override whose id happens to equal the space id', () => {
-    expect(isHiddenFromEveryone([{ ...row('space', VIEW), targetType: 'member' }], 'space')).toBe(false);
   });
 });

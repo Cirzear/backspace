@@ -5,7 +5,7 @@ import { buildFederationHeaders, generateHmacSecret } from '../../../utils/feder
 import { recordPeerAttempt, removePeer, transitionPeer } from '../../../utils/federationPeerState.js';
 import { probePeerReachable, recoverOrDetectReset } from '../../../utils/federationRecovery.js';
 import { federationFetch } from '../../../utils/federationFetch.js';
-import { homeInstanceMatch } from '../../../utils/federationReset.js';
+import { detachedHomeInstanceMatch } from '../../../utils/federationReset.js';
 import { and, eq, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { resolveLocalOrigin, sanitizePeer } from '../origin.js';
@@ -51,7 +51,8 @@ export function registerPeerAdminRoutes(app: FastifyInstance): void {
           .where(and(
             eq(schema.users.federationHomeOrphaned, 1),
             eq(schema.users.isDeleted, 0),
-            homeInstanceMatch(ev.origin),
+            // A detached account is homed here; its former home names the origin.
+            detachedHomeInstanceMatch(ev.origin),
           ))
           .all();
 

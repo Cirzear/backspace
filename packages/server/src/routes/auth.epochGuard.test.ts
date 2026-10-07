@@ -137,8 +137,11 @@ describe('detached account login (federation_home_orphaned)', () => {
       id: seededUserId,
       username: seededUsername,
       passwordHash,
-      homeInstance: 'orbit.ddns.net',
-      homeUserId: 'old-home-id',
+      // Detached: homed here, its former identity kept aside.
+      homeInstance: null,
+      homeUserId: null,
+      detachedHomeInstance: 'orbit.ddns.net',
+      detachedHomeUserId: 'old-home-id',
       federationHomeOrphaned: 1,
       avatarColor: '#fff',
       createdAt: Date.now(),

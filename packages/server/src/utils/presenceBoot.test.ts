@@ -123,14 +123,16 @@ describe('resetStalePresenceOnBoot', () => {
   });
 
   it('resets a detached account, whose status is local connection state like a native one', async () => {
-    // Detached: homeInstance kept for provenance, but the home was reset and
-    // this instance now owns the account's status (ownsChosenStatus).
+    // Detached: the home was reset, so the account is homed here now (its
+    // former identity kept aside) and this instance owns its status.
     const detachedId = insertUser({
       username: 'dave@reset.example',
       status: 'dnd',
       chosenStatus: 'dnd',
-      homeInstance: 'reset.example',
-      homeUserId: 'dead-home-1',
+      homeInstance: null,
+      homeUserId: null,
+      detachedHomeInstance: 'reset.example',
+      detachedHomeUserId: 'dead-home-1',
       federationHomeOrphaned: 1,
     });
     const replicatedId = insertUser({

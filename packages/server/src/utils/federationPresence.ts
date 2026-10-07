@@ -20,6 +20,9 @@ export type PresenceStatus = 'online' | 'idle' | 'dnd' | 'offline';
  * without history replay.
  *
  * No-op for replicated users (their home instance owns presence projection).
+ * A detached account is homed here (`rehomeDetachedAccount` cleared its home
+ * pair), so it relays like any native user, under its identity here: its
+ * local id at this instance's origin, the identity peers know it by (#310).
  */
 export function queuePresenceRelay(
   userId: string,
@@ -31,7 +34,7 @@ export function queuePresenceRelay(
   const db = getDb();
   const user = db.select().from(schema.users).where(eq(schema.users.id, userId)).get();
   if (!user) return;
-  if (user.homeInstance) return; // replicated — not our authority
+  if (user.homeInstance) return; // replicated — its home is the authority
 
   // targetPeerOrigins = undefined → broadcast (see `queueOutboxEvent`).
   queuePresenceEvent(user.id, status, activities, undefined, '');

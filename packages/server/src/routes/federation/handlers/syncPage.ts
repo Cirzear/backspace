@@ -218,17 +218,21 @@ function dmReader(peerOrigin: string, scope: SyncRequestScope): SyncLogReader {
  * Friend events the requester may see: at least one side is homed at the
  * requester's host and, when that side has a row here, the row is live and
  * not detached (a detached or tombstoned row belongs to a dead incarnation of
- * the requester).
+ * the requester). A detached account names its former identity in the
+ * `detached_home_*` columns (it is homed here now), so a side naming that
+ * identity is matched there.
  */
 function friendReader(peerOrigin: string): SyncLogReader {
   const peerHost = identityHost(peerOrigin);
   const rowsByHomeUserId = getRawDb().prepare(`
     SELECT home_instance, is_deleted, federation_home_orphaned FROM users WHERE home_user_id = ?
+    UNION ALL
+    SELECT detached_home_instance AS home_instance, is_deleted, 1 AS federation_home_orphaned FROM users WHERE detached_home_user_id = ?
   `);
   const sideQualifies = (side: { homeUserId?: string; homeInstance?: string } | undefined): boolean => {
     if (!side?.homeUserId || !side.homeInstance || peerHost === null) return false;
     if (identityHost(side.homeInstance) !== peerHost) return false;
-    const local = (rowsByHomeUserId.all(side.homeUserId) as Array<{ home_instance: string | null; is_deleted: number; federation_home_orphaned: number }>)
+    const local = (rowsByHomeUserId.all(side.homeUserId, side.homeUserId) as Array<{ home_instance: string | null; is_deleted: number; federation_home_orphaned: number }>)
       .find(row => identityHost(row.home_instance) === peerHost);
     return !local || (local.is_deleted === 0 && local.federation_home_orphaned === 0);
   };

@@ -181,10 +181,11 @@ describe('markPeerStubsOffline', () => {
     expect(friendBroadcast!.payload.homeInstance).toBe('orbit.ddns.net');
   });
 
-  it('leaves a detached account homed on the peer alone: it owns its status', async () => {
+  it('leaves an account detached from the peer alone: it is homed here and owns its status', async () => {
     testDb.insert(schema.users).values({
-      id: 'detached', username: 'detached@orbit.ddns.net', passwordHash: '!fr',
-      status: 'dnd', isAdmin: 0, homeInstance: 'orbit.ddns.net', homeUserId: 'remote-detached',
+      id: 'detached', username: 'detached@orbit.ddns.net', passwordHash: 'real-hash',
+      status: 'dnd', isAdmin: 0, homeInstance: null, homeUserId: null,
+      detachedHomeInstance: 'orbit.ddns.net', detachedHomeUserId: 'remote-detached',
       federationHomeOrphaned: 1, createdAt: Date.now(),
     }).run();
     const { markPeerStubsOffline } = await import('./federationPresence.js');

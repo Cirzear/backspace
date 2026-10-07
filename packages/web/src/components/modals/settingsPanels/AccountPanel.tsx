@@ -11,7 +11,7 @@ import { api } from '../../../api/client';
 import { useTransferStore } from '../../../stores/transferStore';
 import { waitForTransferAttachment } from '../../../utils/waitForTransfer';
 import { getAvatarGradient, adjustColor, mutedGradient, AVATAR_GRADIENT_MAP, BANNER_COLOR_PRESETS } from '../../../utils/gradients';
-import { AVATAR_COLORS } from '@backspace/shared';
+import { AVATAR_COLORS, detachedHomeOf } from '@backspace/shared';
 import { PASSWORD_MIN_LENGTH } from '@backspace/shared/src/constants';
 import type { User, ChosenUserStatus, AvatarColor } from '@backspace/shared';
 import { describeError } from '../../../i18n/errors';
@@ -94,16 +94,20 @@ export function AccountPanel() {
   const [reattaching, setReattaching] = useState(false);
   const [reattachError, setReattachError] = useState<string | null>(null);
 
+  // The home a detached account was federated from. A detached account is
+  // homed on this instance, so `homeInstance` is null and only this names it.
+  const formerHome = user ? detachedHomeOf(user) : null;
+
   const homeConnection = useMemo(() => {
-    if (!user?.homeInstance) return null;
-    const homeDomain = user.homeInstance.replace(/^https?:\/\//, '').replace(/\/+$/, '').toLowerCase();
+    if (!formerHome) return null;
+    const homeDomain = formerHome.replace(/^https?:\/\//, '').replace(/\/+$/, '').toLowerCase();
     return instances.find(
       (i) => i.status === 'connected'
         // Portless hostname — must agree with the server's extractDomain
         // (new URL(origin).hostname) so a ported home instance still matches.
         && new URL(i.origin).hostname.toLowerCase() === homeDomain,
     ) ?? null;
-  }, [instances, user?.homeInstance]);
+  }, [instances, formerHome]);
 
   const handleReattach = async () => {
     if (!homeConnection) return;
@@ -310,13 +314,13 @@ export function AccountPanel() {
   return (
     <div className="space-y-5">
       <h2 className="text-lg font-semibold text-txt-primary mb-6">{t('settings:account.title')}</h2>
-      {user?.federationHomeOrphaned && user?.homeInstance && (
+      {formerHome && (
         <div className="rounded-lg bg-accent-amber/10 border border-accent-amber/25 px-3.5 py-3 text-xs text-txt-secondary leading-relaxed mb-4">
           <span className="font-medium text-txt-primary">{t('settings:account.detached.notice')}</span>{' '}
-          {t('settings:account.detached.explanation', { homeInstance: user.homeInstance })}
+          {t('settings:account.detached.explanation', { homeInstance: formerHome })}
           {homeConnection && (
             <>
-              {' '}{t('settings:account.detached.reattachHint', { username: homeConnection.username, homeInstance: user.homeInstance })}
+              {' '}{t('settings:account.detached.reattachHint', { username: homeConnection.username, homeInstance: formerHome })}
               <button
                 type="button"
                 onClick={handleReattach}
@@ -327,7 +331,7 @@ export function AccountPanel() {
                   ? t('settings:account.detached.reattaching')
                   : reattachArmed
                     ? t('settings:account.detached.reattachConfirm', { username: homeConnection.username })
-                    : t('settings:account.detached.reattachButton', { homeInstance: user.homeInstance })}
+                    : t('settings:account.detached.reattachButton', { homeInstance: formerHome })}
               </button>
               {reattachError && <div className="mt-1.5 text-accent-rose">{reattachError}</div>}
             </>

@@ -196,7 +196,7 @@ An `error` without a code is only logged.
 |------|--------|-------|
 | `voice_state_update` | channelId, userId, action: join/leave, channelElapsedSeconds? | space |
 | `voice_status_update` | userId, channelId, isMuted, isDeafened, isCameraOn, isScreenSharing | room |
-| `space_voice_state` | spaceId, voiceStates, voiceChannelElapsedSeconds, voiceUserStates, spaceVoiceStates | the joining user, or a member whose access changed. Scoped per-space voice-presence snapshot pushed when a user joins a space mid-session, and after `space_access_changed` (see below). |
+| `space_voice_state` | spaceId, voiceStates, voiceChannelElapsedSeconds, voiceUserStates, spaceVoiceStates | the joining user, or a member whose access changed. Scoped per-space voice-presence snapshot pushed when a user joins a space mid-session, after `space_access_changed` (see below), and to each member who can see a voice channel after an override on it or its category changed or it moved to another category (spaces.md, "Channel/Category Permission Overrides"). |
 | `voice_space_muted` | userId, channelId, spaceId, muted | space |
 | `voice_space_deafened` | userId, channelId, spaceId, deafened | space |
 | `voice_permission_muted` | userId, spaceId, muted | space |
@@ -250,7 +250,7 @@ reason: `'displaced'` (new tab) | `'session_closed'`
 {
   type: 'ready',
   user: User,
-  spaces: SpaceWithChannelsAndMembers[],
+  spaces: SpaceWithChannelsAndMembers[], // channels and categories carry isPrivate (permissions.md, "Private channels and categories")
   dmChannels: DmChannel[],
   folders?: SpaceFolder[],
   spaceLayout?: SpaceLayoutItem[] | null,

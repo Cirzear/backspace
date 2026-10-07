@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isChosenUserStatus, ownsChosenStatus } from '@backspace/shared';
+import { detachedHomeOf, isChosenUserStatus, ownsChosenStatus } from '@backspace/shared';
 import { statusOnConnect } from './presenceStatus.js';
 
 describe('isChosenUserStatus', () => {
@@ -23,6 +23,27 @@ describe('ownsChosenStatus', () => {
     expect(ownsChosenStatus({ homeInstance: 'home.example', federationHomeOrphaned: 0 })).toBe(false);
     expect(ownsChosenStatus({ homeInstance: 'home.example', federationHomeOrphaned: null })).toBe(false);
     expect(ownsChosenStatus({ homeInstance: 'home.example', federationHomeOrphaned: false })).toBe(false);
+  });
+});
+
+describe('detachedHomeOf', () => {
+  it('names the former home of a detached account homed here (#310 shape)', () => {
+    expect(detachedHomeOf({ homeInstance: null, detachedHomeInstance: 'reset.example', federationHomeOrphaned: true })).toBe('reset.example');
+    expect(detachedHomeOf({ homeInstance: null, detachedHomeInstance: 'reset.example', federationHomeOrphaned: 1 })).toBe('reset.example');
+  });
+
+  it('falls back to homeInstance for a row served by an instance that predates #310', () => {
+    expect(detachedHomeOf({ homeInstance: 'reset.example', federationHomeOrphaned: true })).toBe('reset.example');
+  });
+
+  it('is null for an account that is not detached', () => {
+    expect(detachedHomeOf({ homeInstance: null, federationHomeOrphaned: false })).toBeNull();
+    expect(detachedHomeOf({ homeInstance: 'home.example', federationHomeOrphaned: 0 })).toBeNull();
+    expect(detachedHomeOf({ homeInstance: null, detachedHomeInstance: 'reset.example', federationHomeOrphaned: 0 })).toBeNull();
+  });
+
+  it('ownsChosenStatus holds for the #310 shape by homeInstance alone', () => {
+    expect(ownsChosenStatus({ homeInstance: null, federationHomeOrphaned: true })).toBe(true);
   });
 });
 

@@ -68,6 +68,30 @@ describe('maybeAutoReattach', () => {
     expect(stored.user.federationHomeOrphaned).toBe(false);
   });
 
+  it('reads the former home of a detached account homed on the remote (#310 shape: homeInstance null)', async () => {
+    const homeConn = makeInstance({
+      origin: 'https://orbit.test',
+      username: 'youruser',
+      user: { id: 'new-home-1', username: 'youruser' } as User,
+    });
+    const attachProof = vi.fn().mockResolvedValue({ token: 'b'.repeat(64) });
+    (homeConn.api as unknown as { auth: { attachProof: typeof attachProof } }).auth.attachProof = attachProof;
+
+    const updatedUser = { id: 'detached-1', username: 'youruser@orbit.test', federationHomeOrphaned: false, homeInstance: 'orbit.test', detachedHomeInstance: null } as User;
+    const reattach = vi.fn().mockResolvedValue({ success: true, user: updatedUser });
+    const detachedConn = makeInstance({
+      origin: 'https://nova.test',
+      user: { id: 'detached-1', username: 'youruser@orbit.test', federationHomeOrphaned: true, homeInstance: null, detachedHomeInstance: 'orbit.test' } as User,
+    });
+    (detachedConn.api as unknown as { users: { reattach: typeof reattach } }).users.reattach = reattach;
+
+    useInstanceStore.setState({ instances: [homeConn, detachedConn] });
+    await maybeAutoReattach(detachedConn);
+
+    expect(attachProof).toHaveBeenCalledWith('nova.test');
+    expect(reattach).toHaveBeenCalledWith({ token: 'b'.repeat(64) });
+  });
+
   it('refetches the DM list for the connection after a successful re-attach', async () => {
     const homeConn = makeInstance({
       origin: 'https://orbit.test',
