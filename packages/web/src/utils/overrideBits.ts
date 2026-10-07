@@ -14,6 +14,16 @@ export interface StoredOverride {
   deny: string;
 }
 
+/**
+ * One target's override as an editor writes it: the whole row, with the
+ * version of the row the edit started from (`overrideVersion` of the row as
+ * loaded, `NO_OVERRIDE_VERSION` when there was none), so the server can refuse
+ * a write made from an outdated copy (permissions.md, "Concurrent edits").
+ */
+export interface OverrideWrite extends StoredOverride {
+  version: string;
+}
+
 /** Where a bit of an override stands: allowed, denied, or left to the tier above. */
 export type OverrideBitState = 'allow' | 'deny' | 'neutral';
 

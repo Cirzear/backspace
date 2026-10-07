@@ -7,7 +7,8 @@ import { LockNote, LOCK_ICON } from '../ui/LockNote';
 import { usePermissionNames } from '../ui/OverrideEntry';
 import { useUIStore } from '../../stores/uiStore';
 import { useSpaceStore, getApiForOrigin, type TaggedSpace } from '../../stores/spaceStore';
-import { PermissionBits, stringToPermissions, permissionsToString } from '../../utils/permissions';
+import { PermissionBits, stringToPermissions, permissionsToString, rolePermissionsVersion } from '../../utils/permissions';
+import { HttpError } from '../../api/client';
 import { PERMISSION_GROUPS, type PermissionGroupId } from '../../utils/permissionGroups';
 import {
   viewerCanManageRoleAt,
@@ -25,6 +26,17 @@ const ALL_PERMISSION_DEFS = PERMISSION_GROUPS.flatMap((group) => group.perms);
 
 /** Why a membership checkbox is locked: the role ranks too high, or it carries bits the viewer lacks. */
 type RoleLock = 'rank' | 'bits';
+
+/**
+ * A staged change to one role's permissions: the bits, and the stored value
+ * they were made from. The save names that value's version (permissions.md,
+ * "Concurrent edits"), so a change someone else saved meanwhile is refused
+ * rather than overwritten.
+ */
+interface PermissionDraft {
+  bits: bigint;
+  base: string;
+}
 
 /** True when both sets contain exactly the same ids. */
 function sameIds(a: Set<string>, b: Set<string>): boolean {
@@ -133,7 +145,9 @@ function MemberRolesBody({
       .sort((a, b) => b.position - a.position)[0];
     return top?.id ?? spaceId;
   });
-  const [permDrafts, setPermDrafts] = useState<Map<string, bigint>>(new Map());
+  // Only roles with a real change have a draft: switching a bit back drops
+  // it, so a role nobody is editing always shows its stored value.
+  const [permDrafts, setPermDrafts] = useState<Map<string, PermissionDraft>>(new Map());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const errorRef = useRef<HTMLDivElement>(null);
@@ -163,7 +177,7 @@ function MemberRolesBody({
 
   const selectedRole = roles.find((r) => r.id === selectedRoleId) ?? null;
   const selectedPermissions = selectedRole
-    ? permDrafts.get(selectedRole.id) ?? stringToPermissions(selectedRole.permissions)
+    ? permDrafts.get(selectedRole.id)?.bits ?? stringToPermissions(selectedRole.permissions)
     : 0n;
   // Roles at or above the viewer's top role are shown, not changed.
   const canEditSelected = selectedRole !== null && viewerCanManageRoleAt(space, members, selectedRole.position);
@@ -188,10 +202,7 @@ function MemberRolesBody({
   };
 
   const membershipChanged = !sameIds(draftRoleIds, initialRoleIds);
-  const dirtyRoles = roles.filter((role) => {
-    const draft = permDrafts.get(role.id);
-    return draft !== undefined && permissionsToString(draft) !== (role.permissions ?? '0');
-  });
+  const dirtyRoles = roles.filter((role) => permDrafts.has(role.id));
   const hasChanges = membershipChanged || dirtyRoles.length > 0;
 
   const toggleMembership = (roleId: string) => {
@@ -207,7 +218,13 @@ function MemberRolesBody({
   const togglePermission = (bit: bigint) => {
     if (!selectedRole || !canEditSelected || !viewerCanSwitchBit(held, bit)) return;
     const next = (selectedPermissions & bit) !== 0n ? selectedPermissions & ~bit : selectedPermissions | bit;
-    setPermDrafts((prev) => new Map(prev).set(selectedRole.id, next));
+    const base = permDrafts.get(selectedRole.id)?.base ?? selectedRole.permissions ?? '0';
+    setPermDrafts((prev) => {
+      const drafts = new Map(prev);
+      if (next === stringToPermissions(base)) drafts.delete(selectedRole.id);
+      else drafts.set(selectedRole.id, { bits: next, base });
+      return drafts;
+    });
   };
 
   const handleDiscard = () => {
@@ -222,6 +239,8 @@ function MemberRolesBody({
   const handleSave = async () => {
     setSaving(true);
     setError('');
+    // The role whose write is in flight, so a refusal can name it.
+    let writingRoleId: string | null = null;
     try {
       // Each write that lands is applied here at once, so a partial save (the
       // member updated, a role write refused) shows exactly what landed. The
@@ -237,7 +256,11 @@ function MemberRolesBody({
       for (const role of dirtyRoles) {
         const draft = permDrafts.get(role.id);
         if (draft === undefined) continue;
-        const saved = await spaceApi.roles.update(spaceId, role.id, { permissions: permissionsToString(draft) });
+        writingRoleId = role.id;
+        const saved = await spaceApi.roles.update(spaceId, role.id, {
+          permissions: permissionsToString(draft.bits),
+          permissionsVersion: rolePermissionsVersion(draft.base),
+        });
         const { roles, setRoles } = useSpaceStore.getState();
         setRoles(withSavedRole(roles, saved));
         setPermDrafts((prev) => {
@@ -248,6 +271,19 @@ function MemberRolesBody({
       }
       addToast(t('spaces:memberRoles.saved'), 'success', 2000);
     } catch (err) {
+      if (err instanceof HttpError && err.code === 'role_permissions_conflict' && writingRoleId !== null) {
+        // Someone else saved this role's permissions meanwhile. Its draft was
+        // made from what they replaced, so it goes, and the role shows what
+        // is stored now for the viewer to review and save again. Drafts of
+        // other roles stay.
+        const conflicted = writingRoleId;
+        setPermDrafts((prev) => {
+          const next = new Map(prev);
+          next.delete(conflicted);
+          return next;
+        });
+        await useSpaceStore.getState().loadSpaceDetail(spaceId, { quiet: true });
+      }
       setError(describeError(err));
     } finally {
       setSaving(false);

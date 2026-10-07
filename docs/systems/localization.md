@@ -338,6 +338,12 @@ section shows this text as its unreachable state), `directory_private_space`
 (`directoryListed: true` on a private space) and
 `directory_requires_discovery` (`directoryEnabled: true` with discovery off).
 
+Concurrent permission edits ([permissions.md](permissions.md), "Concurrent
+edits") added two `409` codes: `overrides_conflict` (a channel or category
+override changed since the editor loaded it) and `role_permissions_conflict`
+(a role's permissions did). Their catalog text tells the user to review and
+save again; the editors reload before showing it.
+
 One code is minted by the client and never by a route:
 `federation_different_password`, carried by `RemoteLoginRequiredError` when a
 remote instance refuses the credential the user's home issued for it (the same

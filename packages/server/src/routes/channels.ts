@@ -11,6 +11,7 @@ import {
   overrideChangeRefusal,
   isHiddenFromEveryone,
   idsHiddenFromEveryone,
+  overrideVersion,
   type HeldBitsRefusal,
   type OverrideBits,
 } from '@backspace/shared/src/permissions.js';
@@ -205,6 +206,29 @@ function overrideWriteRefusal(
   after: OverrideBits | null,
 ): HeldBitsRefusal | null {
   return overrideChangeRefusal(computePermissions(actorId, spaceId), storedOverrideBits(before), after);
+}
+
+/**
+ * The `version` an override write names (permissions.md, "Concurrent
+ * edits"): the version of the row the editor loaded, `NO_OVERRIDE_VERSION`
+ * when it loaded none. `undefined` when the request sends none, which is a
+ * client from before the check: its write is not compared, as before. Null
+ * when the field is there but not a string.
+ */
+function parseExpectedVersion(value: unknown): { expected: string | undefined } | null {
+  if (value === undefined) return { expected: undefined };
+  return typeof value === 'string' && value.length > 0 ? { expected: value } : null;
+}
+
+/**
+ * Whether an override write was made against a row that has changed since
+ * the editor loaded it. Requests without a version are never stale. The
+ * check, the held-bits check and the write run with no await between them,
+ * and better-sqlite3 is synchronous, so no other request can change the row
+ * in between.
+ */
+function isStaleOverrideWrite(stored: { allow: string; deny: string } | undefined, expected: string | undefined): boolean {
+  return expected !== undefined && overrideVersion(stored) !== expected;
 }
 
 export async function channelRoutes(app: FastifyInstance): Promise<void> {
@@ -538,18 +562,19 @@ export async function channelRoutes(app: FastifyInstance): Promise<void> {
       targetId: o.targetId,
       allow: o.allow,
       deny: o.deny,
+      version: overrideVersion(o),
     })));
   });
 
   // PUT /api/channels/:id/overrides - Create or update a channel override
   app.put<{
     Params: { id: string };
-    Body: { targetType: string; targetId: string; allow?: unknown; deny?: unknown };
+    Body: { targetType: string; targetId: string; allow?: unknown; deny?: unknown; version?: unknown };
   }>('/api/channels/:id/overrides', {
     preHandler: authenticate,
   }, async (request, reply) => {
     const { id } = request.params;
-    const { targetType, targetId, allow, deny } = request.body;
+    const { targetType, targetId, allow, deny, version } = request.body;
     const db = getDb();
 
     if (!targetType || !['role', 'member'].includes(targetType)) {
@@ -572,18 +597,27 @@ export async function channelRoutes(app: FastifyInstance): Promise<void> {
     if (!bits) {
       return sendError(reply, 400, 'override_bits_invalid');
     }
+    const expectedVersion = parseExpectedVersion(version);
+    if (!expectedVersion) {
+      return sendError(reply, 400, 'validation_failed');
+    }
 
     const targetRefusal = overrideTargetRefusal(request.userId, channel.spaceId, targetType, targetId, 'write');
     if (targetRefusal) {
       return sendError(reply, targetRefusal.status, targetRefusal.code, targetRefusal.code === 'role_not_in_space' ? { roleId: targetId } : undefined);
     }
 
-    // Privilege escalation guard: only bits the caller holds may change
     const existingChannelOverride = db.select().from(schema.channelOverrides).where(and(
       eq(schema.channelOverrides.channelId, id),
       eq(schema.channelOverrides.targetType, targetType),
       eq(schema.channelOverrides.targetId, targetId),
     )).get();
+    // Concurrent edits: refuse a write made from an outdated copy of the row.
+    if (isStaleOverrideWrite(existingChannelOverride, expectedVersion.expected)) {
+      return sendError(reply, 409, 'overrides_conflict');
+    }
+
+    // Privilege escalation guard: only bits the caller holds may change
     const escalation = overrideWriteRefusal(request.userId, channel.spaceId, existingChannelOverride, bits);
     if (escalation) {
       return sendError(reply, 403, escalation);
@@ -612,16 +646,24 @@ export async function channelRoutes(app: FastifyInstance): Promise<void> {
     broadcastOverrideChange(channel.spaceId, id);
     checkVoicePermissions(channel.spaceId);
 
-    return reply.code(200).send({ success: true });
+    return reply.code(200).send({
+      success: true,
+      version: overrideVersion({ allow: permissionsToString(bits.allow), deny: permissionsToString(bits.deny) }),
+    });
   });
 
   // DELETE /api/channels/:id/overrides/:targetType/:targetId - Remove a channel override
-  app.delete<{ Params: { id: string; targetType: string; targetId: string } }>(
+  app.delete<{ Params: { id: string; targetType: string; targetId: string }; Querystring: { version?: unknown } }>(
     '/api/channels/:id/overrides/:targetType/:targetId',
     { preHandler: authenticate },
     async (request, reply) => {
       const { id, targetType, targetId } = request.params;
       const db = getDb();
+
+      const expectedVersion = parseExpectedVersion(request.query.version);
+      if (!expectedVersion) {
+        return sendError(reply, 400, 'validation_failed');
+      }
 
       const channel = db.select().from(schema.channels).where(eq(schema.channels.id, id)).get();
       if (!channel) {
@@ -644,6 +686,11 @@ export async function channelRoutes(app: FastifyInstance): Promise<void> {
         eq(schema.channelOverrides.targetType, targetType),
         eq(schema.channelOverrides.targetId, targetId),
       )).get();
+      // Concurrent edits: a row someone changed since it was loaded is not
+      // deleted. One already gone is the state the delete asks for.
+      if (existing && isStaleOverrideWrite(existing, expectedVersion.expected)) {
+        return sendError(reply, 409, 'overrides_conflict');
+      }
       const escalation = overrideWriteRefusal(request.userId, channel.spaceId, existing, null);
       if (escalation) {
         return sendError(reply, 403, escalation);
@@ -698,18 +745,19 @@ export async function channelRoutes(app: FastifyInstance): Promise<void> {
       targetId: o.targetId,
       allow: o.allow,
       deny: o.deny,
+      version: overrideVersion(o),
     })));
   });
 
   // PUT /api/categories/:id/overrides
   app.put<{
     Params: { id: string };
-    Body: { targetType: string; targetId: string; allow?: unknown; deny?: unknown };
+    Body: { targetType: string; targetId: string; allow?: unknown; deny?: unknown; version?: unknown };
   }>('/api/categories/:id/overrides', {
     preHandler: authenticate,
   }, async (request, reply) => {
     const { id } = request.params;
-    const { targetType, targetId, allow, deny } = request.body;
+    const { targetType, targetId, allow, deny, version } = request.body;
     const db = getDb();
 
     if (!targetType || !['role', 'member'].includes(targetType)) {
@@ -733,18 +781,27 @@ export async function channelRoutes(app: FastifyInstance): Promise<void> {
     if (!bits) {
       return sendError(reply, 400, 'override_bits_invalid');
     }
+    const expectedVersion = parseExpectedVersion(version);
+    if (!expectedVersion) {
+      return sendError(reply, 400, 'validation_failed');
+    }
 
     const targetRefusal = overrideTargetRefusal(request.userId, category.spaceId, targetType, targetId, 'write');
     if (targetRefusal) {
       return sendError(reply, targetRefusal.status, targetRefusal.code, targetRefusal.code === 'role_not_in_space' ? { roleId: targetId } : undefined);
     }
 
-    // Privilege escalation guard (matches channel override pattern)
     const existingCategoryOverride = db.select().from(schema.categoryOverrides).where(and(
       eq(schema.categoryOverrides.categoryId, id),
       eq(schema.categoryOverrides.targetType, targetType),
       eq(schema.categoryOverrides.targetId, targetId),
     )).get();
+    // Concurrent edits (see the channel route).
+    if (isStaleOverrideWrite(existingCategoryOverride, expectedVersion.expected)) {
+      return sendError(reply, 409, 'overrides_conflict');
+    }
+
+    // Privilege escalation guard (matches channel override pattern)
     const escalation = overrideWriteRefusal(request.userId, category.spaceId, existingCategoryOverride, bits);
     if (escalation) {
       return sendError(reply, 403, escalation);
@@ -771,16 +828,24 @@ export async function channelRoutes(app: FastifyInstance): Promise<void> {
     broadcastCategoryOverrideChange(category.spaceId, id);
     checkVoicePermissions(category.spaceId);
 
-    return reply.code(200).send({ success: true });
+    return reply.code(200).send({
+      success: true,
+      version: overrideVersion({ allow: permissionsToString(bits.allow), deny: permissionsToString(bits.deny) }),
+    });
   });
 
   // DELETE /api/categories/:id/overrides/:targetType/:targetId
-  app.delete<{ Params: { id: string; targetType: string; targetId: string } }>(
+  app.delete<{ Params: { id: string; targetType: string; targetId: string }; Querystring: { version?: unknown } }>(
     '/api/categories/:id/overrides/:targetType/:targetId',
     { preHandler: authenticate },
     async (request, reply) => {
       const { id, targetType, targetId } = request.params;
       const db = getDb();
+
+      const expectedVersion = parseExpectedVersion(request.query.version);
+      if (!expectedVersion) {
+        return sendError(reply, 400, 'validation_failed');
+      }
 
       const category = db.select().from(schema.channelCategories)
         .where(eq(schema.channelCategories.id, id)).get();
@@ -803,6 +868,10 @@ export async function channelRoutes(app: FastifyInstance): Promise<void> {
         eq(schema.categoryOverrides.targetType, targetType),
         eq(schema.categoryOverrides.targetId, targetId),
       )).get();
+      // Concurrent edits (see the channel route).
+      if (existing && isStaleOverrideWrite(existing, expectedVersion.expected)) {
+        return sendError(reply, 409, 'overrides_conflict');
+      }
       const escalation = overrideWriteRefusal(request.userId, category.spaceId, existing, null);
       if (escalation) {
         return sendError(reply, 403, escalation);

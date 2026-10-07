@@ -271,3 +271,50 @@ export function idsHiddenFromEveryone<T extends OverrideDenyRow>(
   }
   return hidden;
 }
+
+// ─── Edit Versions ──────────────────────────────────────────────────────────
+// An editor that saves a whole permissions value (a role's permissions, an
+// override's allow and deny) sends the version of the value it loaded, and
+// the server refuses the write with 409 when the stored value has another
+// version by then, so two editors saving at the same time cannot drop each
+// other's bits. The version is derived from the value itself, so it needs no
+// stored column and both sides compute the same one: equal bits always give
+// the same version, and a value that changed and changed back is the value the
+// editor loaded, which loses nothing. See docs/systems/permissions.md,
+// "Concurrent edits".
+
+/** The version of an override that does not exist: the target has no row. */
+export const NO_OVERRIDE_VERSION = 'none';
+
+const FNV_OFFSET_64 = 0xcbf29ce484222325n;
+const FNV_PRIME_64 = 0x100000001b3n;
+const MASK_64 = (1n << 64n) - 1n;
+
+/** FNV-1a, 64 bits, of an ASCII string, as 16 lowercase hex digits. */
+function fnv1a64(text: string): string {
+  let hash = FNV_OFFSET_64;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= BigInt(text.charCodeAt(i));
+    hash = (hash * FNV_PRIME_64) & MASK_64;
+  }
+  return hash.toString(16).padStart(16, '0');
+}
+
+/**
+ * The version of a role's permissions value, as `PATCH /spaces/:id/roles/:rid`
+ * compares `permissionsVersion` with it. Read the way every permission check
+ * reads the value (`canonicalPermissionString`).
+ */
+export function rolePermissionsVersion(permissions: string | undefined | null): string {
+  return fnv1a64(`role:${canonicalPermissionString(permissions)}`);
+}
+
+/**
+ * The version of one target's channel or category override, as the override
+ * `PUT` and `DELETE` compare `version` with it: `NO_OVERRIDE_VERSION` when
+ * the target has no row, else derived from the row's allow and deny.
+ */
+export function overrideVersion(row: { allow: string; deny: string } | null | undefined): string {
+  if (!row) return NO_OVERRIDE_VERSION;
+  return fnv1a64(`override:${canonicalPermissionString(row.allow)}:${canonicalPermissionString(row.deny)}`);
+}
