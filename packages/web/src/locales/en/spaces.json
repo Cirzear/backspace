@@ -52,6 +52,15 @@
       "rename": "Rename Channel",
       "nameLabel": "Channel Name",
       "channelLabel": "Channel",
+      "topic": {
+        "label": "Topic",
+        "placeholder": "What's this channel about?",
+        "hint": "Shown in the channel header. Anyone can open the full text from there.",
+        "counter": "{{used}}/{{max}}",
+        "tooLong": "Shorten the topic to {{max}} characters or fewer to save it.",
+        "empty": "No topic set.",
+        "reset": "Discard Changes"
+      },
       "private": {
         "label": "Private Channel",
         "description": "Only selected members and roles will be able to view this channel.",
@@ -435,6 +444,7 @@
       "sendMessages": "Send Messages",
       "manageMessages": "Manage Messages",
       "attachFiles": "Attach Files",
+      "mentionEveryone": "Mention @everyone",
       "readMessageHistory": "Read Message History",
       "addReactions": "Add Reactions",
       "connect": "Connect",
@@ -605,6 +615,10 @@
     "selectChannel": "Select a channel",
     "selectChannelHint": "Select a text or voice channel to get started",
     "notificationSettings": "Notification Settings",
+    "topic": {
+      "show": "Show full topic",
+      "dialogTitle": "#{{name}}"
+    },
     "voice": {
       "connectionFailed": "Connection Failed",
       "connected": "Connected",
@@ -625,6 +639,7 @@
       "memberCount_one": "({{count}} member)",
       "memberCount_other": "({{count}} members)",
       "startVoiceCall": "Start Voice Call",
+      "joinCall": "Join Call",
       "startVideoCall": "Start Video Call",
       "addFriends": "Add Friends to DM"
     }
@@ -641,33 +656,29 @@
     "failed": "Failed to transfer ownership"
   },
   "notifications": {
-    "title": "Notification settings",
-    "description": "Mute silences sounds and system notifications. Messages and unread badges are unchanged. Space mute also silences channel overrides.",
-    "level": "Notify me about",
-    "inherit": "Use default / inherit space",
-    "all": "All messages",
-    "mentions": "Only mentions",
-    "nothing": "Nothing",
-    "mute": "Mute",
-    "off": "Not muted",
-    "minutes15": "15 minutes",
-    "hour1": "1 hour",
-    "hours8": "8 hours",
-    "forever": "Until I turn it back on",
-    "existing": "Keep current mute",
-    "suppressEveryone": "Suppress @everyone and @here",
-    "suppressRoles": "Suppress role mentions",
-    "save": "Save",
-    "saving": "Saving…",
-    "permission": "Mention @everyone, @here and roles",
+    "open": "Notification settings",
+    "channelTitle": "Notifications for #{{channel}}",
+    "spaceTitle": "Notifications for {{space}}",
+    "levelHeading": "Notify me about",
+    "level": {
+      "all": "All messages",
+      "mentions": "Only @mentions",
+      "nothing": "Nothing",
+      "inherit": "Space default ({{level}})"
+    },
+    "dmNote": "Direct messages always notify you.",
+    "muteHeading": "Mute",
+    "mute": {
+      "oneHour": "For 1 hour",
+      "eightHours": "For 8 hours",
+      "oneDay": "For 24 hours",
+      "indefinite": "Until I unmute"
+    },
     "unmute": "Unmute",
-    "muted": "Muted",
-    "active": "Notifications enabled",
-    "expiringNow": "expiring now",
-    "remainingMinutes_one": "{{count}} min left",
-    "remainingMinutes_other": "{{count}} min left",
-    "remainingHours_one": "{{count}} hour left",
-    "remainingHours_other": "{{count}} hours left",
-    "remainingHoursMinutes": "{{hours}}h {{minutes}}m left"
+    "mutedUntil": "Muted until {{time}}",
+    "mutedIndefinitely": "Muted until you unmute",
+    "spaceMuted": "This space is muted, so its channels are too.",
+    "mutedIndicator": "Muted",
+    "saveFailed": "Could not save notification settings"
   }
 }

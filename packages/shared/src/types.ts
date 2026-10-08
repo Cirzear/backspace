@@ -34,6 +34,14 @@ export interface User {
   showActivity?: boolean;
   /** Self-view only: this federated account's home instance was reset/lost — it now operates as a sovereign local account (detach spec). */
   federationHomeOrphaned?: boolean;
+  /**
+   * Self-view only: the home instance a detached account was federated from
+   * before it was detached, or null. A detached account is homed on the
+   * instance that holds it (`homeInstance` and `homeUserId` are null), so this
+   * is the only place its former home is still named; re-attach needs it.
+   * Read it through {@link detachedHomeOf}.
+   */
+  detachedHomeInstance?: string | null;
 }
 
 export interface ReplicatedInstance {
@@ -66,12 +74,25 @@ export function isChosenUserStatus(value: unknown): value is ChosenUserStatus {
   return typeof value === 'string' && (CHOSEN_USER_STATUSES as readonly string[]).includes(value);
 }
 
+/** Whether an account row carries the detached flag (integer on the server row, boolean on the client `User`). */
+function isDetached(account: { federationHomeOrphaned?: number | boolean | null }): boolean {
+  return account.federationHomeOrphaned === 1 || account.federationHomeOrphaned === true;
+}
+
 /**
  * Whether an account owns its chosen status, so its own row is where the choice
- * is stored and read (`users.chosen_status`). True for a native account and for
- * a detached one (its home instance was reset, so it is sovereign here); false
- * for a replicated account, whose choice lives on its home instance. The same
- * authority rule the server applies to profile edits and credential issuance.
+ * is stored and read (`users.chosen_status`). True for an account homed on the
+ * instance that holds the row: a native account, and a detached one (its home
+ * instance was reset, so it is homed here now); false for a replicated
+ * account, whose choice lives on its home instance. The same authority rule
+ * the server applies to profile edits and credential issuance.
+ *
+ * Since #310 a detached row carries no `homeInstance` (federation.md,
+ * "Detached accounts are homed here"), so `!homeInstance` alone decides for
+ * rows from this version. The detached flag still counts on its own for a row
+ * served by an instance that predates that rewrite, where a detached account
+ * kept its former home in `homeInstance`.
+ *
  * Accepts the server row (integer flag) and the client `User` (boolean flag).
  * activity-presence.md, "DB Persistence".
  */
@@ -79,7 +100,22 @@ export function ownsChosenStatus(account: {
   homeInstance?: string | null;
   federationHomeOrphaned?: number | boolean | null;
 }): boolean {
-  return !account.homeInstance || account.federationHomeOrphaned === 1 || account.federationHomeOrphaned === true;
+  return !account.homeInstance || isDetached(account);
+}
+
+/**
+ * The home instance a detached account was federated from, or null when the
+ * account is not detached. Rows from this version name it in
+ * `detachedHomeInstance`; a row served by an instance that predates #310 kept
+ * it in `homeInstance`, which is read as the fallback.
+ */
+export function detachedHomeOf(account: {
+  homeInstance?: string | null;
+  detachedHomeInstance?: string | null;
+  federationHomeOrphaned?: number | boolean | null;
+}): string | null {
+  if (!isDetached(account)) return null;
+  return account.detachedHomeInstance || account.homeInstance || null;
 }
 
 export interface UserWithPassword extends User {
@@ -273,39 +309,155 @@ export interface ReadState {
   lastReadMessageId: string;
 }
 
-// ─── Notification Settings ──────────────────────────────────────────────────
-// Per-user, per-space and per-channel alert preferences. They only decide
-// whether a message raises the message sound / OS notification; unread state
-// is unaffected. Stored on the instance that hosts the space (like read
-// states), so a federated space's settings live on that space's instance.
+// ─── Notification Settings ─────────────────────────────────────────────────
+// Per-space and per-channel alert preferences, stored on the instance that
+// hosts the space (docs/systems/sounds.md, "Notification settings").
 
-/** Which messages alert: every message, only ones that mention the user, or none. */
-export type NotificationLevel = 'all' | 'mentions' | 'nothing';
+/**
+ * Which messages of a space channel alert the user (sound and desktop
+ * notification). DMs are not governed by it.
+ *
+ * - `all`: every message from someone else.
+ * - `mentions`: only messages that mention the user.
+ * - `nothing`: no message, mentions included.
+ */
+export const NOTIFICATION_LEVELS = ['all', 'mentions', 'nothing'] as const;
+export type NotificationLevel = (typeof NOTIFICATION_LEVELS)[number];
 
 export type NotificationTargetType = 'space' | 'channel';
-
-export interface NotificationSetting {
-  /** 'space' rows hold the space defaults; 'channel' rows override them for one channel. */
-  targetType: NotificationTargetType;
-  targetId: string;
-  /** null means "inherit": a channel inherits its space, a space inherits the default ('mentions'). */
-  level: NotificationLevel | null;
-  /** Epoch ms when a timed mute ends, MUTED_FOREVER for an indefinite mute, null when not muted. */
-  mutedUntil: number | null;
-  /** Space rows only: ignore `@everyone`/`@here`. */
-  suppressEveryone: boolean;
-  /** Space rows only: ignore role mentions. */
-  suppressRoles: boolean;
-}
-
-export type UpdateNotificationSettingRequest = Omit<NotificationSetting, 'targetType' | 'targetId'>;
 
 /** `mutedUntil` value of an indefinite mute. Chosen so "mutedUntil > now" is the single "is muted" test. */
 export const MUTED_FOREVER = Number.MAX_SAFE_INTEGER;
 
-/** Level a space uses when the user never set one: Discord's default for large spaces. */
+/** The level of a space with no stored choice, and of every channel that inherits it. */
 export const DEFAULT_NOTIFICATION_LEVEL: NotificationLevel = 'mentions';
 
+export function isNotificationLevel(value: unknown): value is NotificationLevel {
+  return typeof value === 'string' && (NOTIFICATION_LEVELS as readonly string[]).includes(value);
+}
+
+/**
+ * How long a mute lasts. The server turns a duration into `mutedUntil` with
+ * its own clock, so every session of the user sees the same end time.
+ */
+export const NOTIFICATION_MUTE_DURATIONS = ['1h', '8h', '24h', 'indefinite'] as const;
+export type NotificationMuteDuration = (typeof NOTIFICATION_MUTE_DURATIONS)[number];
+
+/** Length of each timed mute in ms; `indefinite` has none. */
+export const NOTIFICATION_MUTE_DURATION_MS: Record<Exclude<NotificationMuteDuration, 'indefinite'>, number> = {
+  '1h': 60 * 60 * 1000,
+  '8h': 8 * 60 * 60 * 1000,
+  '24h': 24 * 60 * 60 * 1000,
+};
+
+export function isNotificationMuteDuration(value: unknown): value is NotificationMuteDuration {
+  return typeof value === 'string' && (NOTIFICATION_MUTE_DURATIONS as readonly string[]).includes(value);
+}
+
+/**
+ * One stored notification setting of the signed-in user, for a whole space
+ * (`channelId` null) or for one channel of it. Ids are the hosting
+ * instance's.
+ *
+ * `level` null means "not chosen": a channel then inherits its space's level,
+ * and a space uses `DEFAULT_NOTIFICATION_LEVEL`. `muted` with `mutedUntil`
+ * null is a mute until the user lifts it; with a time, the mute ends then
+ * (epoch ms, the server's clock). A mute that has ended reads as not muted.
+ *
+ * `updatedAt` is the server's write time. A setting with no choice left
+ * (`level` null and not muted) is not stored, and is sent as such so other
+ * sessions drop theirs.
+ */
+export interface NotificationSetting {
+  spaceId: string;
+  channelId: string | null;
+  level: NotificationLevel | null;
+  muted: boolean;
+  mutedUntil: number | null;
+  updatedAt: number;
+  /** Legacy local fields */
+  targetType?: NotificationTargetType;
+  targetId?: string;
+  suppressEveryone?: boolean;
+  suppressRoles?: boolean;
+}
+
+/**
+ * Body of `PATCH /api/spaces/:spaceId/notification-settings` and
+ * `PATCH /api/channels/:channelId/notification-settings`. An absent field is
+ * left as it is. `level: null` clears the choice (inherit / default);
+ * `mute: null` lifts the mute.
+ */
+export interface UpdateNotificationSettingRequest {
+  level?: NotificationLevel | null;
+  mute?: NotificationMuteDuration | null;
+  mutedUntil?: number | null;
+  suppressEveryone?: boolean;
+  suppressRoles?: boolean;
+}
+
+export interface NotificationSettingsResponse {
+  settings: NotificationSetting[];
+}
+
+/** Whether a stored mute is in force at `now`. */
+export function isMuteActive(setting: Pick<NotificationSetting, 'muted' | 'mutedUntil'> | null | undefined, now: number): boolean {
+  if (!setting) return false;
+  if (setting.muted === false) return false;
+  if (setting.muted === true) return setting.mutedUntil === null || setting.mutedUntil > now;
+  return setting.mutedUntil !== null && setting.mutedUntil > now;
+}
+
+/** Where a channel's effective level came from. */
+export type NotificationLevelSource = 'channel' | 'space' | 'default';
+
+/**
+ * What applies to one space channel: its level after inheritance, and
+ * whether it is muted (its own mute or its space's). `mutedUntil` is the
+ * end of the mute in force (null while indefinite or not muted); with both
+ * the channel and the space muted it is the later of the two ends.
+ */
+export interface ChannelNotificationPolicy {
+  level: NotificationLevel;
+  levelSource: NotificationLevelSource;
+  muted: boolean;
+  mutedUntil: number | null;
+  /** The channel's own mute is in force (as opposed to only the space's). */
+  channelMuted: boolean;
+  /** The space's mute is in force. */
+  spaceMuted: boolean;
+}
+
+/**
+ * The inheritance rule, in one place: a channel's own level wins, else its
+ * space's, else `DEFAULT_NOTIFICATION_LEVEL`. A channel is muted while its
+ * own mute or its space's is in force.
+ */
+export function resolveChannelNotificationPolicy(
+  spaceSetting: NotificationSetting | null | undefined,
+  channelSetting: NotificationSetting | null | undefined,
+  now: number,
+): ChannelNotificationPolicy {
+  let level: NotificationLevel = DEFAULT_NOTIFICATION_LEVEL;
+  let levelSource: NotificationLevelSource = 'default';
+  if (channelSetting?.level) {
+    level = channelSetting.level;
+    levelSource = 'channel';
+  } else if (spaceSetting?.level) {
+    level = spaceSetting.level;
+    levelSource = 'space';
+  }
+  const channelMuted = isMuteActive(channelSetting, now);
+  const spaceMuted = isMuteActive(spaceSetting, now);
+  const ends: Array<number | null> = [];
+  if (channelMuted && channelSetting) ends.push(channelSetting.mutedUntil);
+  if (spaceMuted && spaceSetting) ends.push(spaceSetting.mutedUntil);
+  let mutedUntil: number | null = null;
+  if (ends.length > 0 && !ends.includes(null)) {
+    mutedUntil = Math.max(...ends.filter((end): end is number => end !== null));
+  }
+  return { level, levelSource, muted: channelMuted || spaceMuted, mutedUntil, channelMuted, spaceMuted };
+}
 // ─── Message Types ──────────────────────────────────────────────────────────
 
 export interface Message {
@@ -578,8 +730,10 @@ export type ServerEvent =
   | { type: 'friend_request_accepted'; friend: Friend; requestId: string }
   | { type: 'dm_call_incoming'; dmChannelId: string | null; federatedCallId?: string; callerId: string; callerName: string; livekitUrl?: string; livekitToken?: string; callOrigin?: string }
   | { type: 'dm_call_accepted'; dmChannelId: string | null; federatedCallId?: string }
-  | { type: 'dm_call_rejected'; dmChannelId: string }
-  | { type: 'dm_call_ended'; dmChannelId: string }
+  // `dmChannelId` is null and `federatedCallId` set when the instance holds a
+  // federated call with no local copy of the DM (Path B, voice.md).
+  | { type: 'dm_call_rejected'; dmChannelId: string | null; federatedCallId?: string }
+  | { type: 'dm_call_ended'; dmChannelId: string | null; federatedCallId?: string }
   | { type: 'dm_call_undeliverable'; dmChannelId: string | null; federatedCallId: string; terminal: boolean; phase: DmCallPhase; failures: DmCallUndeliverableFailure[] }
   | { type: 'voice_status_update'; userId: string; channelId: string; isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }
   | { type: 'space_voice_state'; spaceId: string; voiceStates: Record<string, string[]>; voiceChannelElapsedSeconds: Record<string, number>; voiceUserStates: Record<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }>; spaceVoiceStates: Record<string, { spaceMuted: boolean; spaceDeafened: boolean; permissionMuted: boolean }> }
@@ -612,6 +766,10 @@ export type ServerEvent =
   | { type: 'category_deleted'; categoryId: string; spaceId: string }
   | { type: 'channel_layout_updated'; spaceId: string; channels: Channel[]; categories: ChannelCategory[] }
   | { type: 'space_layout_updated'; layout: SpaceLayoutItem[]; folders: SpaceFolder[]; updatedAt?: number }
+  // One of the user's notification settings on this instance changed (from
+  // any of their sessions here). A setting with level null and not muted was
+  // cleared. See docs/systems/websocket.md.
+  | { type: 'notification_settings_updated'; setting: NotificationSetting }
   | { type: 'notification_setting_updated'; setting: NotificationSetting }
   | { type: 'mark_unread'; channelId: string; messageId: string }
   | { type: 'embeds_resolved'; messageId: string; channelId: string; embeds: Embed[] }
@@ -641,7 +799,10 @@ export type ServerEvent =
   | { type: 'pong' }
   // `code` is set where the refusal has a stable ErrorCode (e.g. a voice
   // moderation action refused by the role hierarchy); older senders omit it.
-  | { type: 'error'; message: string; code?: ErrorCode }
+  // `dmChannelId` names the call of a refused `dm_call_start` or
+  // `dm_call_accept`; a client calling or in that call drops it (voice.md,
+  // "DM Call State Machine").
+  | { type: 'error'; message: string; code?: ErrorCode; dmChannelId?: string }
   // The space's roles or a member's roles changed: what the receiver may see
   // or do there, and how its roles and members look, may be different now.
   // The client refetches that space's detail (docs/systems/websocket.md).
@@ -676,6 +837,7 @@ export interface CreateSpaceRequest {
   avatarColor?: string;
   visibility?: SpaceVisibility;
   description?: string;
+  defaultChannelName?: string;
 }
 
 export interface CreateChannelRequest {
@@ -687,7 +849,8 @@ export interface CreateChannelRequest {
 
 export interface UpdateChannelRequest {
   name?: string;
-  topic?: string;
+  /** `null` or a value that trims to nothing clears the topic. */
+  topic?: string | null;
   position?: number;
   categoryId?: string | null;
 }
@@ -1311,6 +1474,19 @@ export interface FederationCallPayload {
   rejector?: { homeUserId: string; homeInstance: string };
   endedBy?: { homeUserId: string; homeInstance: string };
   participants?: FederationRelayParticipant[];  // All DM members for Path B identity matching
+  /**
+   * Group call rules, per member (voice.md, "Group calls across instances").
+   * On `dm_call_start` the host says it applies them: a member's end or
+   * decline removes only that member, and the host relays `dm_call_end` to
+   * every peer once the call is over. On `dm_call_accept` from an instance
+   * holding the call's entry: it relays this member's leave, also when they
+   * just go away, so the host seats them. On `dm_call_end` /
+   * `dm_call_reject` from that instance: only this member left or declined,
+   * and the sender keeps the call for its other members. Senders up to 1.8.0
+   * omit it; their acceptors are not seated, and their ends and declines end
+   * the call for all of the sender's members.
+   */
+  perMember?: boolean;
 }
 
 export interface FederationMembershipPayload {

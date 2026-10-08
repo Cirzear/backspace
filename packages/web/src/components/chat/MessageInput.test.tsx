@@ -1,13 +1,13 @@
 import { api } from '../../api/client';
 import { useContextMenuStore } from '../../stores/contextMenuStore';
-import { act } from '@testing-library/react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MemberWithUser, MessageWithUser, User } from '@backspace/shared';
 import { useAuthStore } from '../../stores/authStore';
 import { useChatStore } from '../../stores/chatStore';
 import { useComposerStore } from '../../stores/composerStore';
 import { useSpaceStore } from '../../stores/spaceStore';
+import { useUIStore } from '../../stores/uiStore';
 import { Message } from './Message';
 import { MessageInput } from './MessageInput';
 import { PermissionBits } from '@backspace/shared/src/permissions';
@@ -63,13 +63,14 @@ beforeEach(() => {
   useComposerStore.setState({ states: new Map() });
   useChatStore.setState({
     messages: new Map([['dm-1', [ownMessage]]]),
-    replyTo: null,
+    replyTargets: new Map(),
     editingMessageId: null,
   });
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
+  useUIStore.setState({ toasts: [] });
   useChatStore.getState().clearAllMessages();
   useComposerStore.setState({ states: new Map() });
   useAuthStore.setState({ user: null });
@@ -122,11 +123,11 @@ describe('MessageInput edit shortcut', () => {
   });
 });
 
-
 describe('MessageInput mention composition', () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();
     useSpaceStore.setState({
+      dmChannels: [],
       channelToSpaceMap: new Map([['dm-1', 'space-1']]),
       members: [{ spaceId: 'space-1', userId: 'me', user: me, roles: [] }] as unknown as MemberWithUser[],
       roles: [],
@@ -187,7 +188,6 @@ describe('author context menu mention', () => {
   });
 });
 
-
 describe('MessageInput slow sends', () => {
   it('consumes a draft immediately, prevents repeated Enter and preserves subsequent typing', async () => {
     let finish!: () => void;
@@ -217,6 +217,7 @@ describe('MessageInput slow sends', () => {
     fireEvent.change(input, { target: { value: 'new text' } });
     await act(async () => { fail(new Error('Offline')); await sending.catch(() => {}); });
     expect(input).toHaveValue('failed text\nnew text');
+    expect(useUIStore.getState().toasts).toEqual([expect.objectContaining({ message: 'Offline', type: 'warning' })]);
   });
 });
 

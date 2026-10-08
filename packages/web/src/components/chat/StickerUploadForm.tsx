@@ -315,8 +315,8 @@ export function StickerUploadForm({ onAdded, onCancel }: StickerUploadFormProps)
 
             <div className="space-y-2 max-h-56 overflow-y-auto pr-1 scrollbar-thin">
               {items.map((item, index) => (
-                <div key={item.id} className="flex items-center gap-2.5 rounded-lg border border-border-soft bg-surface-primary/50 p-2">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border-soft bg-surface-secondary sticker-checkerboard">
+                <div key={item.id} className="flex items-center gap-2.5 rounded-lg border border-border-soft bg-surface-elevated/50 p-2">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border-soft bg-surface-input sticker-checkerboard">
                     <img
                       src={item.preview}
                       alt={t('stickers.preview')}

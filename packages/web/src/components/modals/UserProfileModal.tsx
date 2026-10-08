@@ -216,7 +216,7 @@ export function UserProfileModal() {
   const handleRemoveFriend = async () => {
     if (friendship.state !== 'friends') return;
     setFriendActionLoading(true);
-    try { await removeFriend(friendship.friend.id); }
+    try { await removeFriend(friendship.friend, friendship.friend._instanceOrigin); }
     catch (err) { addToast(describeError(err), 'warning'); }
     finally { setFriendActionLoading(false); }
   };
@@ -224,7 +224,7 @@ export function UserProfileModal() {
   const handleCancelRequest = async () => {
     if (friendship.state !== 'outbound_pending') return;
     setFriendActionLoading(true);
-    try { await cancelFriendRequest(friendship.request.id); }
+    try { await cancelFriendRequest(friendship.request.id, friendship.request._instanceOrigin); }
     catch (err) { addToast(describeError(err), 'warning'); }
     finally { setFriendActionLoading(false); }
   };
@@ -232,7 +232,7 @@ export function UserProfileModal() {
   const handleAcceptRequest = async () => {
     if (friendship.state !== 'inbound_pending') return;
     setFriendActionLoading(true);
-    try { await updateFriendRequest(friendship.request.id, 'accepted'); }
+    try { await updateFriendRequest(friendship.request.id, friendship.request._instanceOrigin, 'accepted'); }
     catch (err) { addToast(describeError(err), 'warning'); }
     finally { setFriendActionLoading(false); }
   };
@@ -240,7 +240,7 @@ export function UserProfileModal() {
   const handleDeclineRequest = async () => {
     if (friendship.state !== 'inbound_pending') return;
     setFriendActionLoading(true);
-    try { await updateFriendRequest(friendship.request.id, 'declined'); }
+    try { await updateFriendRequest(friendship.request.id, friendship.request._instanceOrigin, 'declined'); }
     catch (err) { addToast(describeError(err), 'warning'); }
     finally { setFriendActionLoading(false); }
   };

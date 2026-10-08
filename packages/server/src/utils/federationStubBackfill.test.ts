@@ -416,8 +416,11 @@ describe('detached account: registration 409 + suffixed stub creation (detach sp
       passwordHash: originalHash,
       status: 'offline',
       isAdmin: 0,
-      homeInstance: 'peer.example',
-      homeUserId: 'old-home-uid',
+      // Detached: homed here, its former identity kept aside.
+      homeInstance: null,
+      homeUserId: null,
+      detachedHomeInstance: 'peer.example',
+      detachedHomeUserId: 'old-home-uid',
       federationHomeOrphaned: 1,
       createdAt: Date.now(),
     }).run();
@@ -467,7 +470,9 @@ describe('detached account: registration 409 + suffixed stub creation (detach sp
     }
 
     const row = testDb.select().from(schema.users).where(eq(schema.users.id, detachedId)).get();
-    expect(row?.homeUserId).toBe('old-home-uid');    // no backfill
+    expect(row?.homeUserId).toBeNull();               // no backfill
+    expect(row?.homeInstance).toBeNull();             // still homed here
+    expect(row?.detachedHomeUserId).toBe('old-home-uid');
     expect(row?.passwordHash).toBe(originalHash);     // no credential upgrade/re-hash
     expect(row?.username).toBe(detachedUsername);      // handle not rebound
     expect(row?.federationHomeOrphaned).toBe(1);       // still sovereign
@@ -489,7 +494,9 @@ describe('detached account: registration 409 + suffixed stub creation (detach sp
     // The detached account is left entirely untouched.
     const row = testDb.select().from(schema.users).where(eq(schema.users.id, detachedId)).get();
     expect(row?.username).toBe(detachedUsername);
-    expect(row?.homeUserId).toBe('old-home-uid');
+    expect(row?.homeUserId).toBeNull();
+    expect(row?.homeInstance).toBeNull();
+    expect(row?.detachedHomeUserId).toBe('old-home-uid');
     expect(row?.passwordHash).toBe(originalHash);
     expect(row?.federationHomeOrphaned).toBe(1);
   });

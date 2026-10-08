@@ -1,9 +1,6 @@
-import type { Channel, ChannelCategory, CreateSpaceRequest, MemberWithUser, SpaceWithChannelsAndMembers } from '@backspace/shared';
-import { AVATAR_COLORS } from '@backspace/shared';
-import { DEFAULT_EVERYONE_PERMISSIONS, permissionsToString } from '@backspace/shared/src/permissions.js';
 import crypto from 'crypto';
-import { and, eq, inArray } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
+import { and, eq, inArray } from 'drizzle-orm';
 import path from 'path';
 import { config } from '../config.js';
 import { getDb, schema } from '../db/index.js';
@@ -15,6 +12,16 @@ import { sanitizeUser } from '../utils/sanitize.js';
 import { generateSnowflake } from '../utils/snowflake.js';
 import { resizeProfileImage } from '../utils/thumbnail.js';
 import { connectionManager } from '../ws/handler.js';
+import { DEFAULT_EVERYONE_PERMISSIONS, idsHiddenFromEveryone, permissionsToString } from '@backspace/shared/src/permissions.js';
+import {
+  AVATAR_COLORS,
+  type Channel,
+  type ChannelCategory,
+  type CreateSpaceRequest,
+  type MemberWithUser,
+  type SpaceWithChannelsAndMembers,
+} from '@backspace/shared';
+import { rolesForViewer, memberRolesView } from '../utils/permissionDataView.js';
 import { spaceBanRoutes } from './spaceBans.js';
 import { spaceInviteRoutes } from './spaceInvites.js';
 import { listSpaceMemberRoutes, removeSpaceMemberRoutes, updateSpaceMemberRoutes } from './spaceMembers.js';
@@ -35,13 +42,17 @@ function rowToChannel(row: typeof schema.channels.$inferSelect): Channel {
   };
 }
 
+function generateInviteCode(): string {
+  return crypto.randomBytes(4).toString('hex');
+}
 
 export function createSpaceRoutes(app: FastifyInstance): void {
-  // POST /api/spaces - Create a new server
+  // POST /api/spaces - Create server
   app.post<{ Body: CreateSpaceRequest }>('/api/spaces', {
     preHandler: authenticate,
   }, async (request, reply) => {
-    const { name, icon, banner, avatarColor, visibility, description } = request.body;
+    const { name, icon, banner, avatarColor, visibility, description, defaultChannelName } = request.body as CreateSpaceRequest & { defaultChannelName?: string };
+    const db = getDb();
 
     if (!name || typeof name !== 'string') {
       return sendError(reply, 400, 'space_name_required');
@@ -64,22 +75,24 @@ export function createSpaceRoutes(app: FastifyInstance): void {
       ? avatarColor
       : AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
 
-    const db = getDb();
     const spaceId = generateSnowflake();
+    const generalChannelId = generateSnowflake();
+    const voiceChannelId = generateSnowflake();
     const textCategoryId = generateSnowflake();
     const voiceCategoryId = generateSnowflake();
-    const channelId = generateSnowflake();
-    const voiceChannelId = generateSnowflake();
     const now = Date.now();
-    const inviteCode = crypto.randomBytes(4).toString('hex');
+    const inviteCode = generateInviteCode();
 
-    // Create server, owner membership, default categories + channels, and @everyone role atomically
+    const chName = (defaultChannelName && typeof defaultChannelName === 'string')
+      ? defaultChannelName.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '-').slice(0, 100) || 'general'
+      : 'general';
+
     db.transaction((tx) => {
       tx.insert(schema.spaces).values({
         id: spaceId,
         name: trimmedName,
-        icon: icon ?? null,
-        banner: banner ?? null,
+        icon: icon || null,
+        banner: banner || null,
         avatarColor: safeAvatarColor,
         ownerId: request.userId,
         inviteCode,
@@ -94,35 +107,32 @@ export function createSpaceRoutes(app: FastifyInstance): void {
         joinedAt: now,
       }).run();
 
-      // Default categories
       tx.insert(schema.channelCategories).values({
         id: textCategoryId,
         spaceId,
-        name: 'text-channels',
+        name: 'TEXT CHANNELS',
         position: 0,
         createdAt: now,
       }).run();
 
-      tx.insert(schema.channelCategories).values({
-        id: voiceCategoryId,
-        spaceId,
-        name: 'voice-channels',
-        position: 1,
-        createdAt: now,
-      }).run();
-
-      // Default text channel in text-channels category
       tx.insert(schema.channels).values({
-        id: channelId,
+        id: generalChannelId,
         spaceId,
-        name: 'general',
+        name: chName,
         type: 'text',
         position: 0,
         categoryId: textCategoryId,
         createdAt: now,
       }).run();
 
-      // Default voice channel in voice-channels category
+      tx.insert(schema.channelCategories).values({
+        id: voiceCategoryId,
+        spaceId,
+        name: 'VOICE CHANNELS',
+        position: 1,
+        createdAt: now,
+      }).run();
+
       tx.insert(schema.channels).values({
         id: voiceChannelId,
         spaceId,
@@ -244,25 +254,22 @@ export function readSpaceRoutes(app: FastifyInstance): void {
       .where(eq(schema.memberRoles.spaceId, id))
       .all();
 
+    const assignedByMember = new Map<string, Set<string>>();
+    for (const mr of memberRoleRows) {
+      let set = assignedByMember.get(mr.userId);
+      if (!set) {
+        set = new Set();
+        assignedByMember.set(mr.userId, set);
+      }
+      set.add(mr.roleId);
+    }
+
     const members: MemberWithUser[] = memberRows
       .map(m => {
         const user = userMap.get(m.userId);
         if (!user) return null;
 
-        const assignedRoleIds = memberRoleRows
-          .filter(mr => mr.userId === m.userId)
-          .map(mr => mr.roleId);
-        
-        const memberRoles = roles
-          .filter(r => assignedRoleIds.includes(r.id))
-          .map(r => ({
-            id: r.id,
-            spaceId: r.spaceId,
-            name: r.name,
-            color: r.color ?? '#b9bbbe',
-            position: r.position ?? 0,
-            createdAt: r.createdAt,
-          }));
+        const assignedRoleIds = assignedByMember.get(m.userId) ?? new Set<string>();
 
         return {
           spaceId: m.spaceId,
@@ -270,7 +277,7 @@ export function readSpaceRoutes(app: FastifyInstance): void {
           nickname: m.nickname,
           joinedAt: m.joinedAt,
           user: sanitizeUser(user),
-          roles: memberRoles,
+          roles: memberRolesView(roles, assignedRoleIds),
         };
       })
       .filter((m): m is MemberWithUser => m !== null);
@@ -288,13 +295,7 @@ export function readSpaceRoutes(app: FastifyInstance): void {
         eq(schema.categoryOverrides.targetId, id),
       ))
       .all();
-    const privateCategoryIds = new Set<string>();
-    for (const o of catEveryoneOverrides) {
-      const denyBits = BigInt(o.deny || '0');
-      if ((denyBits & PermissionBits.VIEW_CHANNEL) !== 0n) {
-        privateCategoryIds.add(o.categoryId);
-      }
-    }
+    const privateCategoryIds = idsHiddenFromEveryone(catEveryoneOverrides, (o) => o.categoryId, () => id);
 
     const categories: ChannelCategory[] = categoryRows.map(c => ({
       id: c.id,
@@ -315,13 +316,7 @@ export function readSpaceRoutes(app: FastifyInstance): void {
         eq(schema.channelOverrides.targetId, id),
       ))
       .all();
-    const privateChannelIds = new Set<string>();
-    for (const o of everyoneOverrides) {
-      const denyBits = BigInt(o.deny || '0');
-      if ((denyBits & PermissionBits.VIEW_CHANNEL) !== 0n) {
-        privateChannelIds.add(o.channelId);
-      }
-    }
+    const privateChannelIds = idsHiddenFromEveryone(everyoneOverrides, (o) => o.channelId, () => id);
 
     // Filter channels by VIEW_CHANNEL permission and attach per-channel myPermissions
     const visibleChannels: (Channel & { isPrivate: boolean; myPermissions: string })[] = [];
@@ -336,22 +331,12 @@ export function readSpaceRoutes(app: FastifyInstance): void {
       }
     }
 
-    const canManageRoles = (spacePerms & PermissionBits.MANAGE_ROLES) !== 0n;
-
     const result: SpaceWithChannelsAndMembers = {
       ...rowToSpace(server),
       channels: visibleChannels,
       categories,
       members,
-      roles: roles.map(r => ({
-        id: r.id,
-        spaceId: r.spaceId,
-        name: r.name,
-        color: r.color ?? '#b9bbbe',
-        position: r.position ?? 0,
-        permissions: canManageRoles ? (r.permissions ?? '0') : undefined,
-        createdAt: r.createdAt,
-      })),
+      roles: rolesForViewer(roles, spacePerms),
       myPermissions: permissionsToString(spacePerms),
     };
 

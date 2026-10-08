@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { config } from '../../../config.js';
 import { getDb, getRawDb, schema } from '../../../db/index.js';
+import { canonicalizeHomeInstance } from '../../../utils/federationAuth.js';
 import { authenticate } from '../../../utils/auth.js';
 import { verifyAttachProofWithPeer } from '../../../utils/federationAttach.js';
 import { lookupRemoteUserByHomeId } from '../../../utils/federationLookup.js';
@@ -18,7 +19,7 @@ import { authenticateS2SPeer } from './s2sAuth.js';
 import { keepNewerReadPointer, reconcileDmChannelFederatedId, type DmReconcileResult } from '../../../utils/dmConversation.js';
 import { announceDmReconcile } from '../../../utils/dmConversationEvents.js';
 import { sendError } from '../../../utils/httpErrors.js';
-import { announceUserUpdated, claimHandleName, handleFromHint } from '../stubName.js';
+import { announceUserUpdated, claimHandleName, handleFromHint, relayHandleOf } from '../stubName.js';
 
 /** Thrown inside the re-attach transaction to roll it back when the handle is held. */
 class HandleHeldError extends Error {
@@ -101,7 +102,9 @@ export function registerAttachRoutes(app: FastifyInstance): void {
         return sendSigned({ valid: false });
       }
 
-      return sendSigned({ valid: true, homeUserId: homeUser.id, username: homeUser.username });
+      // The handle, which the caller names the re-attached account after: a
+      // detached account homed here signs in as `<handle>@<former home>`.
+      return sendSigned({ valid: true, homeUserId: homeUser.id, username: relayHandleOf(homeUser) ?? homeUser.username });
     },
   );
 
@@ -131,13 +134,16 @@ export function registerAttachRoutes(app: FastifyInstance): void {
     if (!detached || detached.isDeleted === 1) {
       return reply.code(404).send({ error: 'User not found', statusCode: 404 });
     }
-    if (!detached.homeInstance || detached.federationHomeOrphaned !== 1) {
+    // A detached account is homed here; the home it re-attaches to is the one
+    // it was detached from (`detached_home_instance`, rehomeDetachedAccount).
+    const formerHome = detached.detachedHomeInstance;
+    if (!formerHome || detached.federationHomeOrphaned !== 1) {
       return reply.code(403).send({ error: 'Only detached accounts can re-attach', statusCode: 403 });
     }
 
     // Guard 2: the home domain must be an ACTIVE peer — the proof is only as
     // trustworthy as the S2S channel it is verified over.
-    const homeDomain = extractDomain(detached.homeInstance).toLowerCase();
+    const homeDomain = extractDomain(formerHome).toLowerCase();
     const normPeer = (origin: string) => extractDomain(origin).toLowerCase();
     const peerRow = db.select().from(schema.federationPeers).all()
       .find(p => normPeer(p.origin) === homeDomain && p.status === 'active');
@@ -222,23 +228,36 @@ export function registerAttachRoutes(app: FastifyInstance): void {
         rawDb.prepare(`DELETE FROM users WHERE id = ?`).run(stubId);
       }
 
-      // Group-DM ownership continuity: channels the OLD identity owned keep
-      // authority under the NEW identity (owner_home_user_id is the S2S
-      // authority key, not a users.id FK).
-      const normOwnerHome = `lower(replace(replace(coalesce(owner_home_instance, ''), 'https://', ''), 'http://', ''))`;
-      rawDb.prepare(`UPDATE dm_channels SET owner_home_user_id = ? WHERE owner_home_user_id = ? AND ${normOwnerHome} = ?`)
-        .run(verified.homeUserId, detached.homeUserId, homeDomain);
+      // Group-DM ownership continuity: channels the account owns keep their
+      // authority under the NEW identity (owner_home_user_id +
+      // owner_home_instance are the S2S authority key, not a users.id FK).
+      // While detached they carried this instance's identity of the account.
+      rawDb.prepare(`UPDATE dm_channels SET owner_home_user_id = ?, owner_home_instance = ? WHERE owner_id = ? AND owner_home_user_id IS NOT NULL`)
+        .run(verified.homeUserId, canonicalizeHomeInstance(formerHome), detached.id);
 
-      // Re-bind. profile_updated_at is nulled so the home's next profile_update
-      // (any version) tier-1 matches and applies (the accept-and-skip guards
-      // only fire on federation_home_orphaned = 1).
-      rawDb.prepare(`UPDATE users SET home_user_id = ?, federation_home_orphaned = 0, profile_updated_at = NULL WHERE id = ?`)
-        .run(verified.homeUserId, detached.id);
+      // Re-bind to the new home identity, homed at the former home's domain
+      // again; the detached identity columns are cleared. profile_updated_at
+      // is nulled so the home's next profile_update (any version) tier-1
+      // matches and applies (the accept-and-skip guards only fire on
+      // federation_home_orphaned = 1).
+      rawDb.prepare(`
+        UPDATE users
+        SET home_instance = ?, home_user_id = ?, detached_home_instance = NULL, detached_home_user_id = NULL,
+            federation_home_orphaned = 0, profile_updated_at = NULL
+        WHERE id = ?
+      `).run(formerHome, verified.homeUserId, detached.id);
 
       // Name the account after its handle, after the merge above removed the
       // stub of this identity that may have held it. A name another account
       // signs in with rolls the whole re-attach back.
-      const claim = claimHandleName({ ...detached, homeUserId: verified.homeUserId, federationHomeOrphaned: 0 }, handle, homeDomain, db);
+      const claim = claimHandleName({
+        ...detached,
+        homeInstance: formerHome,
+        homeUserId: verified.homeUserId,
+        detachedHomeInstance: null,
+        detachedHomeUserId: null,
+        federationHomeOrphaned: 0,
+      }, handle, homeDomain, db);
       if (claim.kind === 'held') throw new HandleHeldError(claim.holderId);
       movedReplica = claim.moved;
 
@@ -280,7 +299,7 @@ export function registerAttachRoutes(app: FastifyInstance): void {
     }
 
     const updated = db.select().from(schema.users).where(eq(schema.users.id, detached.id)).get()!;
-    console.log(`[federation] Re-attached account ${updated.id} (${updated.username}): ${detached.homeUserId} → ${verified.homeUserId} @ ${homeDomain}`);
+    console.log(`[federation] Re-attached account ${updated.id} (${updated.username}): ${detached.detachedHomeUserId ?? '-'} → ${verified.homeUserId} @ ${homeDomain}`);
 
     // Broadcast to friends / DM / space co-members + all self connections.
     const targetIds = collectProfileBroadcastTargetIds(updated.id);

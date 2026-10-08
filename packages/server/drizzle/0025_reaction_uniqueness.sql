@@ -24,6 +24,6 @@ WHERE `id` IN (
   WHERE `duplicate_rank` > 1
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `idx_reactions_message_user_emoji` ON `reactions` (`message_id`,`user_id`,`emoji`);
+CREATE UNIQUE INDEX IF NOT EXISTS `idx_reactions_message_user_emoji` ON `reactions` (`message_id`,`user_id`,`emoji`);
 --> statement-breakpoint
-CREATE UNIQUE INDEX `idx_dm_reactions_message_user_emoji` ON `dm_reactions` (`dm_message_id`,`user_id`,`emoji`);
+CREATE UNIQUE INDEX IF NOT EXISTS `idx_dm_reactions_message_user_emoji` ON `dm_reactions` (`dm_message_id`,`user_id`,`emoji`);

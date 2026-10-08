@@ -10,6 +10,8 @@ import { normalizeStoredPermissions } from './permissionStrings.js';
 import { setWorkerId } from '../utils/snowflake.js';
 import { backfillOneOnOneKeys } from '../utils/dmConversation.js';
 import { backfillOutboxQueueKeys } from '../utils/federationOutboxQueue.js';
+import { rehomeDetachedAccountsOnBoot } from '../utils/detachedIdentity.js';
+import { getOurOrigin } from '../utils/federationAuth.js';
 import { createSnapshot } from '../utils/backup.js';
 import { hasPendingMigrations } from './pendingMigrations.js';
 import { mkdirSync, existsSync } from 'fs';
@@ -77,6 +79,13 @@ export function initDatabase() {
       throw err;
     }
   };
+
+  // A detached account is homed on this instance (federation.md, "Detached
+  // accounts are homed here"): accounts detached before that rule still carry
+  // their former home in home_instance; move it aside and re-key their DMs.
+  // Runs before the 1-on-1 key backfill so that pass sees the new identities.
+  // Idempotent.
+  rehomeDetachedAccountsOnBoot(sqlite, getOurOrigin(), { beforeChanges: snapshotBefore('detached account rehome') });
 
   // Every 1-on-1 row holds the key of its two members (ADR 0002): keys rows
   // made while relay was off and heals drifted ones, merging rows where two

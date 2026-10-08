@@ -87,10 +87,12 @@ beforeEach(async () => {
   testDb.insert(schema.federationPeers).values({
     id: 'peer-1', origin: 'https://orbit.test', hmacSecret: 's'.repeat(64), status: 'active', createdAt: 1,
   }).run();
-  // The detached account (session user) — old identity dead-home-1.
+  // The detached account (session user), homed here since it was detached;
+  // its former identity was dead-home-1 at orbit.
   testDb.insert(schema.users).values({
     id: 'detached-1', username: 'youruser@orbit.test', passwordHash: 'local-hash',
-    homeInstance: 'orbit.test', homeUserId: 'dead-home-1', federationHomeOrphaned: 1,
+    homeInstance: null, homeUserId: null, federationHomeOrphaned: 1,
+    detachedHomeInstance: 'orbit.test', detachedHomeUserId: 'dead-home-1',
     avatarColor: 'coral', createdAt: 1,
   }).run();
   // A native friend for broadcast/merge fixtures.
@@ -148,7 +150,8 @@ describe('POST /api/users/@me/reattach — guards', () => {
     // Nothing changed.
     const row = testDb.select().from(schema.users).where(eq(schema.users.id, 'detached-1')).get()!;
     expect(row.federationHomeOrphaned).toBe(1);
-    expect(row.homeUserId).toBe('dead-home-1');
+    expect(row.homeUserId).toBeNull();
+    expect(row.detachedHomeUserId).toBe('dead-home-1');
   });
 });
 
@@ -168,11 +171,32 @@ describe('POST /api/users/@me/reattach — success', () => {
     expect(body.success).toBe(true);
     const row = testDb.select().from(schema.users).where(eq(schema.users.id, 'detached-1')).get()!;
     expect(row.homeUserId).toBe('new-home-1');
+    // Homed at the former home's domain again; the detached identity is gone.
+    expect(row.homeInstance).toBe('orbit.test');
+    expect(row.detachedHomeInstance).toBeNull();
+    expect(row.detachedHomeUserId).toBeNull();
     expect(row.federationHomeOrphaned).toBe(0);
     expect(row.displayName).toBe('Jannis');
     expect(row.avatarColor).toBe('lavender');
     expect(row.profileUpdatedAt).toBeNull(); // next profile_update always applies
     expect(row.username).toBe('youruser@orbit.test'); // same base → no rename
+  });
+
+  it('moves the owner identity of the groups it owns from this instance to the new home identity', async () => {
+    // While detached, the account's groups carry this instance's identity of it.
+    testDb.insert(schema.dmChannels).values([
+      { id: 'grp-owned', ownerId: 'detached-1', ownerHomeUserId: 'detached-1', ownerHomeInstance: 'https://local.test', federatedId: 'g-1', createdAt: 1 },
+      { id: 'grp-local', ownerId: 'detached-1', ownerHomeUserId: null, ownerHomeInstance: null, federatedId: null, createdAt: 1 },
+      { id: 'grp-other', ownerId: 'alice', ownerHomeUserId: 'alice', ownerHomeInstance: 'https://local.test', federatedId: 'g-2', createdAt: 1 },
+    ]).run();
+    const res = await reattach('detached-1', 'youruser@orbit.test');
+    expect(res.statusCode).toBe(200);
+    const owners = Object.fromEntries(testDb.select().from(schema.dmChannels).all()
+      .map(c => [c.id, [c.ownerHomeUserId, c.ownerHomeInstance]]));
+    expect(owners['grp-owned']).toEqual(['new-home-1', 'https://orbit.test']);
+    // A group no other instance holds has no owner identity to move.
+    expect(owners['grp-local']).toEqual([null, null]);
+    expect(owners['grp-other']).toEqual(['alice', 'https://local.test']);
   });
 
   it('claims the exact handle; a replica of another identity holding it moves aside', async () => {
@@ -208,7 +232,8 @@ describe('POST /api/users/@me/reattach — success', () => {
     expect(res.json().code).toBe('reattach_handle_taken');
     const row = testDb.select().from(schema.users).where(eq(schema.users.id, 'detached-1')).get()!;
     expect(row.username).toBe('youruser@orbit.test');
-    expect(row.homeUserId).toBe('dead-home-1');
+    expect(row.homeUserId).toBeNull();
+    expect(row.detachedHomeUserId).toBe('dead-home-1');
     expect(row.federationHomeOrphaned).toBe(1);
     const holder = testDb.select().from(schema.users).where(eq(schema.users.id, 'hans-account')).get()!;
     expect(holder.username).toBe('hans@orbit.test');
@@ -219,7 +244,8 @@ describe('POST /api/users/@me/reattach — success', () => {
     const res = await reattach('detached-1', 'youruser@orbit.test');
     expect(res.statusCode).toBe(401);
     const row = testDb.select().from(schema.users).where(eq(schema.users.id, 'detached-1')).get()!;
-    expect(row.homeUserId).toBe('dead-home-1');
+    expect(row.homeUserId).toBeNull();
+    expect(row.detachedHomeUserId).toBe('dead-home-1');
   });
 
   it('proceeds without a profile when the home profile fetch fails', async () => {
@@ -372,8 +398,9 @@ describe('POST /api/users/@me/reattach — stub merge', () => {
       { userId: 'detached-1', channelId: 'ch-1', lastReadMessageId: '900', updatedAt: 1 },
       { userId: 'stub-new', channelId: 'ch-1', lastReadMessageId: '1000', updatedAt: 2 },
     ]).run();
-    // A 1-on-1 under the old identity's key, which a completed re-attach re-keys.
-    const oldFed = pairKey('alice', 'dead-home-1');
+    // A 1-on-1 under the detached identity's key (homed here), which a
+    // completed re-attach re-keys.
+    const oldFed = pairKey('alice', 'detached-1');
     testDb.insert(schema.dmChannels).values({ id: 'ch-old', federatedId: oldFed, createdAt: 1 }).run();
     testDb.insert(schema.dmMembers).values([
       { dmChannelId: 'ch-old', userId: 'alice', closed: 0 },
@@ -403,7 +430,8 @@ describe('POST /api/users/@me/reattach — stub merge', () => {
     expect(res.statusCode).toBe(409);
     // Nothing changed on the detached row.
     const row = testDb.select().from(schema.users).where(eq(schema.users.id, 'detached-1')).get()!;
-    expect(row.homeUserId).toBe('dead-home-1');
+    expect(row.homeUserId).toBeNull();
+    expect(row.detachedHomeUserId).toBe('dead-home-1');
   });
 });
 
@@ -411,12 +439,14 @@ describe('POST /api/users/@me/reattach — 1-on-1 DM channel reconciliation', ()
   beforeEach(() => {
     verifyMock.mockResolvedValue({ valid: true, homeUserId: 'new-home-1', username: 'youruser' });
     profileMock.mockResolvedValue(null);
-    // 'alice' is R-native; she has a DM with the detached account under the OLD
-    // pairing, and a fresh DM under the NEW pairing (created by post-reset relay).
+    // 'alice' is R-native; she has a DM with the detached account under its
+    // detached pairing (homed here), and a fresh DM under the NEW pairing
+    // (created by post-reset relay).
   });
 
   it('merges the pre-reattach history channel into the new-identity channel', async () => {
-    const oldFed = pairKey('alice', 'dead-home-1'); // alice home = her id (native)
+    // While detached the account is homed here: its key part is its own id.
+    const oldFed = pairKey('alice', 'detached-1'); // alice home = her id (native)
     const newFed = pairKey('alice', 'new-home-1');
     // history channel (old id)
     testDb.insert(schema.dmChannels).values({ id: 'ch-old', federatedId: oldFed, createdAt: 1 }).run();
@@ -447,7 +477,7 @@ describe('POST /api/users/@me/reattach — 1-on-1 DM channel reconciliation', ()
   it('sends the surviving channel only to members who have it open', async () => {
     const { connectionManager } = await import('../ws/handler.js');
     const send = vi.spyOn(connectionManager, 'sendToUser');
-    const oldFed = pairKey('alice', 'dead-home-1');
+    const oldFed = pairKey('alice', 'detached-1');
     const newFed = pairKey('alice', 'new-home-1');
     testDb.insert(schema.dmChannels).values([
       { id: 'ch-old', federatedId: oldFed, createdAt: 1 },
@@ -477,7 +507,7 @@ describe('POST /api/users/@me/reattach — 1-on-1 DM channel reconciliation', ()
   });
 
   it('re-keys the history channel in place when no new-identity channel exists yet', async () => {
-    const oldFed = pairKey('alice', 'dead-home-1');
+    const oldFed = pairKey('alice', 'detached-1');
     testDb.insert(schema.dmChannels).values({ id: 'ch-old', federatedId: oldFed, createdAt: 1 }).run();
     testDb.insert(schema.dmMembers).values([
       { dmChannelId: 'ch-old', userId: 'alice', closed: 0 },

@@ -23,12 +23,12 @@ interface NotificationState {
 export const useNotificationStore = create<NotificationState>((set, get) => ({
   settings: {}, roleIds: {}, editing: null,
   open: (editing) => set({ editing }),
-  apply: (origin, setting) => set(s => ({ settings: { ...s.settings, [notificationKey({ origin, ...setting })]: setting } })),
+  apply: (origin, setting) => set(s => ({ settings: { ...s.settings, [notificationKey({ origin, targetType: setting.targetType ?? (setting.channelId ? 'channel' : 'space'), targetId: setting.targetId ?? (setting.channelId || setting.spaceId) })]: setting } })),
   hydrate: ({ origin, userId, spaces, settings }) => {
     // Replace only this instance's snapshot; never erase another instance's preferences.
     const next = Object.fromEntries(Object.entries(get().settings).filter(([key]) => JSON.parse(key)[0] !== origin));
     const roles = Object.fromEntries(Object.entries(get().roleIds).filter(([key]) => JSON.parse(key)[0] !== origin));
-    for (const setting of settings) next[notificationKey({ origin, ...setting })] = setting;
+    for (const setting of settings) next[notificationKey({ origin, targetType: setting.targetType ?? (setting.channelId ? 'channel' : 'space'), targetId: setting.targetId ?? (setting.channelId || setting.spaceId) })] = setting;
     for (const space of spaces) {
       const member = space.members?.find(m => m.userId === userId);
       roles[notificationKey({ origin, targetType: 'space', targetId: space.id })] = [
@@ -39,8 +39,12 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
     set({ settings: next, roleIds: roles });
   },
   save: async (target, setting) => {
-    // No optimistic success: failed writes leave the last confirmed preferences intact.
-    const saved = await getApiForOrigin(target.origin).notificationSettings.update(target, setting);
+    const api = getApiForOrigin(target.origin).notificationSettings as any;
+    const saved = typeof api.update === 'function'
+      ? await api.update(target, setting)
+      : target.targetType === 'space'
+        ? await api.updateSpace(target.targetId, setting)
+        : await api.updateChannel(target.targetId, setting);
     get().apply(target.origin, saved);
   },
   reset: () => set({ settings: {}, roleIds: {}, editing: null }),

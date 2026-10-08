@@ -4,7 +4,7 @@ import {
   getApiBaseUrl, getHomeHost, getHomeHostname, getHomeOrigin,
   getSelectedMobileOrigin, getWebSocketUrl, setSelectedMobileOrigin, validateInstanceOrigin,
 } from './instanceRuntime';
-import { deliveringHost, isSelf, isFederationGlobeApplicable, activityKey } from '../utils/identity';
+import { deliveringHost, isSelf, isFederationGlobeApplicable, userKey } from '../utils/identity';
 import { resolveTusUrl, tusEndpoint } from '../utils/tusUrl';
 import { parseInviteInput } from '../utils/inviteParser';
 
@@ -50,7 +50,7 @@ describe('instance runtime', () => {
     expect(tusEndpoint('')).toBe('https://home.example:8443/api/files/');
     expect(resolveTusUrl('/api/files/upload-id', undefined)).toBe('https://home.example:8443/api/files/upload-id');
     expect(deliveringHost('')).toBe('home.example:8443');
-    expect(activityKey({ id: 'native-user' }, '')).toBe('home.example:8443:native-user');
+    expect(userKey({ id: 'native-user' }, '')).toBe('home.example:native-user');
     expect(isSelf({ id: 'replica', username: 'alice', homeInstance: 'home.example:8443' }, { id: 'home', username: 'alice' })).toBe(true);
     expect(isFederationGlobeApplicable({ username: 'alice@home.example:8443' })).toBe(false);
     expect(isFederationGlobeApplicable({ username: 'alice@localhost' })).toBe(true);

@@ -84,8 +84,11 @@ async function seedUsers(): Promise<void> {
       status: 'offline',
       isAdmin: 0,
       isDeleted: 0,
-      homeInstance: 'orbit.test',
-      homeUserId: 'old-home-uid',
+      // Detached: homed here, its former identity kept aside.
+      homeInstance: null,
+      homeUserId: null,
+      detachedHomeInstance: 'orbit.test',
+      detachedHomeUserId: 'old-home-uid',
       federationHomeOrphaned: 1,
       profileUpdatedAt: 1000,
       createdAt: Date.now(),

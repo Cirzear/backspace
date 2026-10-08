@@ -3,7 +3,6 @@ import type { ClientEvent, ServerEvent } from '@backspace/shared';
 import React, { useEffect, useRef } from 'react';
 import { detectClientKind } from '../platform/clientKind';
 import { useAuthStore } from '../stores/authStore';
-import { useVoiceStore } from '../stores/voiceStore';
 import { handleEvent } from './webSocketEvents';
 
 // ─── Connection state ─────────────────────────────────────────────────────────
@@ -183,7 +182,12 @@ export function getHomeWsConnected(): boolean {
   return !!conn?.ws && conn.ws.readyState === WebSocket.OPEN;
 }
 
-/** Send an event over the WebSocket. Can be used outside of React components. */
+/**
+ * Send an event over the origin's WebSocket. Can be used outside of React
+ * components. Returns whether the event was handed to an open socket; when
+ * the origin has none (not connected, or reconnecting) the event is dropped
+ * and the result is false.
+ */
 export function wsSend(event: ClientEvent, origin: string = HOME_ORIGIN): boolean {
   const conn = connections.get(origin);
   if (conn?.ws && conn.ws.readyState === WebSocket.OPEN) {
@@ -241,5 +245,5 @@ export function useWebSocket() {
   return { send: wsSend, isConnected };
 }
 
-export { teardownDmCall } from './webSocketCallEvents';
+export { teardownDmCall, dmCallEventIsOurs } from './webSocketCallEvents';
 export { getActivePeerOrigins, getAwaitingApprovalPeerOrigins, getRejectedPeerOrigins, onFederationPeerResetDetected, onFederationPeersChanged } from './webSocketFederationEvents';

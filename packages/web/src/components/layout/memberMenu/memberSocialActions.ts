@@ -31,11 +31,11 @@ export function friendshipMenuItems(user: User, t: TFunction<readonly ['spaces',
   });
   switch (friendship.state) {
     case 'self': return [];
-    case 'friends': return [action('remove-friend', t('social:friend.remove'), () => social.removeFriend(friendship.friend.id))];
-    case 'outbound_pending': return [action('cancel-friend', t('social:request.cancel'), () => social.cancelFriendRequest(friendship.request.id))];
+    case 'friends': return [action('remove-friend', t('social:friend.remove'), () => social.removeFriend(friendship.friend, friendship.friend._instanceOrigin))];
+    case 'outbound_pending': return [action('cancel-friend', t('social:request.cancel'), () => social.cancelFriendRequest(friendship.request.id, friendship.request._instanceOrigin))];
     case 'inbound_pending': return [
-      action('accept-friend', t('common:actions.accept'), () => social.updateFriendRequest(friendship.request.id, 'accepted')),
-      action('decline-friend', t('common:actions.decline'), () => social.updateFriendRequest(friendship.request.id, 'declined')),
+      action('accept-friend', t('common:actions.accept'), () => social.updateFriendRequest(friendship.request.id, friendship.request._instanceOrigin, 'accepted')),
+      action('decline-friend', t('common:actions.decline'), () => social.updateFriendRequest(friendship.request.id, friendship.request._instanceOrigin, 'declined')),
     ];
     case 'none': {
       const { baseName } = parseFederatedUsername(user.username);

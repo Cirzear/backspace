@@ -1,63 +1,54 @@
-import type { UserStatus, NotificationSetting } from '@backspace/shared';
-import { parseMentions } from '@backspace/shared/src/mentions';
+import type { ChannelNotificationPolicy, UserStatus } from '@backspace/shared';
 import { contentMentionsAny } from './mentionTokens';
 
 /**
  * The rule that decides whether a freshly-arrived chat message alerts the user.
- * Pure; the caller answers who wrote it and which id is the user's in that
- * channel (see `messageAlertsUser` in utils/alerts.ts, which both outputs of
- * the `message` alert kind go through).
+ * Pure; the caller answers who wrote it, which id is the user's in that
+ * channel and what the channel's notification settings are (see
+ * `messageAlertsUser` in utils/alerts.ts, which both outputs of the `message`
+ * alert kind go through). Documented in docs/systems/sounds.md ("Which
+ * messages alert").
  *
  * Rule:
- *   - Never for a message the user wrote (`authoredBySelf` or authored by user's ID).
- *   - Space/channel mute gates both outputs without touching unread state.
- *   - For a DM, or for content with a `<@${myId}>` mention outside code.
- *   - Channel level overrides space level. Without an explicit level, DMs and
- *     mentions alert; allChannels widens only the legacy sound preference.
- *   - Space mention filters apply in mentions mode, never hide an explicit user ping.
+ *   - Never for a message the user wrote (`authoredBySelf`).
+ *   - Always for a DM. Notification settings belong to spaces and channels
+ *     and do not reach DMs.
+ *   - For a space channel, by its notification policy:
+ *     - muted (its own mute or its space's): never, mentions included;
+ *     - `nothing`: never, mentions included;
+ *     - `all`: every message;
+ *     - `mentions`: content with a `<@${myId}>` mention outside code (the
+ *       shared scan in utils/mentionTokens.ts), where `myId` is the user's id
+ *       on the instance that issued the channel. With `allChannels`, every
+ *       message: only the in-app cue passes it, since the "Play sound for
+ *       every message" preference is a sound setting and does not widen the
+ *       OS notification. It widens `mentions` only, so it never overrides a
+ *       channel the user set to `nothing` or muted.
  */
 export interface MessageAlertInput {
-  authoredBySelf?: boolean;
-  authorUserId?: string;
-  myId?: string | undefined;
-  myIds?: ReadonlySet<string>;
+  authoredBySelf: boolean;
+  myId: string | undefined;
   isDmChannel: boolean;
   content: string | null;
   allChannels: boolean;
-  spaceSetting?: NotificationSetting;
-  channelSetting?: NotificationSetting;
-  roleIds?: ReadonlySet<string>;
-  now?: number;
+  /** The channel's resolved settings (`resolveChannelNotificationPolicy`); not read for a DM. */
+  notification: Pick<ChannelNotificationPolicy, 'level' | 'muted'>;
 }
 
 export function isMessageAlert(input: MessageAlertInput): boolean {
   if (input.authoredBySelf) return false;
-  if (input.authorUserId && input.myIds?.has(input.authorUserId)) return false;
-  if (input.authorUserId && input.myId === input.authorUserId) return false;
-
-  const { spaceSetting: space, channelSetting: channel } = input;
-  const now = input.now ?? Date.now();
-  // Space mute is an absolute gate, even for a channel with an explicit level.
-  if ((space?.mutedUntil ?? 0) > now || (channel?.mutedUntil ?? 0) > now) return false;
-
   if (input.isDmChannel) return true;
-
-  const level = channel?.level ?? space?.level ?? (input.allChannels ? 'all' : 'mentions');
-  if (level === 'nothing') return false;
-  if (level === 'all') return true;
-
-  if (!input.content) return false;
-
-  const mentionIds = new Set<string>();
-  if (input.myId) mentionIds.add(input.myId);
-  if (input.myIds) {
-    for (const id of input.myIds) mentionIds.add(id);
+  if (input.notification.muted) return false;
+  switch (input.notification.level) {
+    case 'nothing':
+      return false;
+    case 'all':
+      return true;
+    case 'mentions':
+      if (input.allChannels) return true;
+      if (!input.content || !input.myId) return false;
+      return contentMentionsAny(input.content, new Set([input.myId]));
   }
-  if (mentionIds.size > 0 && contentMentionsAny(input.content, mentionIds)) return true;
-
-  const mentions = parseMentions(input.content);
-  if (mentions.everyone && !space?.suppressEveryone) return true;
-  return !space?.suppressRoles && [...mentions.roleIds].some(id => input.roleIds?.has(id));
 }
 
 /**

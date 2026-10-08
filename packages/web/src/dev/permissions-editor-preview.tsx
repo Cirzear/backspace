@@ -134,9 +134,10 @@ function stubOverrideRoutes(scene: Scene, entity: Entity): void {
     const path = new URL(url, window.location.href).pathname;
     if (path === base && method === 'GET') return json(rows);
     if (path === base && method === 'PUT') {
-      const body = JSON.parse(String(init?.body)) as Omit<StoredOverride, 'channelId'>;
+      // The stub stores the row and ignores the edit version the editor sends.
+      const body = JSON.parse(String(init?.body)) as Omit<StoredOverride, 'channelId'> & { version?: string };
       rows = rows.filter((r) => !(r.targetType === body.targetType && r.targetId === body.targetId));
-      rows.push({ channelId: CHANNEL_ID, ...body });
+      rows.push({ channelId: CHANNEL_ID, targetType: body.targetType, targetId: body.targetId, allow: body.allow, deny: body.deny });
       return json({ success: true });
     }
     const del = path.match(new RegExp(`^${base}/([^/]+)/([^/]+)$`));

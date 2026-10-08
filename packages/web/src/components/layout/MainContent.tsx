@@ -15,7 +15,7 @@ import { ProjectHubPage } from '../projectHub/ProjectHubPage';
 import { Avatar } from '../ui/Avatar';
 import { AvatarStack } from '../ui/AvatarStack';
 import { useVoiceStore } from '../../stores/voiceStore';
-import { canStartDmCall, startDmCall, cancelOutgoingDmCall } from '../../utils/voiceActions';
+import { canStartDmCall, startDmCall, cancelOutgoingDmCall, isDmCallRunning, joinDmCall } from '../../utils/voiceActions';
 import { MemberListToggleButton } from './MemberListToggleButton';
 import { TransferIndicator } from './TransferIndicator';
 import { isMine, isFederationGlobeApplicable, userDisplayName } from '../../utils/identity';
@@ -27,6 +27,8 @@ import type { User } from '@backspace/shared';
 import { Tooltip } from '../ui/Tooltip';
 import { joinVoiceChannel } from '../../utils/voice';
 import { SearchPopover } from '../chat/SearchPopover';
+import { ChannelNotificationButton } from '../notifications/ChannelNotificationButton';
+import { ChannelHeaderTopic } from './ChannelHeaderTopic';
 import { isDmChannel } from '../../stores/spaceStore';
 import { usePointerReveal, VOICE_CHROME_ATTR } from '../../hooks/usePointerReveal';
 
@@ -74,6 +76,7 @@ export function MainContent() {
   const activeDmCall = useVoiceStore((s) => s.activeDmCall);
   const outgoingCall = useVoiceStore((s) => s.outgoingCall);
   const canStartCall = useVoiceStore(canStartDmCall);
+  const dmCallRunning = useVoiceStore((s) => !!currentChannelId && isDmCallRunning(s, currentChannelId));
   const dmChannels = useSpaceStore((s) => s.dmChannels);
   const openModal = useUIStore((s) => s.openModal);
 
@@ -225,8 +228,12 @@ export function MainContent() {
     const isInDmCall = activeDmCall?.dmChannelId === currentChannelId;
     const isCallingThisDm = outgoingCall?.dmChannelId === currentChannelId;
 
+    // A DM whose call already has people in it gets a join button; starting
+    // a second call there is what the server would refuse.
     const handleStartVoiceCall = () => {
-      if (currentChannelId) startDmCall(currentChannelId);
+      if (!currentChannelId) return;
+      if (dmCallRunning) joinDmCall(currentChannelId);
+      else startDmCall(currentChannelId);
     };
 
     const handleCancelCall = () => {
@@ -364,8 +371,8 @@ export function MainContent() {
             <button
               onClick={handleStartVoiceCall}
               disabled={!canStartCall}
-              className="w-8 h-8 flex items-center justify-center text-txt-tertiary hover:text-txt-primary transition-colors rounded-[6px] hover:bg-interactive-hover disabled:opacity-50 disabled:cursor-not-allowed"
-              title={t('spaces:main.dm.startVoiceCall')}
+              className={`w-8 h-8 flex items-center justify-center transition-colors rounded-[6px] hover:bg-interactive-hover disabled:opacity-50 disabled:cursor-not-allowed ${dmCallRunning ? 'text-accent-mint hover:text-accent-mint/80' : 'text-txt-tertiary hover:text-txt-primary'}`}
+              title={dmCallRunning ? t('spaces:main.dm.joinCall') : t('spaces:main.dm.startVoiceCall')}
             >
               <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z" />
@@ -375,7 +382,7 @@ export function MainContent() {
               onClick={handleStartVoiceCall}
               disabled={!canStartCall}
               className="w-8 h-8 flex items-center justify-center text-txt-tertiary hover:text-txt-primary transition-colors rounded-[6px] hover:bg-interactive-hover disabled:opacity-50 disabled:cursor-not-allowed"
-              title={t('spaces:main.dm.startVideoCall')}
+              title={dmCallRunning ? t('spaces:main.dm.joinCall') : t('spaces:main.dm.startVideoCall')}
             >
               <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M21 6.5l-4 4V7c0-.55-.45-1-1-1H9.82L21 17.18V6.5zM3.27 2L2 3.27 4.73 6H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.21 0 .39-.08.54-.18L19.73 21 21 19.73 3.27 2z" />
@@ -525,18 +532,11 @@ export function MainContent() {
           <span className="text-[20px] font-medium text-txt-tertiary flex-shrink-0 leading-none">#</span>
           <span className="font-bold text-[15px] tracking-[-0.02em] text-txt-primary truncate leading-tight">{channel.name}</span>
           {channel.topic && (
-            <>
-              <div className="w-[1px] h-5 bg-border-soft mx-2" />
-              <span className="text-[13px] text-txt-tertiary truncate leading-tight">{channel.topic}</span>
-            </>
+            <ChannelHeaderTopic key={channel.id} channelName={channel.name} topic={channel.topic} />
           )}
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
-          <button className="w-8 h-8 flex items-center justify-center text-txt-tertiary hover:text-txt-primary transition-colors rounded-[6px] hover:bg-interactive-hover" title={t('spaces:main.notificationSettings')}>
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.89 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z" />
-            </svg>
-          </button>
+          <ChannelNotificationButton channelId={currentChannelId} channelName={channel.name} />
           <button
             ref={searchButtonRef}
             onClick={() => setSearchOpen(!searchOpen)}

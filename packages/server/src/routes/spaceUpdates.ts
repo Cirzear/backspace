@@ -14,6 +14,7 @@ import { hasPermission, isMember, isSpaceOwner, PermissionBits } from '../utils/
 import { resizeProfileImage } from '../utils/thumbnail.js';
 import { connectionManager } from '../ws/handler.js';
 import { rowToSpace } from './spaceSerialization.js';
+import { announceAccessChange } from './spaceAccess.js';
 
 /**
  * The space columns the directory document serves (spec section 4). A change
@@ -216,10 +217,7 @@ export function deleteSpaceRoutes(app: FastifyInstance): void {
       // Clean up read_states for all channels in this space (no FK cascade — channelId is plain text)
       if (channelIds.length > 0) {
         tx.delete(schema.readStates).where(inArray(schema.readStates.channelId, channelIds)).run();
-        tx.delete(schema.notificationSettings).where(inArray(schema.notificationSettings.targetId, channelIds)).run();
       }
-      // notification_settings has no FK on target_id (it serves two target kinds)
-      tx.delete(schema.notificationSettings).where(eq(schema.notificationSettings.targetId, id)).run();
       tx.delete(schema.channels).where(eq(schema.channels.spaceId, id)).run();
       tx.delete(schema.spaceMembers).where(eq(schema.spaceMembers.spaceId, id)).run();
       tx.delete(schema.spaceFolderMembers).where(eq(schema.spaceFolderMembers.spaceId, id)).run();
@@ -288,6 +286,8 @@ export function transferSpaceRoutes(app: FastifyInstance): void {
       type: 'space_updated',
       space: spaceData,
     });
+
+    announceAccessChange(id, [request.userId, newOwnerId]);
 
     return reply.code(200).send(spaceData);
   });

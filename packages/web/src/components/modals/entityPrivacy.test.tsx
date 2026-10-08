@@ -12,13 +12,22 @@ vi.mock('../../audio/AudioManager', () => ({
 
 interface Row { targetType: string; targetId: string; allow: string; deny: string }
 
-// The override routes of both entities, answered from one in-memory table.
+// The override routes of both entities, answered from one in-memory table
+// that checks the edit version as the server does (#365).
 let rows: Row[] = [];
-const put = vi.fn(async (_id: string, data: Row) => {
-  rows = [...rows.filter((r) => !(r.targetType === data.targetType && r.targetId === data.targetId)), data];
+function stale(targetType: string, targetId: string, version: string | undefined): boolean {
+  const current = rows.find((r) => r.targetType === targetType && r.targetId === targetId);
+  return version !== undefined && overrideVersion(current) !== version;
+}
+const conflict = () => new HttpError(409, 'Conflict', undefined, 'overrides_conflict');
+const put = vi.fn(async (_id: string, data: Row & { version?: string }) => {
+  if (stale(data.targetType, data.targetId, data.version)) throw conflict();
+  const stored: Row = { targetType: data.targetType, targetId: data.targetId, allow: data.allow, deny: data.deny };
+  rows = [...rows.filter((r) => !(r.targetType === data.targetType && r.targetId === data.targetId)), stored];
   return { success: true };
 });
-const remove = vi.fn(async (_id: string, targetType: string, targetId: string) => {
+const remove = vi.fn(async (_id: string, targetType: string, targetId: string, version?: string) => {
+  if (stale(targetType, targetId, version)) throw conflict();
   rows = rows.filter((r) => !(r.targetType === targetType && r.targetId === targetId));
   return { success: true };
 });
@@ -34,7 +43,8 @@ import { ChannelSettingsModal } from './ChannelSettingsModal';
 import { CategorySettingsModal } from './CategorySettingsModal';
 import { useSpaceStore, type TaggedSpace } from '../../stores/spaceStore';
 import { useUIStore } from '../../stores/uiStore';
-import { ALL_PERMISSIONS, PermissionBits, permissionsToString, stringToPermissions } from '../../utils/permissions';
+import { HttpError } from '../../api/client';
+import { ALL_PERMISSIONS, PermissionBits, permissionsToString, stringToPermissions, overrideVersion } from '../../utils/permissions';
 
 // #327 and #365: privacy is @everyone's View Channels deny, one bit of one
 // override. Switching it touches that bit only, and the Overview reads the
@@ -114,7 +124,8 @@ describe.each<Kind>(['channel', 'category'])('%s privacy', (kind) => {
     await userEvent.click(privacySwitch());
 
     await waitFor(() => expect(everyoneRow()).toBeUndefined());
-    expect(remove).toHaveBeenCalledWith(expect.any(String), 'role', SPACE_ID);
+    // The switch names the version of the row it changed.
+    expect(remove).toHaveBeenCalledWith(expect.any(String), 'role', SPACE_ID, overrideVersion(row(SPACE_ID, 0n, VIEW)));
   });
 
   it('making it private adds the View Channels deny to the @everyone bits already there', async () => {
@@ -127,6 +138,24 @@ describe.each<Kind>(['channel', 'category'])('%s privacy', (kind) => {
 
     await waitFor(() => expect(privacySwitch()).toHaveAttribute('aria-checked', 'true'));
     expect(everyoneRow()).toEqual(row(SPACE_ID, PermissionBits.ADD_REACTIONS, VIEW | SEND));
+    // The write names the version of the row the switch changed (#365).
+    expect(put.mock.calls[0]![1].version).toBe(overrideVersion(row(SPACE_ID, PermissionBits.ADD_REACTIONS | VIEW, SEND)));
+  });
+
+  it('refuses to switch over an @everyone override someone else changed meanwhile, and says so', async () => {
+    rows = [row(SPACE_ID, 0n, SEND)];
+    open(kind);
+    await waitFor(() => expect(get).toHaveBeenCalled());
+    await waitFor(() => expect(privacySwitch()).toHaveAttribute('aria-checked', 'false'));
+    // Another admin adds a deny to the same row; this dialog still holds the old one.
+    rows = [row(SPACE_ID, 0n, SEND | PermissionBits.ATTACH_FILES)];
+
+    await userEvent.click(privacySwitch());
+
+    expect(await screen.findByText('Someone else changed these permissions. Review them and save again.')).toBeInTheDocument();
+    // Their change stands, and the switch shows the row as it is now.
+    expect(everyoneRow()).toEqual(row(SPACE_ID, 0n, SEND | PermissionBits.ATTACH_FILES));
+    expect(privacySwitch()).toHaveAttribute('aria-checked', 'false');
   });
 
   it('the Overview follows a save on the Permissions tab without reopening', async () => {

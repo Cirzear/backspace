@@ -1,67 +1,53 @@
 import { ownsChosenStatus, type Activity, type ChosenUserStatus, type ServerEvent } from '@backspace/shared';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import type { WebSocket } from 'ws';
 import { getDb, schema } from '../db/index.js';
-import { computePermissions, PermissionBits } from '../utils/permissions.js';
 import { statusOnConnect, type StatusSourceRow } from '../utils/presenceStatus.js';
 import { collectProfileBroadcastTargetIds } from '../utils/userDeletion.js';
-import { unreadCountEvent } from './channelUnreadCounts.js';
-import { showReplicaStatusOnConnect } from './replicaPresence.js';
+import { attachReplicaSessionHost, showReplicaStatusOnConnect, showReplicaStatusOnDisconnect } from './replicaPresence.js';
+import { presenceUpdateFor } from './presenceEvent.js';
 import { pushReadyPayloadToConnections } from './readyPayload.js';
 import { buildSpaceVoiceState, type SpaceVoiceStateResult } from './spaceVoiceState.js';
-import { getVoiceRoomElapsedSeconds, MAX_PENDING_VOICE_RECONNECTS, VOICE_RECONNECT_GRACE_MS, type DmRoomMeta, type FederatedCallEntry, type SpaceRoomMeta, type VoiceRoom } from './voiceRoomTypes.js';
+import { getVoiceRoomElapsedSeconds, MAX_PENDING_VOICE_RECONNECTS, VOICE_RECONNECT_GRACE_MS, type DmRoomMeta, type FederatedCallEntry, type PendingVoiceReconnect, type SpaceRoomMeta, type VoiceRoom } from './voiceRoomTypes.js';
 import { WsRateLimiter } from './wsRateLimiter.js';
 import { hasNativeVoiceSocket, removeNativeVoiceSocket, revokeNativeVoiceSessions, syncNativeVoicePermissions } from './nativeVoiceSessions.js';
+import { isGroupConversation } from '../utils/dmConversation.js';
+import { normalizeOriginForCompare } from '../utils/federationAuth.js';
+import { FederatedCallRegistry } from './federatedCallRegistry.js';
+import { SpaceVoiceModeration } from './spaceVoiceModeration.js';
+import { UserActivityTracker } from './userActivityTracker.js';
+import { EventBroadcaster } from './eventBroadcaster.js';
 
 class ConnectionManager {
-  // userId → Set of WebSocket connections (multiple tabs)
   private connections: Map<string, Set<WebSocket>> = new Map();
-  // userId → Set of space IDs the user belongs to
   private userSpaces: Map<string, Set<string>> = new Map();
-  // ws → userId (reverse lookup)
   private wsToUser: Map<WebSocket, string> = new Map();
   private voiceRooms: Map<string, VoiceRoom> = new Map();
   private userToRoom: Map<string, string> = new Map();
-  // userId → { isMuted, isDeafened, isCameraOn, isScreenSharing } — voice user status
   private voiceUserStates: Map<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }> = new Map();
-  // userId → Timeout
   private pendingOfflineTimeouts: Map<string, NodeJS.Timeout> = new Map();
-  // Voice has a longer grace than presence so a VPN/network handover can be
-  // recovered by LiveKit without creating a visible leave/join cycle.
-  private pendingVoiceReconnects: Map<string, { timeout: NodeJS.Timeout; roomId: string | null }> = new Map();
-  // roomId → Timeout for ringing DM rooms (60s auto-cleanup)
+  private pendingVoiceReconnects: Map<string, PendingVoiceReconnect> = new Map();
   private ringingTimeouts: Map<string, NodeJS.Timeout> = new Map();
-  // Callback registered by events.ts to fan dm_call_end out to peers on ring timeout.
-  // Null during startup — ring timeouts that fire before registration simply no-op (there are no peers to notify before boot completes).
   private ringTimeoutFanoutHook: ((dmChannelId: string, callerId: string) => Promise<void>) | null = null;
-  /** Federated calls where this instance is NOT the host. Keyed by federatedId. */
-  private federatedCalls: Map<string, FederatedCallEntry> = new Map();
-  private federatedCallTimeouts: Map<string, NodeJS.Timeout> = new Map();
-  // Space-muted/deafened users (moderator action)
-  private spaceMutedUsers: Set<string> = new Set(); // Stores spaceId:userId
-  private spaceDeafenedUsers: Set<string> = new Set(); // Stores spaceId:userId
-  // Permission-muted users (SPEAK permission revoked while in voice)
-  private permissionMutedUsers: Set<string> = new Set(); // Stores spaceId:userId
-  // The specific WebSocket that initiated voice_join / DM call for this user.
-  // When THIS socket closes, voice cleanup enters the reconnect grace period.
+  private federatedCalls = new FederatedCallRegistry();
+  private voiceModeration = new SpaceVoiceModeration();
   private voiceWs: Map<string, WebSocket> = new Map();
-  // Per-user WebSocket rate limiters (shared across all tabs/connections)
   private userRateLimiters: Map<string, WsRateLimiter> = new Map();
 
-  // ─── Rich Presence ──────────────────────────────────────────────────────
-  // userId → Activity[] (ephemeral, same lifecycle as voiceUserStates)
-  private userActivities: Map<string, Activity[]> = new Map();
-  // userId → boolean (cached from DB at auth time, updated via REST)
-  private userShowActivity: Map<string, boolean> = new Map();
-  // userId → status string (cached at auth, updated on presence_update)
-  private userStatuses: Map<string, string> = new Map();
-  // userId → timestamp of last activity_update (rate limiting)
-  private lastActivityUpdate: Map<string, number> = new Map();
+  // ─── Rich Presence & Activity ───────────────────────────────────────────
+  private activityTracker = new UserActivityTracker();
+
+  // ─── Broadcasting ─────────────────────────────────────────────────────────
+  private broadcaster = new EventBroadcaster({
+    getUserConnections: (uid) => this.getUserConnections(uid),
+    getUserSpacesEntries: () => this.userSpaces.entries(),
+    getFederatedCallRingedUsers: (fedId) => this.federatedCalls.getFederatedCall(fedId)?.ringedUserIds,
+    getRoom: (rid) => this.getRoom(rid),
+    getAllConnections: () => this.connections,
+  });
 
   addConnection(userId: string, ws: WebSocket): void {
-    if (!this.connections.has(userId)) {
-      this.connections.set(userId, new Set());
-    }
+    if (!this.connections.has(userId)) this.connections.set(userId, new Set());
     this.connections.get(userId)!.add(ws);
     this.wsToUser.set(ws, userId);
 
@@ -127,16 +113,19 @@ class ConnectionManager {
         && (room.metadata as DmRoomMeta).callerId === userId,
       )?.[0]
       ?? null;
-    if (!roomId) return;
+    // A session with no room here may hold a call hosted on a peer, joined
+    // through this instance. Its loss is that member's only leave signal.
+    const federatedId = roomId === null ? this.getJoinedFederatedCall(userId)?.federatedId ?? null : null;
+    if (!roomId && !federatedId) return;
 
     if (this.pendingVoiceReconnects.size >= MAX_PENDING_VOICE_RECONNECTS) {
       const oldest = this.pendingVoiceReconnects.entries().next().value as
-        | [string, { timeout: NodeJS.Timeout; roomId: string | null }]
+        | [string, PendingVoiceReconnect]
         | undefined;
       if (oldest) {
         clearTimeout(oldest[1].timeout);
         this.pendingVoiceReconnects.delete(oldest[0]);
-        this.finalizeVoiceDisconnect(oldest[0], oldest[1].roomId);
+        this.finalizeVoiceDisconnect(oldest[0], oldest[1].roomId, oldest[1].federatedId);
       }
     }
 
@@ -144,9 +133,11 @@ class ConnectionManager {
       const pending = this.pendingVoiceReconnects.get(userId);
       if (!pending || pending.timeout !== timeout) return;
       this.pendingVoiceReconnects.delete(userId);
-      if (!this.voiceWs.has(userId)) this.finalizeVoiceDisconnect(userId, pending.roomId);
+      if (!this.voiceWs.has(userId) && !hasNativeVoiceSocket(userId)) {
+        this.finalizeVoiceDisconnect(userId, pending.roomId, pending.federatedId);
+      }
     }, VOICE_RECONNECT_GRACE_MS);
-    this.pendingVoiceReconnects.set(userId, { timeout, roomId });
+    this.pendingVoiceReconnects.set(userId, { timeout, roomId, federatedId });
   }
 
   private cancelVoiceDisconnect(userId: string): void {
@@ -156,43 +147,55 @@ class ConnectionManager {
     this.pendingVoiceReconnects.delete(userId);
   }
 
-  private finalizeVoiceDisconnect(userId: string, expectedRoomId: string | null = null): void {
+  private finalizeVoiceDisconnect(
+    userId: string,
+    expectedRoomId: string | null = null,
+    expectedFederatedId: string | null = null,
+  ): void {
     if (this.voiceWs.has(userId) || hasNativeVoiceSocket(userId)) return;
     revokeNativeVoiceSessions({ userId });
-    const current = this.getUserRoom(userId);
-    const left = (!expectedRoomId || current?.roomId === expectedRoomId)
-      ? this.leaveCurrentRoom(userId)
-      : null;
     this.clearVoiceUserStatus(userId);
 
-    if (left) {
-      if (left.room.roomType === 'space') {
-        const meta = left.room.metadata as SpaceRoomMeta;
-        this.sendToSpace(meta.spaceId, {
-          type: 'voice_state_update', channelId: left.roomId, userId, action: 'leave',
-        });
-      } else {
-        this.sendToDmMembers(left.roomId, {
-          type: 'voice_state_update', channelId: left.roomId, userId, action: 'leave',
-        });
-        const updatedRoom = this.voiceRooms.get(left.roomId);
-        if (updatedRoom && updatedRoom.participants.size === 0
-            && (updatedRoom.metadata as DmRoomMeta).state === 'active') {
-          this.destroyRoom(left.roomId);
-          this.sendToDmMembers(left.roomId, { type: 'dm_call_ended', dmChannelId: left.roomId });
-        }
+    // The session held a call hosted on a peer: the member leaves it as if
+    // they had hung up, unless they already left it.
+    if (expectedFederatedId !== null) {
+      if (this.getJoinedFederatedCall(userId)?.federatedId === expectedFederatedId) {
+        this.leaveFederatedCall(userId);
       }
+      return;
     }
+
+    const current = this.getUserRoom(userId);
+    if (!expectedRoomId || current?.roomId === expectedRoomId) this.leaveCurrentRoomAnnounced(userId);
 
     for (const [roomId, room] of this.voiceRooms) {
       if (room.roomType !== 'dm') continue;
       const meta = room.metadata as DmRoomMeta;
       if (meta.state === 'ringing' && meta.callerId === userId
           && (!expectedRoomId || expectedRoomId === roomId)) {
-        this.destroyRoom(roomId);
-        this.sendToDmMembers(roomId, { type: 'dm_call_ended', dmChannelId: roomId });
+        this.endDmRoom(roomId, 'dm_call_ended');
+        this.fanOutCallEnd(roomId, userId);
       }
     }
+  }
+
+  /**
+   * Take `userId` out of the room they are in, unless it is `keepRoomId`,
+   * and tell whoever sees that room. A DM call they leave empty ends, and the
+   * end is relayed to the peers in the name of its caller, who is homed here.
+   * Returns the room left, if any.
+   */
+  leaveCurrentRoomAnnounced(userId: string, keepRoomId?: string): { roomId: string; room: VoiceRoom } | null {
+    if (keepRoomId !== undefined && this.userToRoom.get(userId) === keepRoomId) return null;
+    const left = this.leaveCurrentRoom(userId);
+    if (!left) return null;
+    if (left.room.roomType === 'space') {
+      const meta = left.room.metadata as SpaceRoomMeta;
+      this.sendToSpace(meta.spaceId, { type: 'voice_state_update', channelId: left.roomId, userId, action: 'leave' });
+    } else if (this.afterDmCallLeave(left.roomId, userId) === 'ended') {
+      this.fanOutCallEnd(left.roomId, (left.room.metadata as DmRoomMeta).callerId);
+    }
+    return left;
   }
 
   /**
@@ -220,25 +223,28 @@ class ConnectionManager {
     // Native remote-call sessions have no userToRoom entry, but still require teardown.
     revokeNativeVoiceSessions({ userId });
     console.log(`[ConnectionManager] Finalizing disconnect for user ${userId}`);
+
+    // A replicated row returns to its home's projection, or to 'offline' when
+    // none is known (ws/replicaPresence.ts). The home owns its status, so
+    // nothing is relayed, and relayed activities stay unless it is offline.
+    const replica = showReplicaStatusOnDisconnect(userId);
+    if (replica) {
+      if (replica.status === 'offline') this.activityTracker.clearUser(userId);
+      if (replica.changed) {
+        const payload = presenceUpdateFor(userId, replica.status, replica.status === 'offline' ? [] : undefined);
+        for (const uid of collectProfileBroadcastTargetIds(userId)) this.sendToUser(uid, payload);
+      }
+      this.forgetSessionState(userId);
+      return;
+    }
+
     const db = getDb();
     db.update(schema.users).set({ status: 'offline' }).where(eq(schema.users.id, userId)).run();
 
     // Clear activity state
-    this.clearUserActivities(userId);
-    this.userShowActivity.delete(userId);
-    this.userStatuses.delete(userId);
-    this.lastActivityUpdate.delete(userId);
+    this.activityTracker.clearUser(userId);
 
-    // Broadcast offline to friends + DM co-members + space co-members.
-    // Mirrors collectProfileBroadcastTargetIds (the recipient set used by
-    // user_updated). Two locally-friended users with no shared space now see
-    // each other's offline transitions live, instead of being space-only.
-    const offlinePayload = {
-      type: 'presence_update' as const,
-      userId,
-      status: 'offline' as const,
-      activities: [] as Activity[],
-    };
+    const offlinePayload = presenceUpdateFor(userId, 'offline', []);
     const offlineTargets = collectProfileBroadcastTargetIds(userId);
     for (const uid of offlineTargets) this.sendToUser(uid, offlinePayload);
 
@@ -248,10 +254,11 @@ class ConnectionManager {
       try { queuePresenceRelay(userId, 'offline', []); } catch (e) { console.warn('[ws] queuePresenceRelay(offline) failed', e); }
     });
 
-    // Clean up userSpaces (re-populated on next connect via setUserSpaces)
-    this.userSpaces.delete(userId);
+    this.forgetSessionState(userId);
+  }
 
-    // Clean up per-user rate limiter
+  private forgetSessionState(userId: string): void {
+    this.userSpaces.delete(userId);
     this.userRateLimiters.delete(userId);
   }
 
@@ -276,43 +283,35 @@ class ConnectionManager {
   // ─── Activity accessors ─────────────────────────────────────────────────
 
   setUserActivities(userId: string, activities: Activity[]): void {
-    if (activities.length === 0) {
-      this.userActivities.delete(userId);
-    } else {
-      this.userActivities.set(userId, activities);
-    }
+    this.activityTracker.setUserActivities(userId, activities);
   }
 
   getUserActivities(userId: string): Activity[] {
-    return this.userActivities.get(userId) ?? [];
+    return this.activityTracker.getUserActivities(userId);
   }
 
   clearUserActivities(userId: string): void {
-    this.userActivities.delete(userId);
+    this.activityTracker.clearUserActivities(userId);
   }
 
   setUserShowActivity(userId: string, show: boolean): void {
-    this.userShowActivity.set(userId, show);
+    this.activityTracker.setUserShowActivity(userId, show);
   }
 
   getUserShowActivity(userId: string): boolean {
-    return this.userShowActivity.get(userId) ?? true;
+    return this.activityTracker.getUserShowActivity(userId);
   }
 
   setUserStatus(userId: string, status: string): void {
-    this.userStatuses.set(userId, status);
+    this.activityTracker.setUserStatus(userId, status);
   }
 
   getUserStatus(userId: string): string {
-    return this.userStatuses.get(userId) ?? 'offline';
+    return this.activityTracker.getUserStatus(userId);
   }
 
   checkActivityRateLimit(userId: string): boolean {
-    const now = Date.now();
-    const last = this.lastActivityUpdate.get(userId) ?? 0;
-    if (now - last < 3000) return false;
-    this.lastActivityUpdate.set(userId, now);
-    return true;
+    return this.activityTracker.checkActivityRateLimit(userId);
   }
 
   setUserSpaces(userId: string, spaceIds: string[]): void {
@@ -356,6 +355,14 @@ class ConnectionManager {
     this.sendToSpace(spaceId, { type: 'space_access_changed', spaceId });
     for (const userId of new Set(affectedUserIds)) {
       if (this.getUserSpaces(userId).has(spaceId)) this.pushSpaceVoiceState(userId, spaceId);
+    }
+  }
+
+  announceUserAccessChange(userId: string, spaceIds: Iterable<string>): void {
+    if (this.getUserConnections(userId).size === 0) return;
+    for (const spaceId of new Set(spaceIds)) {
+      this.sendToUser(userId, { type: 'space_access_changed', spaceId });
+      this.pushSpaceVoiceState(userId, spaceId);
     }
   }
 
@@ -412,38 +419,206 @@ class ConnectionManager {
     this.ringTimeoutFanoutHook = fn;
   }
 
+  /**
+   * Relay dm_call_end to remote peers for calls hosted here that end on the
+   * host's own initiative (60s ring timeout, socket close while ringing,
+   * voice reconnect grace expiring on the last participant, or account deletion).
+   * Safe to call on purely local calls: sendFederatedCallEnd checks remote
+   * member presence and no-ops when none exist.
+   * `endedByUserId` is the host's own identity that took the action; a peer
+   * refuses an end attributed to a user homed on another instance.
+   */
+  fanOutCallEnd(dmChannelId: string, endedByUserId: string): void {
+    if (!this.ringTimeoutFanoutHook) return;
+    this.ringTimeoutFanoutHook(dmChannelId, endedByUserId).catch(err =>
+      console.error('[ws] call-end fan-out error:', err),
+    );
+  }
+
+  /**
+   * Register the callback that takes a local user out of the call hosted on
+   * a peer they joined through this instance, and tells the host, when they
+   * leave it without hanging up.
+   */
+  setFederatedCallLeaveHook(fn: (userId: string) => void): void {
+    this.federatedCalls.setFederatedCallLeaveHook(fn);
+  }
+
+  /** `userId` left the call hosted on a peer they joined through here. */
+  leaveFederatedCall(userId: string): void {
+    this.federatedCalls.leaveFederatedCall(userId);
+  }
+
+  /** The call hosted on a peer that `userId` joined through this instance. */
+  getJoinedFederatedCall(userId: string): FederatedCallEntry | undefined {
+    return this.federatedCalls.getJoinedFederatedCall(userId);
+  }
+
   /** Create a DM room in ringing state with 60s auto-cleanup. */
   createDmRoom(dmChannelId: string, callerId: string): boolean {
+    const row = getDb().select({ ownerId: schema.dmChannels.ownerId, federatedId: schema.dmChannels.federatedId })
+      .from(schema.dmChannels)
+      .where(eq(schema.dmChannels.id, dmChannelId))
+      .get();
     const created = this.createRoom(dmChannelId, 'dm', {
       type: 'dm',
       callerId,
       state: 'ringing',
+      group: row ? isGroupConversation({ owner_id: row.ownerId, federated_id: row.federatedId }) : false,
+      declinedUserIds: new Set(),
+      remoteParticipants: new Map(),
     });
     if (!created) return false;
 
-    // 60s ringing timeout — auto-destroy if still ringing
+    // 60s ringing timeout: nobody but the caller joined, so the call ends.
     const timeout = setTimeout(() => {
       this.ringingTimeouts.delete(dmChannelId);
       const room = this.voiceRooms.get(dmChannelId);
       if (room && room.roomType === 'dm' && (room.metadata as DmRoomMeta).state === 'ringing') {
         const ringedCallerId = (room.metadata as DmRoomMeta).callerId;
-        this.destroyRoom(dmChannelId);
-        this.sendToDmMembers(dmChannelId, {
-          type: 'dm_call_ended',
-          dmChannelId,
-        });
+        this.endDmRoom(dmChannelId, 'dm_call_ended');
         // Fan dm_call_end out to remote peers so stranded Path-A/B ringees exit the ring.
         // Without this, an accept-relay failure → Alice's 60s auto-clean leaves Bob's FederatedCallEntry lingering with no terminal event.
-        if (this.ringTimeoutFanoutHook) {
-          this.ringTimeoutFanoutHook(dmChannelId, ringedCallerId).catch(err =>
-            console.error('[ws] ring-timeout fan-out error:', err),
-          );
-        }
+        this.fanOutCallEnd(dmChannelId, ringedCallerId);
       }
     }, 60_000);
     this.ringingTimeouts.set(dmChannelId, timeout);
 
     return true;
+  }
+
+  /**
+   * End a DM call hosted here: unbind the voice sessions it holds, destroy the
+   * room, tell the DM members that each participant left, then send `kind`
+   * (`dm_call_ended`, or `dm_call_rejected` for a call every ringee declined).
+   * Local only: the caller relays `dm_call_end` to the peers. Returns false
+   * when there is no such room.
+   */
+  endDmRoom(dmChannelId: string, kind: 'dm_call_ended' | 'dm_call_rejected'): boolean {
+    const room = this.voiceRooms.get(dmChannelId);
+    if (!room || room.roomType !== 'dm') return false;
+    const meta = room.metadata as DmRoomMeta;
+    const participants = Array.from(room.participants);
+    // The caller of a ringing call holds no seat but owns the voice binding,
+    // unless they have since joined some other room.
+    const callerRoom = this.userToRoom.get(meta.callerId);
+    if (callerRoom === undefined || callerRoom === dmChannelId) this.clearVoiceWs(meta.callerId);
+    for (const participantId of participants) {
+      this.clearVoiceUserStatus(participantId);
+      this.clearVoiceWs(participantId);
+    }
+    this.destroyRoom(dmChannelId);
+    for (const participantId of participants) {
+      this.sendToDmMembers(dmChannelId, {
+        type: 'voice_state_update', channelId: dmChannelId, userId: participantId, action: 'leave',
+      });
+    }
+    this.sendToDmMembers(dmChannelId, { type: kind, dmChannelId });
+    return true;
+  }
+
+  /**
+   * After `userId` left the DM call `dmChannelId` (already out of its
+   * participants): tell the DM members, and end the call when it is active
+   * and nobody is left in it. Returns 'ended' when the call ended, so the
+   * caller relays the end to the peers.
+   */
+  afterDmCallLeave(dmChannelId: string, userId: string): 'left' | 'ended' {
+    const room = this.voiceRooms.get(dmChannelId);
+    if (room && room.roomType === 'dm') (room.metadata as DmRoomMeta).remoteParticipants.delete(userId);
+    this.sendToDmMembers(dmChannelId, {
+      type: 'voice_state_update', channelId: dmChannelId, userId, action: 'leave',
+    });
+    if (room && room.roomType === 'dm' && room.participants.size === 0
+        && (room.metadata as DmRoomMeta).state === 'active') {
+      this.endDmRoom(dmChannelId, 'dm_call_ended');
+      return 'ended';
+    }
+    return 'left';
+  }
+
+  /**
+   * A member hangs up or cancels a group call hosted here (`dm_call_end`,
+   * local or relayed). The caller of a call nobody has joined yet ends it;
+   * a participant leaves it, and the call ends with the last one out; anyone
+   * else is not in the call and changes nothing.
+   */
+  leaveGroupDmCall(dmChannelId: string, userId: string): 'ignored' | 'left' | 'ended' {
+    const room = this.voiceRooms.get(dmChannelId);
+    if (!room || room.roomType !== 'dm') return 'ignored';
+    const meta = room.metadata as DmRoomMeta;
+    if (meta.state === 'ringing' && meta.callerId === userId) {
+      this.endDmRoom(dmChannelId, 'dm_call_ended');
+      return 'ended';
+    }
+    if (!room.participants.has(userId)) return 'ignored';
+    this.leaveRoom(dmChannelId, userId);
+    this.clearVoiceUserStatus(userId);
+    this.clearVoiceWs(userId);
+    return this.afterDmCallLeave(dmChannelId, userId);
+  }
+
+  /**
+   * A member declines a group call hosted here (`dm_call_reject`, local or
+   * relayed). The decliner stops ringing; the call goes on for everyone else.
+   * When the call is still ringing and every member but the caller has
+   * declined, nobody is left to answer and it ends as rejected. The caller
+   * and participants cannot decline. Membership is the caller's to check.
+   */
+  declineGroupDmCall(dmChannelId: string, userId: string): 'ignored' | 'declined' | 'ended' {
+    const room = this.voiceRooms.get(dmChannelId);
+    if (!room || room.roomType !== 'dm') return 'ignored';
+    const meta = room.metadata as DmRoomMeta;
+    if (meta.callerId === userId || room.participants.has(userId)) return 'ignored';
+    meta.declinedUserIds.add(userId);
+    if (meta.state !== 'ringing') return 'declined';
+    const ringees = getDb().select({ userId: schema.dmMembers.userId })
+      .from(schema.dmMembers)
+      .where(eq(schema.dmMembers.dmChannelId, dmChannelId))
+      .all()
+      .filter(m => m.userId !== meta.callerId);
+    if (ringees.some(m => !meta.declinedUserIds.has(m.userId))) return 'declined';
+    this.endDmRoom(dmChannelId, 'dm_call_rejected');
+    return 'ended';
+  }
+
+  /**
+   * Take every participant that `peerOrigin` relayed into the DM call
+   * `dmChannelId` (`remoteParticipants`) out of it, as when that peer can no
+   * longer tell us they left. Returns how many left and whether the call
+   * ended because nobody is left. Local only: the caller relays the end.
+   */
+  leavePeerParticipants(dmChannelId: string, peerOrigin: string): { removed: number; ended: boolean } {
+    const peerKey = normalizeOriginForCompare(peerOrigin);
+    const room = this.voiceRooms.get(dmChannelId);
+    if (peerKey === null || !room || room.roomType !== 'dm') return { removed: 0, ended: false };
+    const meta = room.metadata as DmRoomMeta;
+    let removed = 0;
+    for (const [userId, origin] of Array.from(meta.remoteParticipants)) {
+      if (normalizeOriginForCompare(origin) !== peerKey) continue;
+      this.leaveRoom(dmChannelId, userId);
+      removed += 1;
+      if (this.afterDmCallLeave(dmChannelId, userId) === 'ended') return { removed, ended: true };
+    }
+    return { removed, ended: false };
+  }
+
+  /**
+   * A peer stopped being active: the participants it relayed into calls
+   * hosted here can no longer tell us they left, so they leave now. A call
+   * left empty ends, and the end is relayed to the remaining peers in the
+   * caller's name. Returns how many participants were removed.
+   */
+  dropRemoteCallParticipants(peerOrigin: string): number {
+    let removed = 0;
+    for (const [roomId, room] of Array.from(this.voiceRooms)) {
+      if (room.roomType !== 'dm') continue;
+      const callerId = (room.metadata as DmRoomMeta).callerId;
+      const result = this.leavePeerParticipants(roomId, peerOrigin);
+      removed += result.removed;
+      if (result.ended) this.fanOutCallEnd(roomId, callerId);
+    }
+    return removed;
   }
 
   /** Transition a DM room from ringing → active. Returns false if not found or not ringing. */
@@ -465,62 +640,36 @@ class ConnectionManager {
 
   /** Register a federated call received via S2S. Adds 60s ringing timeout. */
   createFederatedCall(entry: FederatedCallEntry): void {
-    this.clearFederatedCall(entry.federatedId);
-    this.federatedCalls.set(entry.federatedId, entry);
-
-    const timeout = setTimeout(() => {
-      this.federatedCallTimeouts.delete(entry.federatedId);
-      const call = this.federatedCalls.get(entry.federatedId);
-      if (call && call.state === 'ringing') {
-        this.federatedCalls.delete(entry.federatedId);
-        const endEvent = {
-          type: 'dm_call_ended',
-          dmChannelId: call.dmChannelId,
-          federatedCallId: call.federatedId,
-        };
-        for (const uid of call.ringedUserIds) {
-          this.sendToUser(uid, endEvent as ServerEvent);
-        }
-      }
-    }, 60_000);
-    this.federatedCallTimeouts.set(entry.federatedId, timeout);
+    this.federatedCalls.createFederatedCall(
+      entry,
+      (uid, event) => this.sendToUser(uid, event),
+      (fedId) => revokeNativeVoiceSessions({ roomId: fedId }),
+    );
   }
 
   /** Get a federated call entry by federatedId (primary lookup). */
   getFederatedCall(federatedId: string): FederatedCallEntry | undefined {
-    return this.federatedCalls.get(federatedId);
+    return this.federatedCalls.getFederatedCall(federatedId);
   }
 
   /** Get a federated call entry by local dmChannelId (convenience reverse lookup). */
   getFederatedCallByDmChannel(dmChannelId: string): FederatedCallEntry | undefined {
-    for (const entry of this.federatedCalls.values()) {
-      if (entry.dmChannelId === dmChannelId) return entry;
-    }
-    return undefined;
+    return this.federatedCalls.getFederatedCallByDmChannel(dmChannelId);
   }
 
   /** Transition a federated call from ringing → active. */
   activateFederatedCall(federatedId: string): boolean {
-    const call = this.federatedCalls.get(federatedId);
-    if (!call || call.state !== 'ringing') return false;
-    call.state = 'active';
-    const timeout = this.federatedCallTimeouts.get(federatedId);
-    if (timeout) {
-      clearTimeout(timeout);
-      this.federatedCallTimeouts.delete(federatedId);
-    }
-    return true;
+    return this.federatedCalls.activateFederatedCall(federatedId);
   }
 
   /** Remove a federated call entry and clear its timeout. */
   clearFederatedCall(federatedId: string): void {
     revokeNativeVoiceSessions({ roomId: federatedId });
-    this.federatedCalls.delete(federatedId);
-    const timeout = this.federatedCallTimeouts.get(federatedId);
-    if (timeout) {
-      clearTimeout(timeout);
-      this.federatedCallTimeouts.delete(federatedId);
-    }
+    this.federatedCalls.clearFederatedCall(
+      federatedId,
+      (userId) => this.clearVoiceWs(userId),
+      this.userToRoom,
+    );
   }
 
   /**
@@ -538,52 +687,24 @@ class ConnectionManager {
       peerLabel?: string;
     },
   ): number {
-    const matches: FederatedCallEntry[] = [];
-    for (const entry of this.federatedCalls.values()) {
-      if (entry.federatedCallHost === peerOrigin) matches.push(entry);
-    }
-    if (matches.length === 0) return 0;
-
-    let evicted = 0;
-    for (const entry of matches) {
-      // Re-check — concurrent teardown may have removed it between collect and broadcast.
-      if (!this.federatedCalls.has(entry.federatedId)) continue;
-
-      const event: ServerEvent = {
-        type: 'dm_call_undeliverable',
-        dmChannelId: entry.dmChannelId,
-        federatedCallId: entry.federatedId,
-        terminal: true,
-        phase: 'host_unreachable',
-        failures: [{
-          reason: ctx.reason,
-          peerOrigin,
-          peerLabel: ctx.peerLabel,
-        }],
-      };
-
-      for (const uid of entry.ringedUserIds) {
-        this.sendToUser(uid, event);
-      }
-
-      this.clearFederatedCall(entry.federatedId);
-      evicted += 1;
-    }
-
-    return evicted;
+    return this.federatedCalls.evictFederatedCallsForHost(
+      peerOrigin,
+      ctx,
+      (uid, event) => this.sendToUser(uid, event),
+      (userId) => this.clearVoiceWs(userId),
+      this.userToRoom,
+      (fedId) => revokeNativeVoiceSessions({ roomId: fedId }),
+    );
   }
 
   /** Late-bind a dmChannelId onto a Path B FederatedCallEntry. */
   lateBindFederatedCall(federatedId: string, dmChannelId: string): void {
-    const call = this.federatedCalls.get(federatedId);
-    if (call && call.dmChannelId === null) {
-      call.dmChannelId = dmChannelId;
-    }
+    this.federatedCalls.lateBindFederatedCall(federatedId, dmChannelId);
   }
 
   /** Expose federated calls for ready payload assembly. */
   getAllFederatedCalls(): Map<string, FederatedCallEntry> {
-    return this.federatedCalls;
+    return this.federatedCalls.getAllFederatedCalls();
   }
 
   /** Add a user to a room. Enforces one-room-per-user invariant. Returns the room or null if room doesn't exist. */
@@ -732,42 +853,31 @@ class ConnectionManager {
   }
 
   setSpaceMuted(spaceId: string, userId: string, muted: boolean): void {
-    const key = `${spaceId}:${userId}`;
-    if (muted) this.spaceMutedUsers.add(key);
-    else this.spaceMutedUsers.delete(key);
-    syncNativeVoicePermissions(userId);
+    this.voiceModeration.setSpaceMuted(spaceId, userId, muted);
   }
 
   isSpaceMuted(spaceId: string, userId: string): boolean {
-    return this.spaceMutedUsers.has(`${spaceId}:${userId}`);
+    return this.voiceModeration.isSpaceMuted(spaceId, userId);
   }
 
   setSpaceDeafened(spaceId: string, userId: string, deafened: boolean): void {
-    const key = `${spaceId}:${userId}`;
-    if (deafened) this.spaceDeafenedUsers.add(key);
-    else this.spaceDeafenedUsers.delete(key);
-    syncNativeVoicePermissions(userId);
+    this.voiceModeration.setSpaceDeafened(spaceId, userId, deafened);
   }
 
   isSpaceDeafened(spaceId: string, userId: string): boolean {
-    return this.spaceDeafenedUsers.has(`${spaceId}:${userId}`);
+    return this.voiceModeration.isSpaceDeafened(spaceId, userId);
   }
 
   clearSpaceVoiceState(spaceId: string, userId: string): void {
-    this.spaceMutedUsers.delete(`${spaceId}:${userId}`);
-    this.spaceDeafenedUsers.delete(`${spaceId}:${userId}`);
-    this.permissionMutedUsers.delete(`${spaceId}:${userId}`);
+    this.voiceModeration.clearSpaceVoiceState(spaceId, userId);
   }
 
   setPermissionMuted(spaceId: string, userId: string, muted: boolean): void {
-    const key = `${spaceId}:${userId}`;
-    if (muted) this.permissionMutedUsers.add(key);
-    else this.permissionMutedUsers.delete(key);
-    syncNativeVoicePermissions(userId);
+    this.voiceModeration.setPermissionMuted(spaceId, userId, muted);
   }
 
   isPermissionMuted(spaceId: string, userId: string): boolean {
-    return this.permissionMutedUsers.has(`${spaceId}:${userId}`);
+    return this.voiceModeration.isPermissionMuted(spaceId, userId);
   }
 
   getAllVoiceUserStates(): Map<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }> {
@@ -778,37 +888,17 @@ class ConnectionManager {
 
   /** Send to a specific user (all their connections). */
   sendToUser(userId: string, event: ServerEvent): void {
-    const connections = this.getUserConnections(userId);
-    const message = JSON.stringify(event);
-    const unread = connections.size ? unreadCountEvent(userId, event) : null;
-    const unreadMessage = unread ? JSON.stringify(unread) : null;
-    for (const ws of connections) {
-      if (ws.readyState === 1) { // WebSocket.OPEN
-        ws.send(message);
-        if (unreadMessage) ws.send(unreadMessage);
-      }
-    }
+    this.broadcaster.sendToUser(userId, event);
   }
 
   /** Send to all members of a space. */
   sendToSpace(spaceId: string, event: ServerEvent, excludeUserId?: string): void {
-    for (const [userId, spaceIds] of this.userSpaces) {
-      if (spaceIds.has(spaceId) && userId !== excludeUserId) {
-        this.sendToUser(userId, event);
-      }
-    }
+    this.broadcaster.sendToSpace(spaceId, event, excludeUserId);
   }
 
   /** Send to space members who have VIEW_CHANNEL on the given channel. */
   sendToChannel(spaceId: string, channelId: string, event: ServerEvent, excludeUserId?: string): void {
-    for (const [userId, spaceIds] of this.userSpaces) {
-      if (spaceIds.has(spaceId) && userId !== excludeUserId) {
-        const perms = computePermissions(userId, spaceId, channelId);
-        if ((perms & PermissionBits.VIEW_CHANNEL) !== 0n) {
-          this.sendToUser(userId, event);
-        }
-      }
-    }
+    this.broadcaster.sendToChannel(spaceId, channelId, event, excludeUserId);
   }
 
   /** Expose userSpaces iterator for pre-delete viewer collection. */
@@ -818,65 +908,30 @@ class ConnectionManager {
 
   /** Send to all DM channel members (queries dm_members table). */
   sendToDmMembers(dmChannelId: string, event: ServerEvent, excludeUserId?: string): void {
-    const db = getDb();
-    const dmMembers = db.select()
-      .from(schema.dmMembers)
-      .where(eq(schema.dmMembers.dmChannelId, dmChannelId))
-      .all();
-
-    for (const member of dmMembers) {
-      if (member.userId !== excludeUserId) {
-        this.sendToUser(member.userId, event);
-      }
-    }
+    this.broadcaster.sendToDmMembers(dmChannelId, event, excludeUserId);
   }
 
-  /** Send event to users who were ringed for a federated call.
-   *  ALWAYS uses ringedUserIds, never sendToDmMembers — sendToDmMembers would
-   *  also reach the caller's replicated stub, causing cross-instance event contamination
-   *  (the caller's multi-instance WS gets dm_call_accepted with the wrong dmChannelId). */
+  /**
+   * Send event to users who were ringed for a federated call.
+   * ALWAYS uses ringedUserIds, never sendToDmMembers.
+   */
   sendToFederatedCallUsers(federatedId: string, event: ServerEvent, excludeUserId?: string): void {
-    const call = this.federatedCalls.get(federatedId);
-    if (!call) return;
-    for (const uid of call.ringedUserIds) {
-      if (uid !== excludeUserId) {
-        this.sendToUser(uid, event);
-      }
-    }
+    this.broadcaster.sendToFederatedCallUsers(federatedId, event, excludeUserId);
   }
 
   /** Send to a room — routes to sendToSpace (space rooms) or sendToDmMembers (DM rooms). */
   sendToRoom(roomId: string, event: ServerEvent, excludeUserId?: string): void {
-    const room = this.voiceRooms.get(roomId);
-    if (!room) return;
-
-    if (room.roomType === 'space') {
-      const meta = room.metadata as SpaceRoomMeta;
-      this.sendToSpace(meta.spaceId, event, excludeUserId);
-    } else {
-      this.sendToDmMembers(roomId, event, excludeUserId);
-    }
+    this.broadcaster.sendToRoom(roomId, event, excludeUserId);
   }
 
   /** Send to all connections of all online users. */
   sendToAll(event: ServerEvent, excludeUserId?: string): void {
-    const message = JSON.stringify(event);
-    for (const [userId, connections] of this.connections) {
-      if (userId !== excludeUserId) {
-        for (const ws of connections) {
-          if (ws.readyState === 1) {
-            ws.send(message);
-          }
-        }
-      }
-    }
+    this.broadcaster.sendToAll(event, excludeUserId);
   }
 
   /** Send to a specific WebSocket instance (not all of a user's connections). */
   sendToWs(ws: WebSocket, event: ServerEvent): void {
-    if (ws.readyState === 1) { // WebSocket.OPEN
-      ws.send(JSON.stringify(event));
-    }
+    this.broadcaster.sendToWs(ws, event);
   }
 
   /** Force-disconnect all WebSocket connections for a user (e.g. account deletion). */
@@ -888,48 +943,27 @@ class ConnectionManager {
       this.pendingOfflineTimeouts.delete(userId);
     }
 
-    // Leave voice room if in one
-    const left = this.leaveCurrentRoom(userId);
+    // Leave the voice room they are in. This is a leave like any other: a
+    // DM call it empties ends, and the end reaches the peers. A call hosted
+    // on a peer that they joined through here is left as if they hung up.
     this.clearVoiceUserStatus(userId);
     this.clearVoiceWs(userId);
-    if (left) {
-      if (left.room.roomType === 'space') {
-        const meta = left.room.metadata as SpaceRoomMeta;
-        this.sendToSpace(meta.spaceId, {
-          type: 'voice_state_update',
-          channelId: left.roomId,
-          userId,
-          action: 'leave',
-        });
-      } else {
-        this.sendToDmMembers(left.roomId, {
-          type: 'voice_state_update',
-          channelId: left.roomId,
-          userId,
-          action: 'leave',
-        });
-      }
-    }
+    this.leaveCurrentRoomAnnounced(userId);
+    if (this.getJoinedFederatedCall(userId)) this.leaveFederatedCall(userId);
 
-    // Destroy any ringing DM rooms where this user is the caller
+    // End any ringing DM rooms where this user is the caller
     for (const [roomId, room] of this.voiceRooms) {
       if (room.roomType === 'dm') {
         const meta = room.metadata as DmRoomMeta;
         if (meta.state === 'ringing' && meta.callerId === userId) {
-          this.destroyRoom(roomId);
-          this.sendToDmMembers(roomId, {
-            type: 'dm_call_ended',
-            dmChannelId: roomId,
-          });
+          this.endDmRoom(roomId, 'dm_call_ended');
+          this.fanOutCallEnd(roomId, userId);
         }
       }
     }
 
     // Clear activity state
-    this.clearUserActivities(userId);
-    this.userShowActivity.delete(userId);
-    this.userStatuses.delete(userId);
-    this.lastActivityUpdate.delete(userId);
+    this.activityTracker.clearUser(userId);
 
     // Close all WebSocket connections
     const connections = this.connections.get(userId);
@@ -945,30 +979,13 @@ class ConnectionManager {
     this.userSpaces.delete(userId);
   }
 
-  getAllOnlineUserIds(): string[] {
-    return Array.from(this.connections.keys());
-  }
-
-  getAllConnections(): Map<string, Set<WebSocket>> {
-    return this.connections;
-  }
-
-  /** Send an event to all connected admin users. */
-  sendToAdmins(event: ServerEvent): void {
-    const db = getDb();
-    for (const userId of this.connections.keys()) {
-      const user = db.select({ isAdmin: schema.users.isAdmin })
-        .from(schema.users).where(eq(schema.users.id, userId)).get();
-      if (user?.isAdmin === 1) {
-        this.sendToUser(userId, event);
-      }
-    }
-  }
-
-  /** Push a fresh ready payload to a specific user, forcing full store re-sync. */
+  getAllOnlineUserIds(): string[] { return Array.from(this.connections.keys()); }
+  getAllConnections(): Map<string, Set<WebSocket>> { return this.connections; }
+  sendToAdmins(event: ServerEvent): void { this.broadcaster.sendToAdmins(event); }
   pushReadyPayload(userId: string): void {
     pushReadyPayloadToConnections(userId, this.getUserConnections(userId));
   }
 }
 
 export const connectionManager = new ConnectionManager();
+attachReplicaSessionHost(connectionManager);

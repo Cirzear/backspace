@@ -16,7 +16,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { useUIStore } from '../../stores/uiStore';
 import { api, HttpError, type BackspaceApiClient } from '../../api/client';
 import { setApiForOriginResolver } from '../../utils/crossStoreResolvers';
-import { ALL_PERMISSIONS, PermissionBits, permissionsToString, stringToPermissions } from '../../utils/permissions';
+import { ALL_PERMISSIONS, PermissionBits, permissionsToString, stringToPermissions, rolePermissionsVersion } from '../../utils/permissions';
 
 // The member role editor, opened from the profile card's "Edit Roles". It
 // follows the role hierarchy and the held-bits rule the server enforces
@@ -415,6 +415,48 @@ describe('MemberRolesModal: keeping up with the store', () => {
       useSpaceStore.setState({ currentSpaceId: 'space-2' });
     });
     expect(useUIStore.getState().activeModal).toBeNull();
+  });
+});
+
+describe('MemberRolesModal: concurrent edits of a role (#365)', () => {
+  it('names the version of the permissions the edit started from, even after the role changes underneath', async () => {
+    seed();
+    const update = vi.spyOn(api.roles, 'update').mockResolvedValue(HELPERS);
+    open('helper');
+
+    await selectRole('Helpers');
+    await userEvent.click(toggle('Send Messages'));
+    // Another moderator saves Helpers meanwhile; the store follows.
+    const changed = role('r-helper', 'Helpers', 1, PermissionBits.KICK_MEMBERS | PermissionBits.VIEW_CHANNEL);
+    act(() => {
+      useSpaceStore.setState({ roles: [EVERYONE, COUNCIL, LEADS, BANNERS, changed] });
+    });
+    await userEvent.click(saveButton()!);
+
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update.mock.calls[0]![2].permissionsVersion).toBe(rolePermissionsVersion(HELPERS.permissions));
+  });
+
+  it('on a conflict says so, reloads the space, and drops only that role\'s draft', async () => {
+    seed();
+    const update = vi.spyOn(api.roles, 'update')
+      .mockResolvedValueOnce(EVERYONE)
+      .mockRejectedValueOnce(new HttpError(409, 'Conflict', undefined, 'role_permissions_conflict'));
+    open('helper');
+
+    await selectRole('Helpers');
+    await userEvent.click(toggle('Send Messages'));
+    await selectRole('@everyone');
+    await userEvent.click(toggle('Kick Members'));
+    await userEvent.click(saveButton()!);
+
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("Someone else changed this role's permissions. Review them and save again.")).toBeInTheDocument();
+    expect(loadSpaceDetail).toHaveBeenCalledWith(SPACE_ID, { quiet: true });
+    // Helpers shows its stored permissions again, with nothing left to save.
+    await selectRole('Helpers');
+    expect(toggle('Send Messages')).toHaveAttribute('aria-checked', 'false');
+    expect(saveButton()).toBeNull();
   });
 });
 

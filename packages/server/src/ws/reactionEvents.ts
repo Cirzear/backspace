@@ -1,7 +1,7 @@
 import { eq, and } from 'drizzle-orm';
 import { getDb, schema } from '../db/index.js';
 import { generateSnowflake } from '../utils/snowflake.js';
-import { connectionManager } from './connectionManager.js';
+import { connectionManager } from './handler.js';
 import { isMember, getChannelSpaceId, isDmMember, isDeadOneOnOne, hasPermission, PermissionBits } from '../utils/permissions.js';
 import { sanitizeUser } from '../utils/sanitize.js';
 import { appendMutationLog, dmMessageFederationRef, queueOutboxEvent, getGroupDmTargetOrigins } from '../utils/federationOutbox.js';

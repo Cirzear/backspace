@@ -137,7 +137,8 @@ describe('POST /api/federation/sync — DM relevance filter', () => {
     seedPeer();
     seedUser({ id: 'alice', username: 'alice', passwordHash: 'real-hash', homeInstance: null });
     seedUser({ id: 'bob', username: 'bob@orbit.test', homeInstance: 'orbit.test', homeUserId: 'bob-home' });
-    seedUser({ id: 'carol', username: 'carol@orbit.test', homeInstance: 'orbit.test', homeUserId: 'carol-home', federationHomeOrphaned: 1 });
+    // Detached: homed here, its former orbit identity kept aside.
+    seedUser({ id: 'carol', username: 'carol@orbit.test', passwordHash: 'real-hash', homeInstance: null, homeUserId: null, detachedHomeInstance: 'orbit.test', detachedHomeUserId: 'carol-home', federationHomeOrphaned: 1 });
     seedUser({ id: 'dave', username: 'dave@elsewhere.test', homeInstance: 'elsewhere.test', homeUserId: 'dave-home' });
     seedDmWithMessage('ch-live', ['alice', 'bob'], 'alice', 100);      // live orbit member → offered
     seedDmWithMessage('ch-detached', ['alice', 'carol'], 'alice', 110); // only detached orbit member → excluded
@@ -154,8 +155,11 @@ describe('POST /api/federation/sync — DM relevance filter', () => {
   });
 
   it('returns empty DM sync for a reset peer (all requester-domain rows detached)', async () => {
-    // Flip bob to detached too — simulates the post-reset state.
-    testDb.update(schema.users).set({ federationHomeOrphaned: 1 }).where(eq(schema.users.id, 'bob')).run();
+    // Detach bob too — simulates the post-reset state (detaching homes the account here).
+    testDb.update(schema.users).set({
+      federationHomeOrphaned: 1, homeInstance: null, homeUserId: null,
+      detachedHomeInstance: 'orbit.test', detachedHomeUserId: 'bob-home',
+    }).where(eq(schema.users.id, 'bob')).run();
     const res = await syncPull(app, { sinceTimestamp: 0 });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
@@ -211,8 +215,9 @@ describe('POST /api/federation/sync — friend relevance filter', () => {
     expect(body.checkpoint).toBe(110);
   });
 
-  it('does not qualify an event via a side that resolves to a DETACHED local row', async () => {
-    seedUser({ id: 'stub-dead', username: 'dead@orbit.test', homeInstance: 'orbit.test', homeUserId: 'dead-home', federationHomeOrphaned: 1 });
+  it('does not qualify an event via a side that names the former identity of a DETACHED local row', async () => {
+    // Detached accounts are homed here; the former identity is in detached_home_*.
+    seedUser({ id: 'acct-dead', username: 'dead@orbit.test', passwordHash: 'real-hash', homeInstance: null, homeUserId: null, detachedHomeInstance: 'orbit.test', detachedHomeUserId: 'dead-home', federationHomeOrphaned: 1 });
     seedFriendMutation('f3', 100,
       { homeUserId: 'a1', homeInstance: 'https://home.test' },
       { homeUserId: 'dead-home', homeInstance: 'https://orbit.test' });

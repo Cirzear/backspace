@@ -2,7 +2,9 @@ import {
   DEFAULT_EVERYONE_PERMISSIONS,
   permissionsToString,
   stringToPermissions,
+  parsePermissionString,
   roleBitsChangeRefusal,
+  rolePermissionsVersion,
   type HeldBitsRefusal,
   canActOnMember,
   canManageRoleAt,
@@ -14,21 +16,10 @@ import { authenticate } from '../utils/auth.js';
 import { sendError } from '../utils/httpErrors';
 import { computePermissions, hasPermission, isMember, isSpaceOwner, PermissionBits } from '../utils/permissions.js';
 import { generateSnowflake } from '../utils/snowflake.js';
-import { checkVoicePermissions } from '../ws/events.js';
-import { connectionManager } from '../ws/handler.js';
-import { canManageRoleInSpace, getHierarchyStanding } from '../utils/roleHierarchy.js';
-import { moveRoleToPosition, normalizeRolePositions } from '../db/rolePositions.js';
-
-/** A permissions value from a request body as a non-negative bigint, or null when it is not one. */
-function parsePermissionBits(value: unknown): bigint | null {
-  if (typeof value !== 'string' && typeof value !== 'number') return null;
-  try {
-    const bits = BigInt(value);
-    return bits < 0n ? null : bits;
-  } catch {
-    return null;
-  }
-}
+import { canActOnMemberInSpace, canManageRoleInSpace, getHierarchyStanding } from '../utils/roleHierarchy.js';
+import { moveRoleToPosition, normalizeRolePositions, positionNextTo } from '../db/rolePositions.js';
+import { roleView, viewerReadsPermissionData } from '../utils/permissionDataView.js';
+import { announceAccessChange, membersHoldingRole } from './spaceAccess.js';
 
 type RoleChangeRefusal = {
   status: 400 | 403 | 404;
@@ -84,25 +75,36 @@ function checkSingleRoleChange(
 }
 
 export function spaceRoleRoutes(app: FastifyInstance): void {
-  // POST /api/spaces/:id/roles - Create a new role
+  // POST /api/spaces/:id/roles - Create a role
   app.post<{ Params: { id: string }; Body: { name: string; color?: string; permissions?: string } }>('/api/spaces/:id/roles', {
     preHandler: authenticate,
   }, async (request, reply) => {
     const { id } = request.params;
     const { name, color, permissions } = request.body;
     const db = getDb();
+    const rawDb = getRawDb();
 
     if (!hasPermission(request.userId, id, PermissionBits.MANAGE_ROLES)) {
       return sendError(reply, 403, 'missing_permission', { permission: 'MANAGE_ROLES' });
     }
 
-    // A new role can only carry bits its creator holds (held-bits rule,
-    // permissions.md). Without this a MANAGE_ROLES holder could create an
-    // ADMINISTRATOR role below their own and give it to anyone they outrank.
+    const roleName = name?.trim();
+    if (!roleName) {
+      return sendError(reply, 400, 'role_name_required');
+    }
+
+    // Check for case-insensitive duplicate name within the space
+    const duplicate = rawDb.prepare(
+      'SELECT id FROM roles WHERE space_id = ? AND name COLLATE NOCASE = ?'
+    ).get(id, roleName);
+    if (duplicate) {
+      return sendError(reply, 409, 'role_name_taken');
+    }
+
     const actorPerms = computePermissions(request.userId, id);
     let permStr: string;
     if (permissions !== undefined && permissions !== null) {
-      const requested = parsePermissionBits(permissions);
+      const requested = parsePermissionString(permissions);
       if (requested === null) {
         return sendError(reply, 400, 'permissions_invalid');
       }
@@ -115,18 +117,6 @@ export function spaceRoleRoutes(app: FastifyInstance): void {
       // Default to the @everyone baseline so new roles start functional,
       // limited to the bits the creator holds.
       permStr = permissionsToString(DEFAULT_EVERYONE_PERMISSIONS & actorPerms);
-    }
-
-    // Trim and validate name
-    const roleName = (name || 'new role').trim() || 'new role';
-
-    // Check for case-insensitive duplicate name within the space
-    const rawDb = getRawDb();
-    const duplicate = rawDb.prepare(
-      'SELECT id FROM roles WHERE space_id = ? AND name COLLATE NOCASE = ?'
-    ).get(id, roleName);
-    if (duplicate) {
-      return sendError(reply, 409, 'role_name_taken');
     }
 
     // A new role starts at the bottom, just above @everyone, so the actor
@@ -150,23 +140,23 @@ export function spaceRoleRoutes(app: FastifyInstance): void {
     normalizeRolePositions(rawDb, id);
 
     const role = db.select().from(schema.roles).where(eq(schema.roles.id, roleId)).get();
-
-    // Broadcast updated state to all space members
-    const memberRows = db.select().from(schema.spaceMembers).where(eq(schema.spaceMembers.spaceId, id)).all();
-    for (const m of memberRows) {
-      connectionManager.pushReadyPayload(m.userId);
+    if (!role) {
+      return sendError(reply, 500, 'internal_error');
     }
-    checkVoicePermissions(id);
 
-    return reply.code(201).send(role);
+    // A new role has no holders yet, so nobody's own access changed.
+    announceAccessChange(id, []);
+
+    return reply.code(201).send(roleView(role, viewerReadsPermissionData(computePermissions(request.userId, id))));
   });
 
   // PATCH /api/spaces/:id/roles/:roleId - Update a role
-  app.patch<{ Params: { id: string; roleId: string }; Body: { name?: string; color?: string; position?: number; permissions?: string } }>('/api/spaces/:id/roles/:roleId', {
+  app.patch<{ Params: { id: string; roleId: string }; Body: { name?: string; color?: string; position?: number; above?: unknown; below?: unknown; permissions?: string; permissionsVersion?: unknown } }>('/api/spaces/:id/roles/:roleId', {
     preHandler: authenticate,
   }, async (request, reply) => {
     const { id, roleId } = request.params;
-    const { name, color, position, permissions } = request.body;
+    const { name, color, permissions, above, below, permissionsVersion } = request.body;
+    let position = request.body.position;
     const db = getDb();
 
     if (!hasPermission(request.userId, id, PermissionBits.MANAGE_ROLES)) {
@@ -185,6 +175,29 @@ export function spaceRoleRoutes(app: FastifyInstance): void {
     const actorStanding = getHierarchyStanding(id, request.userId);
     if (!canManageRoleAt(actorStanding, role.position ?? 0)) {
       return sendError(reply, 403, 'role_hierarchy');
+    }
+    // A move by anchor (`above` or `below` another role) lands the role next
+    // to that role in the order as it is now, so it does what the mover's list
+    // showed even when that list is out of date; the request's `position`,
+    // which clients send too for servers that do not read the anchor, is
+    // ignored then (permissions.md, "Setting the order").
+    if (above !== undefined || below !== undefined) {
+      const side = above !== undefined ? 'above' : 'below';
+      const anchorId = above ?? below;
+      if (roleId === id || (above !== undefined && below !== undefined) || typeof anchorId !== 'string') {
+        return sendError(reply, 400, 'validation_failed');
+      }
+      const anchor = db.select({ id: schema.roles.id }).from(schema.roles)
+        .where(and(eq(schema.roles.id, anchorId), eq(schema.roles.spaceId, id)))
+        .get();
+      if (!anchor) {
+        return sendError(reply, 400, 'role_not_in_space', { roleId: anchorId });
+      }
+      const placed = positionNextTo(getRawDb(), id, roleId, anchorId, side);
+      if (placed === null) {
+        return sendError(reply, 400, 'validation_failed');
+      }
+      position = placed;
     }
     if (position !== undefined) {
       // @everyone is always at 0, and positions count from 1.
@@ -215,9 +228,20 @@ export function spaceRoleRoutes(app: FastifyInstance): void {
     if (color !== undefined) updates.color = color;
 
     if (permissions !== undefined) {
-      const requested = parsePermissionBits(permissions);
+      const requested = parsePermissionString(permissions);
       if (requested === null) {
         return sendError(reply, 400, 'permissions_invalid');
+      }
+      // Concurrent edits (permissions.md): a value saved from an outdated copy
+      // of the role is refused. Without `permissionsVersion` (a client from
+      // before the check) the write is not compared, as before.
+      if (permissionsVersion !== undefined) {
+        if (typeof permissionsVersion !== 'string' || permissionsVersion.length === 0) {
+          return sendError(reply, 400, 'validation_failed');
+        }
+        if (rolePermissionsVersion(role.permissions) !== permissionsVersion) {
+          return sendError(reply, 409, 'role_permissions_conflict');
+        }
       }
       // Held-bits rule: only bits the actor holds may be switched, on or off.
       const refusal = roleBitsChangeRefusal(
@@ -243,15 +267,16 @@ export function spaceRoleRoutes(app: FastifyInstance): void {
       moveRoleToPosition(getRawDb(), id, roleId, position);
     }
     const updated = db.select().from(schema.roles).where(eq(schema.roles.id, roleId)).get();
-
-    // Broadcast updated state to all space members
-    const memberRows = db.select().from(schema.spaceMembers).where(eq(schema.spaceMembers.spaceId, id)).all();
-    for (const m of memberRows) {
-      connectionManager.pushReadyPayload(m.userId);
+    if (!updated) {
+      return sendError(reply, 404, 'role_not_in_space', { roleId });
     }
-    checkVoicePermissions(id);
 
-    return reply.code(200).send(updated);
+    announceAccessChange(id, membersHoldingRole(id, roleId));
+
+    // The actor may have just switched off their own MANAGE_ROLES (a role
+    // below their top role can carry it), so the answer is shaped for what
+    // they hold now.
+    return reply.code(200).send(roleView(updated, viewerReadsPermissionData(computePermissions(request.userId, id))));
   });
 
   // DELETE /api/spaces/:id/roles/:roleId - Delete a role
@@ -290,6 +315,9 @@ export function spaceRoleRoutes(app: FastifyInstance): void {
       return sendError(reply, 403, deleteRefusal);
     }
 
+    // Its holders, read before the delete takes their member_roles rows with it.
+    const holders = membersHoldingRole(id, roleId);
+
     // Overrides name their target without a foreign key, so they would
     // outlive the role: invisible in the editor and impossible to remove.
     db.transaction((tx) => {
@@ -303,12 +331,7 @@ export function spaceRoleRoutes(app: FastifyInstance): void {
     });
     normalizeRolePositions(getRawDb(), id);
 
-    // Broadcast updated state to all space members
-    const memberRows = db.select().from(schema.spaceMembers).where(eq(schema.spaceMembers.spaceId, id)).all();
-    for (const m of memberRows) {
-      connectionManager.pushReadyPayload(m.userId);
-    }
-    checkVoicePermissions(id);
+    announceAccessChange(id, holders);
 
     return reply.code(200).send({ success: true });
   });
@@ -330,8 +353,7 @@ export function spaceRoleRoutes(app: FastifyInstance): void {
       roleId,
     }).onConflictDoNothing().run();
 
-    connectionManager.pushReadyPayload(uid);
-    checkVoicePermissions(id);
+    announceAccessChange(id, [uid]);
 
     return reply.code(200).send({ success: true });
   });
@@ -352,8 +374,7 @@ export function spaceRoleRoutes(app: FastifyInstance): void {
       eq(schema.memberRoles.roleId, roleId)
     )).run();
 
-    connectionManager.pushReadyPayload(uid);
-    checkVoicePermissions(id);
+    announceAccessChange(id, [uid]);
 
     return reply.code(200).send({ success: true });
   });

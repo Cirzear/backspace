@@ -213,10 +213,13 @@ export function attributionRefusal(
 
 
 /**
- * The federated identity a local user row stands for, or null when the row
- * does not carry one. A native row is homed here: its identity is its own id
- * on this instance. A federated account or replicated stub carries its home
- * pair; one without a `homeUserId` has no identity that can be compared.
+ * The federated identity a local user row stands for, and so the identity this
+ * instance presents it under to peers, or null when the row does not carry
+ * one. A native row is homed here: its identity is its own id on this
+ * instance. A detached account is homed here too: detaching cleared its home
+ * pair (`rehomeDetachedAccount`), so it takes this branch with no exception
+ * of its own. A federated account or replicated stub carries its home pair;
+ * one without a `homeUserId` has no identity that can be compared.
  */
 export function relayActorOfUser(user: {
   id: string;
@@ -279,7 +282,9 @@ export function isOwnDomain(domain: string): boolean {
  * A native row matches when its own id is the `homeUserId` and the
  * `homeInstance` is one of this instance's own names (`isOwnDomain`); any other
  * row matches when it carries the same home user id on the same home domain,
- * compared the way `sameRelayActor` compares identities.
+ * compared the way `sameRelayActor` compares identities. A detached account
+ * matches both its identity here (it is a native row now) and its former
+ * identity (`formerIdentityOf`).
  *
  * Inbound relay handlers use it for the acting identity, after
  * `attributionRefusal` accepted the pair (which already refuses a `mismatch`
@@ -304,6 +309,7 @@ export function resolveRelayActor(
         or(
           eq(schema.users.homeUserId, actor.homeUserId),
           and(eq(schema.users.id, actor.homeUserId), isNull(schema.users.homeInstance)),
+          eq(schema.users.detachedHomeUserId, actor.homeUserId),
         ),
         eq(schema.users.isDeleted, 0),
       ),
@@ -312,11 +318,30 @@ export function resolveRelayActor(
   if (candidates.length === 0) return { kind: 'unknown' };
   const actorDomain = extractDomain(actor.homeInstance).toLowerCase();
   const user = candidates.find((candidate) => {
+    const former = formerIdentityOf(candidate);
+    if (former !== null && sameRelayActor(former, actor)) return true;
     if (!candidate.homeInstance) return candidate.id === actor.homeUserId && isOwnDomain(actorDomain);
     const identity = relayActorOfUser(candidate);
     return identity !== null && sameRelayActor(identity, actor);
   });
   return user ? { kind: 'found', user } : { kind: 'mismatch' };
+}
+
+/**
+ * The identity a detached account had before it was detached
+ * (`detached_home_user_id` + `detached_home_instance`, see
+ * `rehomeDetachedAccount`), or null for any other row. Never an outbound
+ * identity: a detached account presents itself as homed here
+ * (`relayActorOfUser`). `resolveRelayActor` still matches it, so a reference
+ * to the former identity lands on the account (a historical participant) and
+ * is refused as an actor (`attributionRefusal`).
+ */
+function formerIdentityOf(user: {
+  detachedHomeUserId: string | null;
+  detachedHomeInstance: string | null;
+}): RelayActor | null {
+  if (!user.detachedHomeUserId || !user.detachedHomeInstance) return null;
+  return { homeUserId: user.detachedHomeUserId, homeInstance: user.detachedHomeInstance };
 }
 
 
@@ -456,6 +481,9 @@ export function backfillHomeUserId(
   db: ReturnType<typeof getDb>,
 ): typeof schema.users.$inferSelect {
   if (user.homeUserId === homeUserId) return user;
+  // A detached account is found by its former identity, which it no longer
+  // stands for; writing that id back would re-home it at the reset domain.
+  if (user.federationHomeOrphaned === 1) return user;
   // Only backfill if the user has no homeUserId yet. If they already have a
   // DIFFERENT non-null homeUserId, this means the wrong user was matched —
   // overwriting would corrupt their identity.
@@ -536,10 +564,15 @@ export function resolveOrCreateReplicatedUser(
     return null;
   }
 
+  // A tombstoned detached account keeps its former identity in the
+  // `detached_home_*` columns; it is the same deleted identity.
   const deletedMatch = db
     .select({ id: schema.users.id, isDeleted: schema.users.isDeleted })
     .from(schema.users)
-    .where(and(eq(schema.users.homeUserId, homeUserId), eq(schema.users.homeInstance, domain)))
+    .where(or(
+      and(eq(schema.users.homeUserId, homeUserId), eq(schema.users.homeInstance, domain)),
+      and(eq(schema.users.detachedHomeUserId, homeUserId), eq(schema.users.detachedHomeInstance, domain)),
+    ))
     .get();
   if (deletedMatch?.isDeleted) {
     console.log(`[federation] Skipping stub creation for deleted identity homeUserId=${homeUserId} (tombstoned)`);

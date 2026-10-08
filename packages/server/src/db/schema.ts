@@ -34,6 +34,18 @@ export const users = sqliteTable('users', {
   federationRegistryUpdatedAt: integer('federation_registry_updated_at').default(0),
   federationHealPending: integer('federation_heal_pending').default(0),
   federationHomeOrphaned: integer('federation_home_orphaned').default(0),
+  /**
+   * The identity a detached account (`federation_home_orphaned = 1`) had before
+   * it was detached: its former home instance and its id there. Detaching
+   * moves `home_instance`/`home_user_id` here and clears them, so the row is
+   * homed on this instance and presents itself to peers as one of its users
+   * (federation.md, "Detached accounts are homed here"). Read only to resolve
+   * a reference to the former identity back to this row (`resolveRelayActor`),
+   * for re-attach, and for the reset-cleanup admin listing. Kept on a
+   * tombstone; cleared by re-attach.
+   */
+  detachedHomeInstance: text('detached_home_instance'),
+  detachedHomeUserId: text('detached_home_user_id'),
   /** UTC day (YYYY-MM-DD) of the last authenticated WebSocket activity; written at most once per day. */
   lastActiveDay: text('last_active_day'),
   /** 'web' | 'desktop' | 'mobile', from the client's auth message. */
@@ -48,6 +60,8 @@ export const users = sqliteTable('users', {
    * composite's second column cannot be used.
    */
   homeUserIdx: index('idx_users_home_user_id').on(table.homeUserId),
+  /** `resolveRelayActor` matches a former (detached) identity in the same query as `home_user_id`. */
+  detachedHomeUserIdx: index('idx_users_detached_home_user_id').on(table.detachedHomeUserId),
 }));
 
 export const spaces = sqliteTable('spaces', {
@@ -248,9 +262,8 @@ export const reactions = sqliteTable('reactions', {
   createdAt: integer('created_at').notNull(),
 }, (table) => ({
   messageIdx: index('idx_reactions_message_id').on(table.messageId),
-  // Retries and concurrent adds represent the same reaction, not extra votes.
-  messageUserEmojiIdx: uniqueIndex('idx_reactions_message_user_emoji')
-    .on(table.messageId, table.userId, table.emoji),
+  // One reaction per user, emoji and message. Retries and concurrent adds represent the same reaction.
+  messageUserEmojiIdx: uniqueIndex('idx_reactions_message_user_emoji').on(table.messageId, table.userId, table.emoji),
 }));
 
 export const dmReactions = sqliteTable('dm_reactions', {
@@ -261,9 +274,8 @@ export const dmReactions = sqliteTable('dm_reactions', {
   createdAt: integer('created_at').notNull(),
 }, (table) => ({
   dmMessageIdx: index('idx_dm_reactions_dm_message_id').on(table.dmMessageId),
-  // The resolved local user row is the actor key, including federated reactions.
-  messageUserEmojiIdx: uniqueIndex('idx_dm_reactions_message_user_emoji')
-    .on(table.dmMessageId, table.userId, table.emoji),
+  // One reaction per user, emoji and message. The resolved local user row is the actor key.
+  dmMessageUserEmojiIdx: uniqueIndex('idx_dm_reactions_message_user_emoji').on(table.dmMessageId, table.userId, table.emoji),
 }));
 
 export const roles = sqliteTable('roles', {
@@ -319,22 +331,32 @@ export const readStates = sqliteTable('read_states', {
   userIdx: index('idx_read_states_user_id').on(table.userId),
 }));
 
-// Per-user alert preferences for a space or one of its channels
-// (NotificationSetting in shared/types.ts). No FK on target_id: one table
-// serves both target kinds; the space and channel delete routes remove the
-// rows. Snowflake ids never collide across kinds, so the index is by id alone.
+/**
+ * A user's notification setting for a space (`channel_id` NULL) or for one
+ * channel of it. Lives on the instance that hosts the space and is keyed by
+ * the user's row here (for a federated member, their account on this
+ * instance). `level` NULL is "not chosen": the channel inherits the space,
+ * the space uses the default. `muted` with `muted_until` NULL lasts until
+ * lifted. A row with no choice left is deleted, not kept.
+ * See docs/systems/sounds.md ("Notification settings").
+ */
 export const notificationSettings = sqliteTable('notification_settings', {
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  targetType: text('target_type').notNull(), // 'space' | 'channel'
-  targetId: text('target_id').notNull(),
-  level: text('level'), // NotificationLevel | null (inherit)
+  spaceId: text('space_id').notNull().references(() => spaces.id, { onDelete: 'cascade' }),
+  channelId: text('channel_id').references(() => channels.id, { onDelete: 'cascade' }),
+  level: text('level'),
+  muted: integer('muted').notNull().default(0),
   mutedUntil: integer('muted_until'),
-  suppressEveryone: integer('suppress_everyone').notNull().default(0),
-  suppressRoles: integer('suppress_roles').notNull().default(0),
   updatedAt: integer('updated_at').notNull(),
 }, (table) => ({
-  pk: primaryKey({ columns: [table.userId, table.targetType, table.targetId] }),
-  targetIdx: index('idx_notification_settings_target').on(table.targetId),
+  // One space-wide row and one row per channel, per user. Two partial
+  // indexes because a NULL channel_id never collides in a plain unique index.
+  spaceRowIdx: uniqueIndex('idx_notification_settings_space_row')
+    .on(table.userId, table.spaceId)
+    .where(sql`${table.channelId} IS NULL`),
+  channelRowIdx: uniqueIndex('idx_notification_settings_channel_row')
+    .on(table.userId, table.channelId)
+    .where(sql`${table.channelId} IS NOT NULL`),
 }));
 
 export const spaceFolders = sqliteTable('space_folders', {

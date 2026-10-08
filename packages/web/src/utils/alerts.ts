@@ -1,12 +1,12 @@
 import type { ChosenUserStatus } from '@backspace/shared';
 import { getMyUserIdForOrigin, isMe, selectMyChosenStatus, useAuthStore } from '../stores/authStore';
 import type { RealtimeMessageEvent } from '../stores/chatStore';
-import { useNotificationStore, notificationKey } from '../stores/notificationStore';
-import { useSpaceStore, getChannelOrigin, isDmChannel } from '../stores/spaceStore';
+import { getChannelOrigin, isDmChannel } from '../stores/spaceStore';
 import { AudioManager } from '../audio/AudioManager';
 import { sendNotification, type NotificationOptions } from '../platform/notifications';
 import { isAlertAllowed, isMessageAlert, type AlertKind } from './notificationFilters';
 import { getSfxVolume } from './sfx';
+import { getChannelNotificationPolicy } from '../hooks/useNotificationSettings';
 
 /**
  * The only way the client raises an alert (see `AlertKind`). Both outputs, the
@@ -35,6 +35,9 @@ export function alertsAllowed(kind: AlertKind): boolean {
   return isAlertAllowed(kind, getSelfStatus());
 }
 
+/** Never read (DMs alert whatever a policy says); keeps the filter's input total. */
+const DM_POLICY = { level: 'all', muted: false } as const;
+
 /**
  * Whether a message that just arrived is a `message` alert: the one predicate
  * behind both of that kind's outputs, `message.ogg` (SoundController) and the
@@ -49,9 +52,14 @@ export function alertsAllowed(kind: AlertKind): boolean {
  * The channel is the event's `channelId`, the id `addRealtimeMessage` filed the
  * message under, which is authoritative for space and DM messages alike.
  *
+ * A space channel's notification settings (level and mute, inherited from
+ * its space) are read here, at alert time, from the instance that hosts the
+ * space (`getChannelNotificationPolicy`), so the sound and the notification
+ * follow the same settings and a mute that just ended applies at once.
+ *
  * `everyMessage` is the "Play sound for every message" preference. Only the
- * sound passes it. Explicit space/channel levels override this default for
- * both outputs.
+ * sound passes it; it widens a channel on `mentions` and never one the user
+ * set to `nothing` or muted.
  */
 export function messageAlertsUser(
   event: RealtimeMessageEvent,
@@ -59,20 +67,14 @@ export function messageAlertsUser(
 ): boolean {
   if (!event.channelId) return false;
   const origin = getChannelOrigin(event.channelId);
-  const myId = getMyUserIdForOrigin(origin);
-  const spaceId = useSpaceStore.getState().channelToSpaceMap.get(event.channelId);
-  const { settings, roleIds } = useNotificationStore.getState();
-  const spaceKey = notificationKey({ origin, targetType: 'space', targetId: spaceId ?? '' });
+  const isDm = isDmChannel(event.channelId);
   return isMessageAlert({
     authoredBySelf: isMe(event.message.user ?? { id: event.message.userId }, origin),
-    authorUserId: event.message.userId,
-    myId,
-    spaceSetting: settings[spaceKey],
-    channelSetting: settings[notificationKey({ origin, targetType: 'channel', targetId: event.channelId })],
-    roleIds: new Set([...(roleIds[spaceKey] ?? []), ...(spaceId ? [spaceId] : [])]),
-    isDmChannel: isDmChannel(event.channelId),
+    myId: getMyUserIdForOrigin(origin),
+    isDmChannel: isDm,
     content: event.message.content,
     allChannels: options.everyMessage === true,
+    notification: isDm ? DM_POLICY : getChannelNotificationPolicy(event.channelId),
   });
 }
 

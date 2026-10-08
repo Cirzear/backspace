@@ -95,7 +95,8 @@ beforeEach(async () => {
     },
     {
       id: DETACHED_ID, username: DETACHED_USERNAME, passwordHash: 'not-a-real-hash',
-      avatarColor: 'peach', homeInstance: 'dead.test', homeUserId: 'home-lee-1',
+      avatarColor: 'peach', homeInstance: null, homeUserId: null,
+      detachedHomeInstance: 'dead.test', detachedHomeUserId: 'home-lee-1',
       federationHomeOrphaned: 1, createdAt: 1,
     },
   ]).run();

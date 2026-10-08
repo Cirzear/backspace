@@ -1,4 +1,3 @@
-import { NotificationSettingsModal } from '../notifications/NotificationSettingsModal';
 import React, { useEffect } from 'react';
 import { isMobileViewport } from '../../platform/interfaceScale';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -435,7 +434,6 @@ export function AppLayout() {
         <InstanceUpdateToast />
         <ToastContainer />
         <ContextMenuRenderer />
-      <NotificationSettingsModal />
       </>
     );
   }
@@ -503,7 +501,6 @@ export function AppLayout() {
       <InstanceUpdateToast />
       <ToastContainer />
       <ContextMenuRenderer />
-      <NotificationSettingsModal />
     </div>
   );
 }

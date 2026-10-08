@@ -149,7 +149,7 @@ This is the one statement of the rule. A replicated row (one that does not own i
 
 This is the one statement of the rule; `utils/selfStatus.ts`, `utils/alerts.ts` and sounds.md point here.
 
-**Who owns the choice.** An account owns its chosen status when it is native or detached (`ownsChosenStatus` in `@backspace/shared`: `!homeInstance || federationHomeOrphaned`), the same authority rule as profile edits and credential issuance. The server stores and reads `chosen_status` only on such rows (`statusOnConnect`, `applyChosenStatus`, the `0018` backfill).
+**Who owns the choice.** An account owns its chosen status when it is native or detached (`ownsChosenStatus` in `@backspace/shared`: `!homeInstance || federationHomeOrphaned`), the same authority rule as profile edits and credential issuance. A detached account is homed on the instance that holds it (`federation.md`, "Detached accounts are homed here"), so its row has no `homeInstance` and `!homeInstance` alone decides; the flag still counts for a row served by an instance that predates #310. Its status is relayed to peers like a native user's, under `<local id>@<this instance>` (`queuePresenceRelay`, `snapshotPresenceForPeer`), so its friends and DM partners on other instances see it. The server stores and reads `chosen_status` only on such rows (`statusOnConnect`, `applyChosenStatus`, the `0018` backfill).
 
 **Where the client reads it.** `statusAuthority(authStore.user)` names the owner:
 - `session`: the page's own account owns the choice. Its status is `authStore.user.status`, written only from the page's own socket (`ready`, `user_updated`, and a `presence_update` about that account, which is how a change on another device arrives).

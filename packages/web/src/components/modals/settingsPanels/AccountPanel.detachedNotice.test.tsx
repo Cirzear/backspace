@@ -141,6 +141,13 @@ describe('AccountPanel detached-account notice', () => {
     expect(screen.getByText(/old\.example\.net/)).toBeInTheDocument();
   });
 
+  it('renders the notice for a detached account homed here, naming its former home (#310 shape)', () => {
+    currentUser = makeUser({ federationHomeOrphaned: true, homeInstance: null, detachedHomeInstance: 'old.example.net' });
+    render(<AccountPanel />);
+    expect(screen.getByText(NOTICE)).toBeInTheDocument();
+    expect(screen.getByText(/old\.example\.net/)).toBeInTheDocument();
+  });
+
   it('does not render the notice for a non-detached federated account', () => {
     currentUser = makeUser({ federationHomeOrphaned: false, homeInstance: 'live.example.net' });
     render(<AccountPanel />);
@@ -157,6 +164,13 @@ describe('AccountPanel detached-account notice', () => {
 describe('AccountPanel re-attach fallback action', () => {
   it('shows the re-attach action when a connection to the home domain exists', () => {
     currentUser = makeUser({ username: 'youruser@orbit.test', federationHomeOrphaned: true, homeInstance: 'orbit.test' });
+    currentInstances = [makeHomeConnection()];
+    render(<AccountPanel />);
+    expect(screen.getByRole('button', { name: /re-attach to orbit\.test/i })).toBeInTheDocument();
+  });
+
+  it('offers re-attach to the former home of a detached account homed here (#310 shape)', () => {
+    currentUser = makeUser({ username: 'youruser@orbit.test', federationHomeOrphaned: true, homeInstance: null, detachedHomeInstance: 'orbit.test' });
     currentInstances = [makeHomeConnection()];
     render(<AccountPanel />);
     expect(screen.getByRole('button', { name: /re-attach to orbit\.test/i })).toBeInTheDocument();

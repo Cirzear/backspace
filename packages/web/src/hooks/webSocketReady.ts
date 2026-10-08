@@ -5,6 +5,7 @@ import { useActivityStore } from '../stores/activityStore';
 import { useAuthStore } from '../stores/authStore';
 import { useChannelActivityStore } from '../stores/channelActivityStore';
 import { useChatStore } from '../stores/chatStore';
+import { useNotificationSettingsStore } from '../stores/notificationSettingsStore';
 import { useNotificationStore } from '../stores/notificationStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useSocialStore } from '../stores/socialStore';
@@ -44,6 +45,7 @@ export function handleReady(origin: string, event: ReadyEvent, readyAlreadyDeliv
 function initializeReadyAccount(origin: string, event: ReadyEvent): void {
   const isHome = origin === '';
   const { setUser } = useAuthStore.getState();
+  void useNotificationSettingsStore.getState().load(origin);
   useNotificationStore.getState().hydrate({ origin, userId: event.user.id, spaces: event.spaces, settings: event.notificationSettings ?? [] });
   // This instance names the signed-in user's row there (the home's is the
   // session row itself, set below). The one record of "my ids".

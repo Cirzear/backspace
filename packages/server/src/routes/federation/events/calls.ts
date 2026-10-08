@@ -8,7 +8,9 @@ import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import type { CallFanoutFailure } from '../../../utils/federationOutbox.js';
 import type { DmRoomMeta, FederatedCallEntry } from '../../../ws/handler.js';
 import type { DmCallUndeliverableFailure, FederationCallPayload, FederationRelayEvent, ServerEvent } from '@backspace/shared';
-import { extractDomain, resolveOrCreateReplicatedUser, resolveRelayActor, attributionRefusal } from '../identity.js';
+import { extractDomain, resolveOrCreateReplicatedUser, resolveRelayActor, attributionRefusal, type RelayActor } from '../identity.js';
+import { isGroupConversation } from '../../../utils/dmConversation.js';
+import { isDmMember } from '../../../utils/permissions.js';
 
 /**
  * The call's tokens by the local user each is for. A token names its holder
@@ -30,6 +32,36 @@ function callTokensByLocalUser(
     if (resolved.kind === 'found') byLocalUser.set(resolved.user.id, holder.token);
   }
   return byLocalUser;
+}
+
+/**
+ * Apply a relayed end or decline to the group call hosted here for
+ * `localDmId`, and return whether the call ended. Local only: the caller
+ * relays the end.
+ *
+ * With `perMember` the sending instance keeps the call for its other members,
+ * so only the actor leaves (end) or stops ringing (decline). Without it the
+ * sender is a peer up to 1.8.0, which ended the call for all of its own
+ * members when one of them hung up or declined, so every participant it
+ * relayed in leaves too. An actor who is not a member of the conversation,
+ * or not in the call, changes nothing beyond that.
+ */
+function applyRelayedGroupLeave(
+  kind: 'end' | 'decline',
+  localDmId: string,
+  actor: RelayActor | undefined,
+  perMember: boolean,
+  sourceOrigin: string,
+  db: ReturnType<typeof getDb>,
+): boolean {
+  if (!perMember && connectionManager.leavePeerParticipants(localDmId, sourceOrigin).ended) return true;
+  if (!actor) return false;
+  const resolved = resolveRelayActor(actor, db);
+  if (resolved.kind !== 'found' || !isDmMember(localDmId, resolved.user.id)) return false;
+  const outcome = kind === 'end'
+    ? connectionManager.leaveGroupDmCall(localDmId, resolved.user.id)
+    : connectionManager.declineGroupDmCall(localDmId, resolved.user.id);
+  return outcome === 'ended';
 }
 
 export function processDmCallStartEvent(
@@ -54,10 +86,16 @@ export function processDmCallStartEvent(
   }
 
   // Find local DM channel by federatedId
-  const channel = db.select({ id: schema.dmChannels.id })
+  const channel = db.select({ id: schema.dmChannels.id, ownerId: schema.dmChannels.ownerId })
     .from(schema.dmChannels)
     .where(eq(schema.dmChannels.federatedId, event.federatedId))
     .get();
+  // Without a local copy the key alone tells a group from a 1-on-1. The
+  // group rules hold only when the host applies them too (`perMember`); a
+  // host up to 1.8.0 ends the call on any member's end or decline and never
+  // tells the instance that sent it, so its calls keep the 1-on-1 rules here.
+  const group = isGroupConversation({ owner_id: channel?.ownerId ?? null, federated_id: event.federatedId })
+    && event.call.perMember === true;
 
   // Resolve caller to local stub. The call payload carries only a display
   // name, which is not a handle, so no username hint: a caller met here first
@@ -131,6 +169,8 @@ export function processDmCallStartEvent(
       livekitUrl: event.call.livekitUrl,
       tokens,
       ringedUserIds,
+      joinedUserIds: [],
+      group,
       state: 'ringing',
       startedAt: Date.now(),
     };
@@ -214,6 +254,8 @@ export function processDmCallStartEvent(
       livekitUrl: event.call.livekitUrl,
       tokens,
       ringedUserIds,
+      joinedUserIds: [],
+      group,
       state: 'ringing',
       startedAt: Date.now(),
     };
@@ -256,14 +298,41 @@ export function processDmCallAcceptEvent(
     if (meta.state === 'ringing') {
       connectionManager.activateDmRoom(dmChannelId!);
 
-      // Join caller to room
-      connectionManager.leaveCurrentRoom(meta.callerId);
+      // Join caller to room. Whatever room they sat in is left first, and
+      // told: a call they leave empty ends there and then.
+      connectionManager.leaveCurrentRoomAnnounced(meta.callerId, dmChannelId!);
       connectionManager.joinRoom(dmChannelId!, meta.callerId);
 
       connectionManager.sendToDmMembers(dmChannelId!, {
         type: 'voice_state_update',
         channelId: dmChannelId!,
         userId: meta.callerId,
+        action: 'join',
+      });
+    }
+
+    // Seat the acceptor of a group call in the room, so the call knows it
+    // still has a participant while they are in it and their leave, relayed
+    // later, is the one that can end it. Only a sender that says it applies
+    // the group rules (`perMember`) relays that leave, also when the member
+    // just goes away; an acceptor from a peer up to 1.8.0, or in a 1-on-1,
+    // is not seated, so the call ends with its last seated participant as
+    // in 1.8.0.
+    const acceptor = meta.group && event.call.perMember === true
+      ? resolveRelayActor(event.call.acceptor, db)
+      : undefined;
+    if (acceptor?.kind === 'found' && isDmMember(dmChannelId!, acceptor.user.id)) {
+      const acceptorId = acceptor.user.id;
+      // A seat in another room here (another call this peer's member sat in)
+      // is left first, and told, so that room does not keep them.
+      connectionManager.leaveCurrentRoomAnnounced(acceptorId, dmChannelId!);
+      connectionManager.joinRoom(dmChannelId!, acceptorId);
+      meta.remoteParticipants.set(acceptorId, sourceInstance.startsWith('http') ? sourceInstance : `https://${sourceInstance}`);
+      meta.declinedUserIds.delete(acceptorId);
+      connectionManager.sendToDmMembers(dmChannelId!, {
+        type: 'voice_state_update',
+        channelId: dmChannelId!,
+        userId: acceptorId,
         action: 'join',
       });
     }
@@ -338,15 +407,22 @@ export function processDmCallRejectEvent(
     const meta = room.metadata as DmRoomMeta;
     const hostCallerId = meta.callerId;
     const localDmId = dmChannelId!;
-    connectionManager.clearVoiceWs(meta.callerId);
-    connectionManager.destroyRoom(localDmId);
-
-    connectionManager.sendToDmMembers(localDmId, {
-      type: 'dm_call_rejected',
-      dmChannelId: localDmId,
-    });
-
     const normalizedSource = sourceInstance.startsWith('http') ? sourceInstance : `https://${sourceInstance}`;
+    // In a group the decline only removes the decliner. When that leaves
+    // nobody to answer, the call ends for every peer, the sender too, whose
+    // other members may still be ringing; the end goes out in the caller's
+    // name, since a peer refuses an end attributed to a user homed elsewhere.
+    if (meta.group) {
+      if (applyRelayedGroupLeave('decline', localDmId, event.call.rejector, event.call.perMember === true, normalizedSource, db)) {
+        connectionManager.fanOutCallEnd(localDmId, hostCallerId);
+      }
+      accepted.push(event.messageId);
+      return;
+    }
+
+    // In a 1-on-1 the decline ends the call, and the instance that sent it
+    // already knows.
+    connectionManager.endDmRoom(localDmId, 'dm_call_rejected');
     void fanOutCallEvent(localDmId, event.federatedId, 'dm_call_end', {
       call: { endedBy: event.call.rejector },
     }, normalizedSource, db).then(failures => {
@@ -399,19 +475,22 @@ export function processDmCallEndEvent(
     const meta = room.metadata as DmRoomMeta;
     const hostCallerId = meta.callerId;
     const localDmId = dmChannelId!;
-    connectionManager.clearVoiceWs(meta.callerId);
-    for (const pid of room.participants) {
-      connectionManager.clearVoiceUserStatus(pid);
-      connectionManager.clearVoiceWs(pid);
-    }
-    connectionManager.destroyRoom(localDmId);
-
-    connectionManager.sendToDmMembers(localDmId, {
-      type: 'dm_call_ended',
-      dmChannelId: localDmId,
-    });
-
     const normalizedSource = sourceInstance.startsWith('http') ? sourceInstance : `https://${sourceInstance}`;
+    // In a group the end takes only that member out. When they were the last
+    // one in, the call ends for every peer, the sender too, whose other
+    // members may still be ringing; the end goes out in the caller's name,
+    // since a peer refuses an end attributed to a user homed elsewhere.
+    if (meta.group) {
+      if (applyRelayedGroupLeave('end', localDmId, event.call.endedBy, event.call.perMember === true, normalizedSource, db)) {
+        connectionManager.fanOutCallEnd(localDmId, hostCallerId);
+      }
+      accepted.push(event.messageId);
+      return;
+    }
+
+    // In a 1-on-1 either side's end ends the call, and the instance that
+    // sent it already knows.
+    connectionManager.endDmRoom(localDmId, 'dm_call_ended');
     void fanOutCallEvent(localDmId, event.federatedId, 'dm_call_end', {
       call: { endedBy: event.call.endedBy },
     }, normalizedSource, db).then(failures => {

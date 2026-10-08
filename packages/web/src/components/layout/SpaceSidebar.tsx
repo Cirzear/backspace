@@ -3,7 +3,6 @@ import { getUploadUrl } from '../../utils/assetUrls';
 import { DmUnreadBadge } from './DmUnreadBadge';
 import { SpaceUnreadBadge } from './SpaceUnreadBadge';
 import { useNotificationMuted } from '../notifications/useNotificationMuted';
-import { notificationMenuItems } from '../notifications/notificationMenuItems';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import ReactDOM from 'react-dom';
 import { useTranslation } from 'react-i18next';
@@ -11,6 +10,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useSpaceStore, getMyUserIdForOrigin } from '../../stores/spaceStore';
 import type { TaggedSpace } from '../../stores/spaceStore';
 import { resolveSpaceLayout, type ResolvedSpaceLayoutItem } from '../../utils/spaceLayout';
+import { spaceInviteUrl } from '../../utils/inviteParser';
 import { activeHomeNavItem } from '../../utils/homeNav';
 import { useChatStore } from '../../stores/chatStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -19,6 +19,7 @@ import { useContextMenuStore, type ContextMenuItem } from '../../stores/contextM
 import { Tooltip } from '../ui/Tooltip';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { TransferOwnershipModal } from '../modals/TransferOwnershipModal';
+import { NotificationSettingsModal, type NotificationSettingsModalTarget } from '../notifications/NotificationSettingsModal';
 import type { SpaceLayoutItem, SpaceFolder } from '@backspace/shared';
 
 import { getSpaceGradient } from '../../utils/gradients';
@@ -633,6 +634,7 @@ export function SpaceSidebar() {
 
   // Modal state for context menu actions that spawn modals
   const [transferModalSpaceId, setTransferModalSpaceId] = useState<string | null>(null);
+  const [notificationTarget, setNotificationTarget] = useState<NotificationSettingsModalTarget | null>(null);
   const [leaveConfirmSpaceId, setLeaveConfirmSpaceId] = useState<string | null>(null);
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
 
@@ -650,7 +652,6 @@ export function SpaceSidebar() {
     const isOwner = space.ownerId === getMyUserIdForOrigin((space as TaggedSpace)._instanceOrigin ?? '');
 
     const items: ContextMenuItem[] = [
-      ...notificationMenuItems({ origin: space._instanceOrigin, targetType: 'space', targetId: spaceId }),
       {
         key: 'invite',
         type: 'action',
@@ -663,15 +664,29 @@ export function SpaceSidebar() {
         onClick: async () => {
           try {
             const code = await useSpaceStore.getState().generateInvite(spaceId);
-            const origin = (space as TaggedSpace)._instanceOrigin || getHomeOrigin();
-            // Match the public join route used by the invite modal.
-            const url = `${origin}/join/${code}`;
-            await navigator.clipboard.writeText(url);
+            await navigator.clipboard.writeText(spaceInviteUrl((space as TaggedSpace)._instanceOrigin, code));
             useUIStore.getState().addToast(t('spaces:sidebar.space.inviteCopied'), 'success', 3000);
           } catch {
             useUIStore.getState().addToast(t('spaces:sidebar.space.inviteFailed'), 'warning', 3000);
           }
         },
+      },
+      {
+        key: 'notifications',
+        type: 'action',
+        label: t('spaces:notifications.open'),
+        icon: (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.89 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z" />
+          </svg>
+        ),
+        // The settings live on the instance that hosts the space.
+        onClick: () => setNotificationTarget({
+          kind: 'space',
+          origin: (space as TaggedSpace)._instanceOrigin ?? '',
+          spaceId,
+          spaceName: space.name,
+        }),
       },
       {
         key: 'transfer',
@@ -1236,6 +1251,12 @@ export function SpaceSidebar() {
         <TransferOwnershipModal
           spaceId={transferModalSpaceId}
           onClose={() => setTransferModalSpaceId(null)}
+        />
+      )}
+      {notificationTarget && (
+        <NotificationSettingsModal
+          target={notificationTarget}
+          onClose={() => setNotificationTarget(null)}
         />
       )}
       {leaveConfirmSpaceId && (() => {

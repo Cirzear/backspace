@@ -19,7 +19,13 @@ let currentUserId = 'owner';
 const sendToSpace = vi.fn();
 vi.mock('../db/index.js', () => ({ getDb: () => testDb, getRawDb: () => sqlite, schema }));
 vi.mock('../utils/auth.js', () => ({ authenticate: async (req: { userId?: string }) => { req.userId = currentUserId; } }));
-vi.mock('../ws/handler.js', () => ({ connectionManager: { sendToSpace: (...args: unknown[]) => sendToSpace(...args) } }));
+vi.mock('../ws/handler.js', () => ({
+  connectionManager: {
+    sendToSpace: (...args: unknown[]) => sendToSpace(...args),
+    announceSpaceAccessChange: vi.fn(),
+    getAllRooms: () => [],
+  },
+}));
 
 beforeEach(async () => {
   sqlite = new Database(':memory:');

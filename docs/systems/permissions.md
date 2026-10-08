@@ -35,6 +35,10 @@ nor a JSON list of permission names, or a list naming something that is not
 a permission) is logged as it is replaced, with its table, row key, column
 and old text, so it can be put back by hand. It logs how many values it
 rewrote and is a no-op once applied, so each such value is logged once.
+`db/permissionStrings.resolution.test.ts` seeds a space with roles and
+overrides in each of these forms and checks that `computePermissions` gives
+every member the same defined bits in the space and in every channel before
+and after the pass.
 
 
 ---
@@ -117,6 +121,31 @@ if channelOverride:  base = (base & ~deny) | allow
 ```
 
 **Key rule:** Channel bits always win — applied after category, overwriting conflicting bits. Deny applied first (clears bits), then allow (sets bits).
+
+---
+
+## Private channels and categories
+
+"Private" is not stored on its own. A channel or category is private when its
+own @everyone override (`targetType = 'role'`, `targetId` = the space id)
+denies View Channels; a member override whose id happens to equal the space id
+does not count, and the deny is read with `stringToPermissions`, as every
+permission check reads it. The rule is written once, in
+`packages/shared/src/permissions.ts`:
+
+| Function | Purpose |
+|----------|---------|
+| `isHiddenFromEveryone(overrides, spaceId)` | The rule, on the override rows of one channel or category |
+| `idsHiddenFromEveryone(rows, entityIdOf, spaceIdOf)` | The ids it holds for, over the rows of several channels or categories, each read against its own space |
+
+Every `isPrivate` the server sends comes from it: the `ready` payload
+(channels and categories, overrides of all the user's spaces read in one
+pass), `GET /api/spaces/:id`, `channel_updated` after a visibility change,
+`category_updated` and `channel_layout_updated`. The client derives the
+Private switch in channel and category settings, and the private-category
+note in the permissions editor, from the same function (re-exported by
+`web/src/utils/permissions.ts`). So the lock icon cannot disagree between
+views.
 
 ---
 
@@ -209,6 +238,7 @@ offers no controls. That is an instance from before the hierarchy, which
 stores every role at 0 and would apply a position as given.
 
 Covered by `routes/roleHierarchy.test.ts`, `routes/heldPermissions.test.ts`,
+`routes/lowerRoleHeldAbove.test.ts`, `routes/permissionEditConflicts.test.ts`,
 `utils/roleRules.test.ts` (the shared rules), `ws/voiceModerationHierarchy.test.ts`,
 `voiceMenuItems.test.ts`, `spaceSettingsPanels/roleHierarchyGating.test.tsx`,
 `ui/PermissionsEditor.hierarchy.test.tsx`, `utils/roleOrder.test.ts`,
@@ -230,7 +260,7 @@ actor a bit does not count.
 |---|---|---|
 | `POST /spaces/:id/roles` | every bit in `permissions` must be held; without `permissions` the new role gets `DEFAULT_EVERYONE_PERMISSIONS` limited to the held bits | `cannot_grant_unowned_permissions` |
 | `PATCH /spaces/:id/roles/:rid { permissions }` | compared with the stored value: an unheld bit may not be switched on or off; unheld bits already on the role stay while the actor edits the rest | on: `cannot_grant_unowned_permissions`, off: `cannot_change_unowned_permissions` |
-| `DELETE /spaces/:id/roles/:rid` | deleting switches every bit of the role off for everyone who holds it, members ranked above the actor included, so each must be held | `cannot_change_unowned_permissions` |
+| `DELETE /spaces/:id/roles/:rid` | deleting is the same change as a `PATCH` to no bits, so each bit of the role must be held | `cannot_change_unowned_permissions` |
 | `PATCH /spaces/:id/members/:uid`, `POST /spaces/:id/members/:uid/roles` | giving a member a role gives them its bits, so every bit of each role the request adds must be held; a role the member already has may stay | `cannot_grant_unowned_permissions` |
 | `PUT /channels/:id/overrides`, `PUT /categories/:id/overrides` | compared with the stored override: a newly allowed or newly denied unheld bit is refused, and so is clearing one from allow or deny; unheld bits already set stay while the actor edits the rest | allow: `cannot_grant_unowned_permissions`, deny: `cannot_deny_unowned_permissions`, clear: `cannot_change_unowned_permissions` |
 | `DELETE /channels/:id/overrides/...`, `DELETE /categories/:id/overrides/...` | a delete clears every bit the override sets, so each must be held | `cannot_change_unowned_permissions` |
@@ -239,8 +269,9 @@ The hierarchy check runs first, so a role at or above the actor's top role
 answers `role_hierarchy`. Taking a role away from a member
 (`PATCH /members/:uid`, `DELETE /members/:uid/roles/:rid`) is governed by the
 hierarchy alone: the member ranks below the actor, and taking their role only
-lowers what that one member can do. Deleting the role is different, because
-it also changes members ranked above the actor who hold it. A bit no `PermissionBits` entry defines counts as
+lowers what that one member can do. Deleting the role switches every one of
+its bits off, so it needs them all held, as a `PATCH` clearing them would. A
+bit no `PermissionBits` entry defines counts as
 unheld for everyone but a holder of every permission, so a stray bit in an old
 row never blocks the owner.
 
@@ -319,6 +350,102 @@ When an instance updates to this version:
    every bit the stored @everyone override sets.
 7. **Unchanged:** the owner and instance admins, unban, leaving a space, and
    anything a member does to themselves.
+
+---
+
+## Lower roles held by senior members
+
+The role hierarchy decides who may **change** a role, not who the change
+reaches. A role ranked below the actor may be edited, have its overrides
+written or removed, and be deleted, even when members ranked at or above the
+actor also hold it; those members gain or lose what the role grants like
+anyone else holding it. This is Discord's rule. Switching a bit off a lower
+role that a senior member also holds is allowed.
+
+What still protects senior members:
+
+| Rule | Effect |
+|---|---|
+| Hierarchy on the member | Acting on the senior member themselves (kick, ban, voice moderation, giving or taking their roles, an override on them) needs a higher rank |
+| Hierarchy on the role | Their own higher roles cannot be edited, moved, deleted or given an override |
+| Held-bits rule | Only bits the actor holds can be switched on a lower role, in either direction, and deleting it needs all of its bits held |
+
+So a senior member can lose a bit through a lower role only when the actor
+holds that bit too. A member who wants a bit kept regardless of lower roles
+gets it from a role at their own rank. Neither the server nor the client looks
+at who holds a role: `PATCH`/`DELETE /roles/:rid` and the override routes check
+the role's position and the bits, and the role editor (`RolesPanel.tsx`,
+`MemberRolesModal.tsx`) offers every held toggle of a role below the viewer.
+The member role editor says "Permission changes apply to every member with
+this role." Covered by `routes/lowerRoleHeldAbove.test.ts` and
+`spaceSettingsPanels/RolesPanel.concurrentEdit.test.tsx`.
+
+---
+
+## Concurrent edits
+
+Role permissions and channel and category overrides are saved as whole
+values: a role's `permissions`, an override's `allow` and `deny`. Two editors
+saving the same value from the same copy would otherwise drop each other's
+bits (#365). Each write therefore names the version of the value its edit
+started from, and the server refuses it with `409` when the stored value has
+another version by then.
+
+**The version** is derived from the value, in `packages/shared/src/permissions.ts`:
+
+| Function | Value | Wire field |
+|---|---|---|
+| `rolePermissionsVersion(permissions)` | a role's permissions | `permissionsVersion` on `PATCH /spaces/:id/roles/:rid` |
+| `overrideVersion(row)` | one target's override (`allow` and `deny`) | `version` on `PUT /channels/:id/overrides`, `PUT /categories/:id/overrides`; `?version=` on their `DELETE` |
+| `NO_OVERRIDE_VERSION` (`"none"`) | a target with no override row | as above, for a row the editor creates |
+
+Each is FNV-1a (64 bits, 16 hex digits) of the canonical value
+(`canonicalPermissionString`), so both sides compute the same version, and
+the value is read the way every permission check reads it. A content version
+needs no stored column and no migration. Equal bits always give the same
+version: a value that changed and changed back is the value the editor
+loaded, so accepting the write loses nothing. A revision counter would also
+restart when an override is deleted and created again. The override list
+(`GET .../overrides`) carries each row's `version`, and an override `PUT`
+answers the version it wrote.
+
+**Scope** is one value: one role's permissions, or one target's override. Two
+admins editing different targets of the same channel do not conflict. A
+role's name, colour and position are single values that a save replaces
+as a whole, so they are not versioned.
+
+**Refusals.** A stale override write answers `409 overrides_conflict`, a stale
+role write `409 role_permissions_conflict`, and the role `PATCH` then changes
+nothing, not even a name sent with it. A version that is not a non-empty
+string answers `400 validation_failed`. A delete of an override that is
+already gone succeeds. The check runs after the hierarchy check and before
+the held-bits rule, so a stale editor is told the value changed rather than
+refused for a bit someone else set meanwhile. The read, the check and the
+write run with no `await` between them on the synchronous better-sqlite3
+connection, so nothing else can write in between.
+
+**Older clients.** A write without a version (1.9.x and older clients, and
+API callers that do not send one) is not compared and replaces the value as
+before. Refusing it would break every released client against a newer
+instance. Only clients that send a version are protected, which includes
+every client from this release on, and federated clients reach the space's
+own instance directly (client-federation.md), so the instance's version decides.
+
+**Client.** Each editor keeps the value its edit started from:
+
+| Surface | Base | On a conflict |
+|---|---|---|
+| Channel and category overrides (`ui/PermissionsEditor.tsx`) | each staged row keeps the version of the saved row it started from (the `"none"` version for a new target; a removed row keeps it if added back), taken when the row is first staged, so a later read of the list does not change it | the `overrides_conflict` text is shown ahead of any other refusal, the staged edit is dropped, and the dialog lists the overrides again (`onSaved`) |
+| The Private switch (`useEntityOverrides().setBits`) | the @everyone row as the dialog's list holds it | the switch shows the refusal; the list is read again |
+| Role editor (`spaceSettingsPanels/RolesPanel.tsx`) | the permissions the draft was made from; with no local edit the base follows the role, so a change saved elsewhere shows up instead of reading as the viewer's own edit | the space detail is reloaded, the draft and base become the stored permissions, and `role_permissions_conflict` is shown |
+| Member role editor (`modals/MemberRolesModal.tsx`) | each role's draft keeps the permissions it was made from; switching a bit back drops the draft | that role's draft is dropped (others stay), the space detail is reloaded, and the text is shown |
+
+The words ("Someone else changed these permissions. Review them and save
+again.") come from `describeError` and the `errors` catalogs
+(localization.md). Covered by `routes/permissionEditConflicts.test.ts`,
+`ui/PermissionsEditor.concurrentEdit.test.tsx`, `modals/entityPrivacy.test.tsx`,
+`spaceSettingsPanels/RolesPanel.concurrentEdit.test.tsx` and
+`modals/MemberRolesModal.test.tsx`.
 
 ---
 
@@ -402,6 +529,82 @@ override, is shown only with space-wide `MANAGE_ROLES`.
 Covered by `ChannelSettingsModal.test.tsx` and `voiceMenuItems.test.ts`, which
 grant a bit only through the channel map and deny it only there, and assert the
 control follows the channel.
+
+---
+
+## Who receives role and override data
+
+A client is never sent more of a space's role or override data than it reads.
+The web client takes its own permissions from the server: the space's
+`myPermissions` and each channel's `myPermissions`, computed for the viewer
+with every role and override applied. It reads a role's `permissions` and the
+override rows only in the role editor, the member role editor and the channel
+and category Permissions tabs, and every one of those needs `MANAGE_ROLES`
+(see "Client gating"). So:
+
+| Viewer | Roles | Member rows' roles | Override rows | Own permissions |
+|---|---|---|---|---|
+| Not a member (explore, invite preview, directory, join previews) | none | none | none | none |
+| Member without `MANAGE_ROLES` (a `MANAGE_CHANNELS` holder and a member whose role has overrides included) | every role: `id`, `spaceId`, `name`, `color`, `position`, `isEveryone`, `createdAt`; no `permissions` field | display fields only | refused (`403 missing_permission`) | `myPermissions` on the space and on each channel it can see. `isPrivate` comes on channels and categories in `GET /api/spaces/:id`, on channels only in `ready`, and on neither in the `public-join` answer and `join_request_accepted` |
+| Member who holds `MANAGE_ROLES` in the space (the owner, instance admins and `ADMINISTRATOR` holders hold it) | every role with its display fields and `permissions` | display fields only | `GET /channels/:id/overrides`, `GET /categories/:id/overrides` | the same |
+
+`MANAGE_ROLES` counts at space level only: a member whose role is allowed it
+by an override on one channel holds it on that channel (it shows in that
+channel's `myPermissions`) but gets no role bits, and that channel's override
+rows are refused to them for reading, `PUT` and `DELETE` alike.
+
+Member rows list a member's roles to name, colour, group and rank them, so they
+never carry bits; a manager reads the bits from the space's role list.
+
+The rule is one module, `server/src/utils/permissionDataView.ts`:
+`viewerReadsPermissionData(spacePermissions)` decides it,
+`rolesForViewer` shapes a space's role list for the viewer, `roleView` one
+role, `memberRolesView` a member row's roles. Every send site goes through it:
+
+| Send site | Audience | Shaped by |
+|---|---|---|
+| WS `ready` (`buildReadyPayload`), each space's `roles` and `members[].roles` | the connecting user | `rolesForViewer` with the user's space permissions, `memberRolesView` |
+| `GET /api/spaces/:id` | members (`403 not_space_member` otherwise) | the same |
+| `POST /api/spaces/:id/public-join` answer and WS `join_request_accepted` (`buildFullSpace` in `routes/explore.ts`) | the member who just joined | the same, for that member |
+| `GET /api/spaces/:id/members`, `PATCH /api/spaces/:id/members/:uid` answer | members, a role manager | `memberRolesView` |
+| `POST /api/spaces/:id/roles`, `PATCH /api/spaces/:id/roles/:rid` answers | the actor | `roleView`, with the actor's permissions after the change (an actor who switched off their own `MANAGE_ROLES` gets no bits back) |
+| `GET /channels/:id/overrides`, `GET /categories/:id/overrides` | managers | refused unless `viewerReadsPermissionData` |
+| `member_joined` | the space | a new member has no roles: `roles: []` |
+| `space_access_changed` | the space; after an instance admin change, that user alone | carries only `spaceId` |
+| `GET /api/spaces/explore`, `GET /api/spaces/invite/:code/preview`, `GET /api/directory/spaces` | anyone | carry no role or override data |
+
+**When a member's permissions change.** Three kinds of change move
+`MANAGE_ROLES`, and each is followed by `space_access_changed` (websocket.md):
+
+- a role write or member role write: sent to the space;
+- an ownership transfer (`PATCH /api/spaces/:id/transfer-ownership`): sent to
+  the space, after `space_updated`, with the former and the new owner as the
+  members whose own permissions changed;
+- an instance admin promoting or demoting a user
+  (`PATCH /api/admin/users/:id/role`), when the flag changes: sent to that
+  user alone, one event for each space they belong to on this instance
+  (`ConnectionManager.announceUserAccessChange`), since no other member's
+  permissions changed.
+
+The client refetches `GET /api/spaces/:id`, which is shaped for what the
+member holds now. A member who gains `MANAGE_ROLES` gets the bits on that
+refetch; a member who loses it gets the list without them, which replaces the
+one in the store. A `ready` is shaped the same way at every connect.
+
+**Federation.** A user whose home is another instance connects to the space's
+instance directly and is a member there under their local replicated id, so
+the same rule applies to them with that id. No server-to-server route serves
+role or override data.
+
+**Mixed versions.** The web client has read the space's role list only from
+`GET /api/spaces/:id`, which already left the bits out for members without
+`MANAGE_ROLES`, and it ignores the `roles` in `ready`, `public-join` and
+`join_request_accepted`. So an older client on this server and this client on
+an older server (which sends the bits to everyone) behave as before.
+
+Covered by `ws/readyPayload.roleScope.test.ts`, `routes/rolePayloadScope.test.ts`
+(both on `testing/rolePayloadFixture.ts`) and the web
+`stores/spaceStore.reducedRoles.test.ts`.
 
 ---
 

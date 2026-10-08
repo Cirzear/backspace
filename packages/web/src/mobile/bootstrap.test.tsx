@@ -11,7 +11,7 @@ vi.mock('../platform/instanceRuntime', () => ({ getSelectedMobileOrigin: () => m
 vi.mock('../platform/sessionStorage', () => ({ initializeSessionStorage: mocks.initialize }));
 vi.mock('../platform/interfaceScale', () => ({ initializeInterfaceScale: mocks.scale }));
 vi.mock('../i18n', () => ({ default: { t: (key: string) => key }, initI18n: mocks.initI18n }));
-vi.mock('../utils/emojiShortcodes', () => ({ loadDiscordEmojiAliases: async () => {} }));
+vi.mock('../utils/emojiShortcodes', () => ({ loadDiscordEmojiAliases: async () => {}, waitForEmojiShortcodeNames: async () => {} }));
 vi.mock('react-dom/client', () => ({ default: { createRoot: () => ({ render: mocks.render }) } }));
 vi.mock('./InstanceSelectionPage', () => ({ InstanceSelectionPage: () => null }));
 vi.mock('./StartupError', () => ({ StartupError: () => null }));

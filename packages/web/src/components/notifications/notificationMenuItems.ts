@@ -15,18 +15,18 @@ export function notificationMenuItems(target: NotificationTarget): ContextMenuIt
       useUIStore.getState().addToast(describeError(error), 'warning');
     }
   };
-  const durations = [
-    { label: i18n.t('spaces:notifications.minutes15'), duration: 15 * 60_000 },
-    { label: i18n.t('spaces:notifications.hour1'), duration: 60 * 60_000 },
-    { label: i18n.t('spaces:notifications.hours8'), duration: 8 * 60 * 60_000 },
-    { label: i18n.t('spaces:notifications.forever'), duration: null },
+  const durations: { label: string; duration: number | null }[] = [
+    { label: String(i18n.t('spaces:notifications.mute.oneHour')), duration: 60 * 60_000 },
+    { label: String(i18n.t('spaces:notifications.mute.eightHours')), duration: 8 * 60 * 60_000 },
+    { label: String(i18n.t('spaces:notifications.mute.oneDay')), duration: 24 * 60 * 60_000 },
+    { label: String(i18n.t('spaces:notifications.mute.indefinite')), duration: null },
   ];
   const mute: ContextMenuItem = (setting.mutedUntil ?? 0) > Date.now()
-    ? { key: 'unmute', type: 'action', label: i18n.t('spaces:notifications.unmute'), onClick: () => { void saveMute(null); } }
-    : { key: 'mute', type: 'submenu', label: i18n.t('spaces:notifications.mute'), children: durations.map(({ label, duration }) => ({
+    ? { key: 'unmute', type: 'action', label: String(i18n.t('spaces:notifications.unmute')), onClick: () => { void saveMute(null); } }
+    : { key: 'mute', type: 'submenu', label: String(i18n.t('spaces:notifications.muteHeading')), children: durations.map(({ label, duration }) => ({
       key: 'mute-' + duration, type: 'action', label,
       onClick: () => { void saveMute(duration === null ? MUTED_FOREVER : Date.now() + duration); },
     })) };
-  return [mute, { key: 'notification-settings', type: 'action', label: i18n.t('spaces:notifications.title'),
+  return [mute, { key: 'notification-settings', type: 'action', label: String(i18n.t('spaces:notifications.open')),
     onClick: () => useNotificationStore.getState().open(target) }];
 }

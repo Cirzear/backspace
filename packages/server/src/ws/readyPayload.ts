@@ -1,13 +1,15 @@
 import type { ActiveCallInfo, Activity, Channel, ChannelCategory, DmChannel, MemberWithUser, PresenceIdentity, ReadState, Space, SpaceFolder, SpaceLayoutItem, SpaceWithChannelsAndMembers, User } from '@backspace/shared';
+import { idsHiddenFromEveryone } from '@backspace/shared/src/permissions.js';
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { getDb, schema } from '../db/index.js';
 import { listNotificationSettings } from '../routes/notificationSettings.js';
 import { computePermissions, PermissionBits, permissionsToString } from '../utils/permissions.js';
+import { memberRolesView, rolesForViewer } from '../utils/permissionDataView.js';
 import { sanitizeUser } from '../utils/sanitize.js';
 import { channelUnreadCounts, dmUnreadCounts } from './channelUnreadCounts.js';
 import { loadOpenDmChannels } from '../utils/dmChannelWire.js';
 import { presenceIdentityOf, snapshotActivities } from './presenceEvent.js';
-import { connectionManager } from './handler.js';
+import { connectionManager } from './connectionManager.js';
 import type { WebSocket } from 'ws';
 import { type DmRoomMeta } from './voiceRoomTypes.js';
 
@@ -65,29 +67,43 @@ function buildReadySpaces(userId: string) {
       arr.push(ch);
     }
 
-    // Batch: determine which channels are private (VIEW_CHANNEL denied on @everyone)
-    // @everyone role ID equals the space ID, so we query for overrides targeting role = spaceId
-    const allEveroneOverrides = batchInArray(
-      spaceIds,
-      ids => db.select().from(schema.channelOverrides).where(
-        and(
-          eq(schema.channelOverrides.targetType, 'role'),
-          inArray(schema.channelOverrides.targetId, ids),
-        )
-      ).all(),
+    // Batch: which channels are private (`isHiddenFromEveryone`). The @everyone
+    // role id equals the space id, so only overrides on a role whose id is one
+    // of these spaces are read, each against the space of its own channel.
+    const channelSpaceIds = new Map(allChannels.map((ch) => [ch.id, ch.spaceId]));
+    const privateChannelIds = idsHiddenFromEveryone(
+      batchInArray(
+        spaceIds,
+        ids => db.select().from(schema.channelOverrides).where(
+          and(
+            eq(schema.channelOverrides.targetType, 'role'),
+            inArray(schema.channelOverrides.targetId, ids),
+          )
+        ).all(),
+      ),
+      (o) => o.channelId,
+      (channelId) => channelSpaceIds.get(channelId),
     );
-    const privateChannelIds = new Set<string>();
-    for (const o of allEveroneOverrides) {
-      const denyBits = BigInt(o.deny || '0');
-      if ((denyBits & PermissionBits.VIEW_CHANNEL) !== 0n) {
-        privateChannelIds.add(o.channelId);
-      }
-    }
 
     // Batch: all categories for all spaces (1 query instead of N)
     const allCategories = batchInArray(
       spaceIds,
       ids => db.select().from(schema.channelCategories).where(inArray(schema.channelCategories.spaceId, ids)).all(),
+    );
+    // Batch: which categories are private, read the same way as channels.
+    const categorySpaceIds = new Map(allCategories.map((cat) => [cat.id, cat.spaceId]));
+    const privateCategoryIds = idsHiddenFromEveryone(
+      batchInArray(
+        spaceIds,
+        ids => db.select().from(schema.categoryOverrides).where(
+          and(
+            eq(schema.categoryOverrides.targetType, 'role'),
+            inArray(schema.categoryOverrides.targetId, ids),
+          )
+        ).all(),
+      ),
+      (o) => o.categoryId,
+      (categoryId) => categorySpaceIds.get(categoryId),
     );
     const categoriesBySpace = new Map<string, ChannelCategory[]>();
     for (const cat of allCategories) {
@@ -98,6 +114,7 @@ function buildReadySpaces(userId: string) {
         spaceId: cat.spaceId,
         name: cat.name,
         position: cat.position ?? 0,
+        isPrivate: privateCategoryIds.has(cat.id),
         createdAt: cat.createdAt,
       });
     }
@@ -148,20 +165,9 @@ function buildReadySpaces(userId: string) {
           const u = userMap.get(m.userId);
           if (!u) return null;
 
-          const assignedRoleIds = memberRoleRows
+          const assignedRoleIds = new Set(memberRoleRows
             .filter(mr => mr.userId === m.userId)
-            .map(mr => mr.roleId);
-
-          const memberRoles = roles
-            .filter(r => assignedRoleIds.includes(r.id))
-            .map(r => ({
-              id: r.id,
-              spaceId: r.spaceId,
-              name: r.name,
-              color: r.color ?? '#b9bbbe',
-              position: r.position ?? 0,
-              createdAt: r.createdAt,
-            }));
+            .map(mr => mr.roleId));
 
           return {
             spaceId: m.spaceId,
@@ -169,7 +175,7 @@ function buildReadySpaces(userId: string) {
             nickname: m.nickname,
             joinedAt: m.joinedAt,
             user: sanitizeUser(u),
-            roles: memberRoles,
+            roles: memberRolesView(roles, assignedRoleIds),
           };
         })
         .filter((m): m is MemberWithUser => m !== null);
@@ -216,16 +222,7 @@ function buildReadySpaces(userId: string) {
         channels: visibleChannels,
         categories: categoriesBySpace.get(spaceRow.id) ?? [],
         members,
-        roles: roles.map(r => ({
-          id: r.id,
-          spaceId: r.spaceId,
-          name: r.name,
-          color: r.color ?? '#b9bbbe',
-          position: r.position ?? 0,
-          permissions: r.permissions ?? undefined,
-          isEveryone: r.id === spaceRow.id,
-          createdAt: r.createdAt,
-        })),
+        roles: rolesForViewer(roles, spacePerms),
         myPermissions: permissionsToString(spacePerms),
       });
     }
@@ -347,6 +344,9 @@ export function buildReadyPayload(userId: string): {
     const room = connectionManager.getRoom(dm.dmChannelId);
     if (room && room.roomType === 'dm') {
       const dmMeta = room.metadata as DmRoomMeta;
+      // A member who declined a group call that still rings is not rung
+      // again on reconnect.
+      if (dmMeta.state === 'ringing' && dmMeta.declinedUserIds.has(userId)) continue;
       activeCalls.push({
         dmChannelId: dm.dmChannelId,
         callerId: dmMeta.callerId,
@@ -361,18 +361,14 @@ export function buildReadyPayload(userId: string): {
     }
   }
 
-  // Resolve this user's homeUserId for token lookup
-  const readyUser = db.select({ homeUserId: schema.users.homeUserId })
-    .from(schema.users)
-    .where(eq(schema.users.id, userId))
-    .get();
-  const myHomeUserId = readyUser?.homeUserId || userId;
-
   // Also include federated calls (this instance is NOT the host)
   for (const [_fedId, fedCall] of connectionManager.getAllFederatedCalls()) {
     const isParticipant = fedCall.ringedUserIds.includes(userId);
     const isDmMember = fedCall.dmChannelId && dmMemberships.some(dm => dm.dmChannelId === fedCall.dmChannelId);
-    if (isParticipant || isDmMember) {
+    // A group decline takes the member out of `ringedUserIds`; while the
+    // call still rings, that member is not rung again on reconnect.
+    const declined = fedCall.group && fedCall.state === 'ringing' && !isParticipant;
+    if ((isParticipant || isDmMember) && !declined) {
       activeCalls.push({
         dmChannelId: fedCall.dmChannelId,
         federatedCallId: fedCall.federatedId,
@@ -382,7 +378,7 @@ export function buildReadyPayload(userId: string): {
         state: fedCall.state,
         federatedCallHost: fedCall.federatedCallHost,
         livekitUrl: fedCall.livekitUrl,
-        livekitToken: fedCall.tokens.get(myHomeUserId),
+        livekitToken: fedCall.tokens.get(userId),
       });
     }
   }

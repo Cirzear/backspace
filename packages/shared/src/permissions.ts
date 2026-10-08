@@ -223,3 +223,102 @@ export function overrideChangeRefusal(
   if ((((oldAllow & ~newAllow) | (oldDeny & ~newDeny)) & unheld) !== 0n) return 'cannot_change_unowned_permissions';
   return null;
 }
+
+// ─── Private Channels and Categories ────────────────────────────────────────
+// "Private" is not stored on its own: a channel or category is private when
+// its @everyone override (the role whose id is the space id) denies View
+// Channels. The server reports it as `isPrivate` on channels and categories
+// and the client derives the Private switch from the overrides it edits, so
+// both read the rule from here. See docs/systems/permissions.md, "Private
+// channels and categories".
+
+/** An override row as the private rule reads it: its target and its deny bits. */
+export interface OverrideDenyRow {
+  targetType: string;
+  targetId: string;
+  deny: string;
+}
+
+/**
+ * Whether the overrides of one channel or category hide it from everyone:
+ * the @everyone override denies View Channels. A member override whose id
+ * happens to equal the space id is not the @everyone override.
+ */
+export function isHiddenFromEveryone(overrides: readonly OverrideDenyRow[], spaceId: string): boolean {
+  const everyone = overrides.find((o) => o.targetType === 'role' && o.targetId === spaceId);
+  return everyone !== undefined && (stringToPermissions(everyone.deny) & PermissionBits.VIEW_CHANNEL) !== 0n;
+}
+
+/**
+ * The ids of the channels or categories that override rows of several of
+ * them hide from everyone (`isHiddenFromEveryone` per entity). `entityIdOf`
+ * names the channel or category a row belongs to, and `spaceIdOf` the space
+ * of that entity (undefined when it is not known, which is not private), so
+ * the rows of entities in different spaces can be read in one pass.
+ */
+export function idsHiddenFromEveryone<T extends OverrideDenyRow>(
+  rows: readonly T[],
+  entityIdOf: (row: T) => string,
+  spaceIdOf: (entityId: string) => string | undefined,
+): Set<string> {
+  const byEntity = new Map<string, T[]>();
+  for (const row of rows) {
+    const id = entityIdOf(row);
+    const group = byEntity.get(id);
+    if (group) group.push(row);
+    else byEntity.set(id, [row]);
+  }
+  const hidden = new Set<string>();
+  for (const [id, group] of byEntity) {
+    const spaceId = spaceIdOf(id);
+    if (spaceId !== undefined && isHiddenFromEveryone(group, spaceId)) hidden.add(id);
+  }
+  return hidden;
+}
+
+// ─── Edit Versions ──────────────────────────────────────────────────────────
+// An editor that saves a whole permissions value (a role's permissions, an
+// override's allow and deny) sends the version of the value it loaded, and
+// the server refuses the write with 409 when the stored value has another
+// version by then, so two editors saving at the same time cannot drop each
+// other's bits. The version is derived from the value itself, so it needs no
+// stored column and both sides compute the same one: equal bits always give
+// the same version, and a value that changed and changed back is the value the
+// editor loaded, which loses nothing. See docs/systems/permissions.md,
+// "Concurrent edits".
+
+/** The version of an override that does not exist: the target has no row. */
+export const NO_OVERRIDE_VERSION = 'none';
+
+const FNV_OFFSET_64 = 0xcbf29ce484222325n;
+const FNV_PRIME_64 = 0x100000001b3n;
+const MASK_64 = (1n << 64n) - 1n;
+
+/** FNV-1a, 64 bits, of an ASCII string, as 16 lowercase hex digits. */
+function fnv1a64(text: string): string {
+  let hash = FNV_OFFSET_64;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= BigInt(text.charCodeAt(i));
+    hash = (hash * FNV_PRIME_64) & MASK_64;
+  }
+  return hash.toString(16).padStart(16, '0');
+}
+
+/**
+ * The version of a role's permissions value, as `PATCH /spaces/:id/roles/:rid`
+ * compares `permissionsVersion` with it. Read the way every permission check
+ * reads the value (`canonicalPermissionString`).
+ */
+export function rolePermissionsVersion(permissions: string | undefined | null): string {
+  return fnv1a64(`role:${canonicalPermissionString(permissions)}`);
+}
+
+/**
+ * The version of one target's channel or category override, as the override
+ * `PUT` and `DELETE` compare `version` with it: `NO_OVERRIDE_VERSION` when
+ * the target has no row, else derived from the row's allow and deny.
+ */
+export function overrideVersion(row: { allow: string; deny: string } | null | undefined): string {
+  if (!row) return NO_OVERRIDE_VERSION;
+  return fnv1a64(`override:${canonicalPermissionString(row.allow)}:${canonicalPermissionString(row.deny)}`);
+}

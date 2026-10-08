@@ -408,7 +408,11 @@ export const useVoiceStore = create<VoiceState>()(
       setFederatedCallData: (token, url) => set({ federatedCallToken: token, federatedCallUrl: url }),
       // Token consumption is not call termination: screen-token and dm_call_end
       // still need the issuing origin and federated locator after room.connect().
-      clearFederatedCallData: () => set({ federatedCallToken: null, federatedCallUrl: null }),
+      clearFederatedCallData: () => set((state) => (
+        state.activeDmCall
+          ? { federatedCallToken: null, federatedCallUrl: null }
+          : { federatedCallToken: null, federatedCallUrl: null, federatedCallId: null, callOrigin: null }
+      )),
       setFederatedCallId: (id) => set({ federatedCallId: id }),
       setCallOrigin: (origin) => set({ callOrigin: origin }),
 

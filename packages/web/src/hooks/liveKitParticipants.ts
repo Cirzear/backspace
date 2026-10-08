@@ -107,7 +107,7 @@ export function resolveParticipantUserId(identity: string): string {
   if (!activeDmCall) return rawId;
   const dmChannel = useSpaceStore.getState().dmChannels.find(d => d.id === activeDmCall.dmChannelId);
   const origin = getChannelOrigin(activeDmCall.dmChannelId);
-  const match = dmChannel?.members.find(m => m.id === rawId || homeIdentityOf(m, origin)?.userId === rawId);
+  const match = dmChannel?.members.find(m => m.id === rawId || homeIdentityOf(m, origin)?.userId === rawId || (m as { homeUserId?: string }).homeUserId === rawId);
   return match?.id ?? rawId;
 }
 
@@ -176,7 +176,9 @@ export function collectParticipants(room: Room, republish: StreamRepublishTracke
       homeUserId: cachedUser?.homeUserId ?? null, cachedUser, ...state, isLocal,
       screenPublisherIdentity: screen.identity, voicePublisherIdentity: voice.identity,
       isCameraOn: !!publicationFor(owner, Track.Source.Camera) && owner.isCameraEnabled,
-      isScreenSharing: !!publicationFor(screen, Track.Source.ScreenShare) || (republish?.isBridging(screen.identity) ?? false),
+      isScreenSharing: isLocal
+        ? (vs.isScreenSharing || !!publicationFor(screen, Track.Source.ScreenShare))
+        : (!!publicationFor(screen, Track.Source.ScreenShare) || (republish?.isBridging(screen.identity) ?? false)),
       // In the handoff interval, do not leak the Web mic clone as the native source.
       audioTrack: isLocal && vs.nativeVoiceActive && voice === owner ? null : audioTrack?.mediaStreamTrack ?? null,
       videoTrack: cameraTrack?.mediaStreamTrack ?? null,

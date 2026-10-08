@@ -1,7 +1,7 @@
 # Database Schema Reference
 
 Source of truth: `packages/server/src/db/schema.ts` (Drizzle ORM)
-Migrations: drizzle-kit generates SQL from `schema.ts` (`pnpm db:generate` from `packages/server/`). On startup, `initDatabase()` runs `drizzle.migrate()` against `packages/server/drizzle/`, then `ensureDefaults()` (settings row, Snowflake worker ID, instance epoch, `installedAt` backfill, first-admin promotion), `backfillOneOnOneDmMembership()` and `backfillOneOnOneKeys()` (every 1-on-1 `dm_channels` row gets the key of its two members; see dm-system.md "Federated ID Algorithm"). Migration history was squashed to a single baseline on 2026-04-24 (backlog #31 Phase 2). Databases created before the squash keep the tables the old hand-written statements made, which differ from what the baseline creates (inline `UNIQUE` constraints instead of named unique indexes, text primary keys without `NOT NULL`, extra columns), so a migration must not assume an index or column only the baseline creates. `packages/server/test/fixtures/pre-squash-schema.sql` holds that shape, and `src/db/preSquashUpgrade.test.ts` boots it, a squashed install and an empty database through `initDatabase()` and checks the outbox ends identical on all three.
+Migrations: drizzle-kit generates SQL from `schema.ts` (`pnpm db:generate` from `packages/server/`). On startup, `initDatabase()` runs `drizzle.migrate()` against `packages/server/drizzle/`, then `ensureDefaults()` (settings row, Snowflake worker ID, instance epoch, `installedAt` backfill, first-admin promotion), `backfillOneOnOneDmMembership()` and `backfillOneOnOneKeys()` (every 1-on-1 `dm_channels` row gets the key of its two members; see dm-system.md "Federated ID Algorithm"). Migration history was squashed to a single baseline on 2026-04-24 (backlog #31 Phase 2). Databases created before the squash keep the tables the old hand-written statements made, which differ from what the baseline creates (inline `UNIQUE` constraints instead of named unique indexes, text primary keys without `NOT NULL`, extra columns), so a migration must not assume an index or column only the baseline creates. `packages/server/test/fixtures/pre-squash-schema.sql` holds that shape, and `src/db/preSquashUpgrade.test.ts` boots it, a squashed install and an empty database through `initDatabase()` and checks the outbox ends identical on all three, and that the reaction tables end with their unique indexes and without repeated rows.
 Engine: SQLite via `better-sqlite3`
 IDs: Snowflake text, permissions: bigint decimal strings
 
@@ -35,12 +35,19 @@ IDs: Snowflake text, permissions: bigint decimal strings
 | showActivity | integer NOT NULL | 1 | Rich presence visibility |
 | federationRegistryUpdatedAt | integer | 0 | LWW timestamp for federation registry sync |
 | federationHealPending | integer | 0 | Instance-epoch self-healing: set when a replicated identity is flagged for re-heal after a peer reset |
-| federationHomeOrphaned | integer | 0 | Instance-epoch self-healing: **1 = DETACHED / sovereign local account** (its home instance was reset/lost), not "frozen." **Set** to 1 by `quarantineOrphanedAccounts` on every real account from a reset home incarnation (flag-only detach — no rename, no login block). **Read** by: the login flow (self-heal path permanently disabled for detached rows; local-password login still works — `auth.md` §4), `users.ts` (unlocks local profile edit + local change-password), the S2S binding guards (`findFederatedUser` tier-2, `profile_update`, identity-delete all exclude detached rows — `federation.md`), and the `GET /api/federation/reset-events` admin surface. Cleared only by `tombstoneUser` (deletion). Detach spec §3/§4 |
+| federationHomeOrphaned | integer | 0 | Instance-epoch self-healing: **1 = DETACHED / sovereign local account** (its home instance was reset/lost), not "frozen." **Set** to 1 by `quarantineOrphanedAccounts` on every real account from a reset home incarnation (flag-only detach — no rename, no login block). **Read** by: the login flow (self-heal path permanently disabled for detached rows; local-password login still works — `auth.md` §4), `users.ts` (unlocks local profile edit + local change-password), the S2S binding guards (`findFederatedUser` tier-2, `profile_update`, identity-delete all exclude detached rows — `federation.md`), and the `GET /api/federation/reset-events` admin surface. Cleared by `tombstoneUser` (deletion) and by re-attach. Detach spec §3/§4. Since #310 a detached row is homed here: `home_instance`/`home_user_id` are NULL and its former identity is in the two columns below |
+| detachedHomeInstance | text | | The home instance a detached account was federated from (`federation.md`, "Detached accounts are homed here"). Detaching (`rehomeDetachedAccount`) moves `home_instance` here and clears it, so the account presents itself to peers as one of this instance's users. Read by `resolveRelayActor` (a reference to the former identity resolves to the row), `resolveOrCreateReplicatedUser`'s deleted-identity check, the sync page's friend relevance, re-attach (the home it re-attaches to), the reset-cleanup listing (`detachedHomeInstanceMatch`) and the self-view (`User.detachedHomeInstance`). Cleared by re-attach; kept on a tombstone. Migration `0025_detached_identity` |
+| detachedHomeUserId | text | | The account's id on its former home, moved from `home_user_id` with `detachedHomeInstance`. Same readers. |
 | lastActiveDay | text | | UTC day (`YYYY-MM-DD`) of the last authenticated WebSocket activity; written at most once per day. Used by telemetry to count active accounts. |
 | lastClient | text | | `'web'`, `'desktop'` or `'mobile'`, taken from the client's WebSocket auth message. |
 | createdAt | integer NOT NULL | | Epoch ms |
 
 **Index:** `idx_users_home_user_id` on `(home_user_id)` (migration `0020_users_home_user_id_index`). Every federated identity lookup (`resolveRelayActor`, `resolveLocalUser`, the relay's participant, author and mention resolution) filters on `home_user_id` first. It is a single-column index on purpose: a home user id matches about one row, and most pair lookups compare `home_instance` normalized (scheme stripped, lowercased) or in code, where a `(home_user_id, home_instance)` composite's second column cannot be used.
+
+**Index:** `idx_users_detached_home_user_id` on `(detached_home_user_id)` (migration `0025_detached_identity`). `resolveRelayActor` matches a detached account's former identity in the same query as `home_user_id`.
+
+#### Detached identity (0025)
+Adds `detached_home_instance`, `detached_home_user_id` and their index. The data rewrite for accounts detached before it is not in the SQL: it needs this instance's origin (group DM owner identity) and the 1-on-1 key re-derivation, so `initDatabase` runs `rehomeDetachedAccountsOnBoot` after the migrations (idempotent; a pre-change snapshot is taken only when a row qualifies).
 
 ### spaces
 | Column | Type | Default | Notes |
@@ -149,9 +156,7 @@ PK: id
 | emoji | text NOT NULL | Exact reaction token: Unicode emoji or `sticker:<asset-url>` |
 | createdAt | integer NOT NULL | |
 
-**UNIQUE:** `idx_reactions_message_user_emoji` on `(message_id, user_id, emoji)` — one reaction per message, actor and exact token, including concurrent adds and retries. Different users, messages or tokens remain independent. The existing `idx_reactions_message_id` lookup index is retained.
-
-**Migration `0025_reaction_uniqueness`.** Before creating the unique indexes, deduplicates both `reactions` and `dm_reactions` by their respective message/user/emoji triple. Keeps the row with the earliest `created_at`; ties keep the smallest `id` in SQLite's ascending text order. Other triples, surviving IDs/timestamps and parent rows are unchanged. The journal timestamp is greater than every preceding entry so upgrades apply it even though some older journal timestamps are out of order. Normal startup `migrate()` records it once; subsequent migration runs are no-ops.
+Indexes: `idx_reactions_message_id` (messageId); `idx_reactions_message_user_emoji` UNIQUE (messageId, userId, emoji) — one reaction per message, actor and exact token (Unicode emoji or `sticker:<asset-url>`). Writers insert with `ON CONFLICT DO NOTHING` and treat no row written as "already reacted" (`reaction_add` in `ws/events.ts`). See "Reaction uniqueness" below.
 
 ---
 
@@ -205,7 +210,10 @@ PK: id
 | emoji | text NOT NULL | Exact reaction token: Unicode emoji or `sticker:<asset-url>` |
 | createdAt | integer NOT NULL | |
 
-**UNIQUE:** `idx_dm_reactions_message_user_emoji` on `(dm_message_id, user_id, emoji)` — the same one-reaction-per-triple rule as channel reactions. Migration `0025_reaction_uniqueness` removes existing duplicates deterministically before enforcing it (see [reactions](#reactions)). The existing `idx_dm_reactions_dm_message_id` lookup index is retained.
+Indexes: `idx_dm_reactions_dm_message_id` (dmMessageId); `idx_dm_reactions_message_user_emoji` UNIQUE (dmMessageId, userId, emoji) — the same one-reaction-per-triple rule as channel reactions (Unicode emoji or `sticker:<asset-url>`). Both writers, the local `reaction_add` and the relayed one (`processReactionAddEvent`, live delivery and the catch-up pull alike), insert with `ON CONFLICT DO NOTHING`; a relayed add that writes nothing is accepted as already held.
+
+#### Reaction uniqueness
+The squashed baseline (0000) created both reaction tables without a unique key; only pre-squash installs had one, as an inline `UNIQUE(message_id, user_id, emoji)` / `UNIQUE(dm_message_id, user_id, emoji)` from the old hand-written statements. On installs created after the squash the same user's reaction could be stored several times (#393). Migration `0024_reaction_unique` / `0025_reaction_uniqueness` first deletes the repeats, keeping per key the row with the lowest `created_at` and, of equally early rows, deterministic tiebreaker, then creates the two named unique indexes. On a pre-squash install there are no repeats, and the named index is created beside the inline constraint (`sqlite_autoindex_*`), which stays.
 
 ---
 
@@ -261,6 +269,11 @@ PK: (channelId, targetType, targetId)
 PK: (categoryId, targetType, targetId)
 Same structure as channel_overrides, with categoryId FK → channel_categories.id CASCADE.
 
+Neither override table nor `roles` stores an edit version. The version a
+concurrent-edit check compares (`overrideVersion`, `rolePermissionsVersion`)
+is derived from `allow`/`deny` and `permissions` themselves, so it needs no
+column and no migration (permissions.md, "Concurrent edits").
+
 ---
 
 ## State Tables
@@ -273,6 +286,23 @@ PK: (userId, channelId)
 | channelId | text NOT NULL | Channel or DM channel ID |
 | lastReadMessageId | text NOT NULL | |
 | updatedAt | integer NOT NULL | |
+
+### notification_settings
+A user's notification setting for a space (`channelId` NULL) or for one channel of it (migration `0026_notification_settings`). Stored on the instance that hosts the space and keyed by the user's row **on this instance**: for a federated member that is their account here, never a home id. Read and written only through `routes/notificationSettings.ts` (api.md, "Notification settings"); what the values do is in sounds.md ("Notification settings").
+
+| Column | Type | Default | Notes |
+|--------|------|---------|-------|
+| userId | text NOT NULL | | FK → users.id CASCADE |
+| spaceId | text NOT NULL | | FK → spaces.id CASCADE. Set on channel rows too, so a space's rows go with it |
+| channelId | text | | FK → channels.id CASCADE. NULL = the space-wide row |
+| level | text | | `all` / `mentions` / `nothing`; NULL = not chosen (a channel inherits its space, a space uses `mentions`) |
+| muted | integer NOT NULL | 0 | 1 = muted |
+| mutedUntil | integer | | Epoch ms (server clock) a timed mute ends; NULL with `muted = 1` = until lifted. An ended mute is read as none and dropped at the next write |
+| updatedAt | integer NOT NULL | | Server write time, strictly increasing per row; clients merge last-write-wins on it |
+
+**Indexes:** `idx_notification_settings_space_row` UNIQUE `(user_id, space_id) WHERE channel_id IS NULL` and `idx_notification_settings_channel_row` UNIQUE `(user_id, channel_id) WHERE channel_id IS NOT NULL`: one space row and one row per channel, per user. Two partial indexes because a plain unique index never treats two NULL `channel_id`s as equal. No primary key: the rowid is the row's identity.
+
+A row with nothing chosen (level NULL and not muted) is deleted rather than stored. Rows are kept when the user leaves the space or loses sight of the channel (the list route filters them out), so they apply again on rejoin.
 
 ### space_folders
 | Column | Type | Default | Notes |

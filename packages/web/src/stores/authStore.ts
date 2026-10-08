@@ -18,6 +18,7 @@ import { useActivityStore } from './activityStore';
 import { useSettingsStore } from './settingsStore';
 import { useExploreStore } from './exploreStore';
 import { useDirectoryStore } from './directoryStore';
+import { useNotificationSettingsStore } from './notificationSettingsStore';
 import { deleteAccountOnRemotes } from '../utils/federationOps';
 import { isMine, ownRowAt, selfIdentityOf, type IdentityFields, type SelfIdentity } from '../utils/identity';
 import { myChosenStatus, statusAuthority, type OwnStatusReport } from '../utils/selfStatus';
@@ -97,6 +98,7 @@ function resetUserStores() {
   useActivityStore.getState().reset();
   useExploreStore.getState().reset();
   useDirectoryStore.getState().reset();
+  useNotificationSettingsStore.getState().reset();
   useSettingsStore.getState().resetUpdateState();
 }
 

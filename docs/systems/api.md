@@ -99,7 +99,7 @@ GET    /users/:id/mutuals     ?homeUserId=               → { mutualFriends[], 
 
 **Write protection:** If the authenticated user is a replicated user (`homeInstance` is set **and** `federationHomeOrphaned !== 1`), the following fields are rejected with 403: `displayName`, `avatar`, `banner`, `accentColor`, `avatarColor`, `bio`. These fields are managed by the home instance via S2S relay. **Exception — detached accounts** (`federationHomeOrphaned === 1`): a federated account whose home instance was reset/lost is a sovereign local account with no home managing its profile, so it edits these durable fields locally like a native user (detach design §4.4). Detached edits are NOT relayed (the S2S profile-relay path stays gated on `!homeInstance`).
 
-**Self-view flag:** `GET /users/@me`, the login response, and the WS `ready` payload all sanitize the row with `isSelf=true` and include `federationHomeOrphaned: boolean` (detach design §4.7) — self-view only; it is never exposed to other users and never on the deleted/tombstone branch.
+**Self-view flag:** `GET /users/@me`, the login response, and the WS `ready` payload all sanitize the row with `isSelf=true` and include `federationHomeOrphaned: boolean` (detach design §4.7) and `detachedHomeInstance: string | null` (the home a detached account was federated from; a detached account is homed on this instance, so `homeInstance` is null — `federation.md`, "Detached accounts are homed here") — self-view only; it is never exposed to other users and never on the deleted/tombstone branch.
 
 **`POST /users/@me/federation-credential`:** get-or-create the per-remote credential this account's client presents when registering or logging in as itself on another instance. Scoped to `request.userId`; the secret is never derived from and never equal to the account password. See `auth.md` §5b and `client-federation.md` §1.
 
@@ -141,12 +141,14 @@ DELETE /spaces/:id/bans/:uid                             → { success }  [BAN_M
 ### Roles
 ```
 POST   /spaces/:id/roles              { name, color?, permissions? }              → { role }  [MANAGE_ROLES]
-PATCH  /spaces/:id/roles/:rid         { name?, color?, position?, above?, below?, permissions? }  → { role }  [MANAGE_ROLES]
+PATCH  /spaces/:id/roles/:rid         { name?, color?, position?, above?, below?, permissions?, permissionsVersion? }  → { role }  [MANAGE_ROLES]
 DELETE /spaces/:id/roles/:rid                                                     → { success }  [MANAGE_ROLES]
 POST   /spaces/:id/members/:uid/roles { roleId }                                 → { success }  [MANAGE_ROLES]
 DELETE /spaces/:id/members/:uid/roles/:rid                                        → { success }  [MANAGE_ROLES]
 ```
-Kick, ban, the member role routes and the role routes also enforce the role hierarchy, answering `403 role_hierarchy` (permissions.md, "Role hierarchy"). `POST` and `PATCH /roles` also apply the held-bits rule (permissions.md, "Held-bits rule"): switching on a bit the actor does not hold answers `403 cannot_grant_unowned_permissions`, switching one off `403 cannot_change_unowned_permissions`; `DELETE /roles/:rid` of a role carrying a bit the actor does not hold answers `403 cannot_change_unowned_permissions`, and giving a member such a role (`PATCH /members/:uid`, `POST /members/:uid/roles`) `403 cannot_grant_unowned_permissions`; a `permissions` value that is not a canonical non-negative decimal string answers `400 permissions_invalid` (permissions.md, "Stored form"). `PATCH /members/:uid` takes `roleIds`, the member's whole role set: a list of distinct role id strings, else `400 role_ids_invalid`. Every write in this section is followed by `space_access_changed` to the space's connected members (websocket.md). `PATCH /roles/:rid` answers `404 role_not_in_space` for a role of another space. `PATCH /roles/:rid { position }` moves the role to that position (1 = just above @everyone) and renumbers the others; `{ above: roleId }` or `{ below: roleId }` instead moves it directly next to that role of the space and the request's `position` is then ignored (permissions.md, "Setting the order"): naming both, the role itself, @everyone with `below`, or a non-string answers `400 validation_failed`, a role of another space `400 role_not_in_space`. A new role is created at 1. The single-role routes refuse a role of another space with `400 role_not_in_space`.
+Kick, ban, the member role routes and the role routes also enforce the role hierarchy, answering `403 role_hierarchy` (permissions.md, "Role hierarchy"). `POST` and `PATCH /roles` also apply the held-bits rule (permissions.md, "Held-bits rule"): switching on a bit the actor does not hold answers `403 cannot_grant_unowned_permissions`, switching one off `403 cannot_change_unowned_permissions`; `DELETE /roles/:rid` of a role carrying a bit the actor does not hold answers `403 cannot_change_unowned_permissions`, and giving a member such a role (`PATCH /members/:uid`, `POST /members/:uid/roles`) `403 cannot_grant_unowned_permissions`; a `permissions` value that is not a canonical non-negative decimal string answers `400 permissions_invalid` (permissions.md, "Stored form"). `PATCH /roles/:rid` with `permissions` also takes `permissionsVersion`, the `rolePermissionsVersion` of the permissions the editor loaded: when the role's stored permissions have another version by then, the whole request answers `409 role_permissions_conflict` and nothing changes; a `permissionsVersion` that is not a non-empty string answers `400 validation_failed`. Without it (clients from before the check, 1.9.x and older) the write is not compared, and without `permissions` it is ignored (permissions.md, "Concurrent edits"). Editing a role below the actor is allowed whoever holds it, members ranked above the actor included (permissions.md, "Lower roles held by senior members"). `PATCH /members/:uid` takes `roleIds`, the member's whole role set: a list of distinct role id strings, else `400 role_ids_invalid`. Every write in this section is followed by `space_access_changed` to the space's connected members (websocket.md). `PATCH /roles/:rid` answers `404 role_not_in_space` for a role of another space. `PATCH /roles/:rid { position }` moves the role to that position (1 = just above @everyone) and renumbers the others; `{ above: roleId }` or `{ below: roleId }` instead moves it directly next to that role of the space and the request's `position` is then ignored (permissions.md, "Setting the order"): naming both, the role itself, @everyone with `below`, or a non-string answers `400 validation_failed`, a role of another space `400 role_not_in_space`. A new role is created at 1. The single-role routes refuse a role of another space with `400 role_not_in_space`.
+
+A role in any answer carries `permissions` only for a viewer who holds `MANAGE_ROLES` in the space: `GET /spaces/:id` lists every role with its display fields for every member and with its bits for managers, member rows (`GET /spaces/:id/members`, `PATCH /members/:uid`, `members[]` of the detail) list roles with display fields only, and the `POST`/`PATCH /roles` answers are shaped for what the actor holds after the change (permissions.md, "Who receives role and override data").
 
 `DELETE /spaces/:id/roles/:rid` answers `404 role_not_in_space` for a role id that is not in the space, and otherwise deletes the role together with every channel and category override that names it (overrides carry no foreign key to the role).
 
@@ -159,22 +161,26 @@ DELETE /channels/:id                                     → { success }  [MANAG
 PATCH  /spaces/:id/channels/reorder  { order }           → reordered  [MANAGE_CHANNELS]
 ```
 
+`topic` is a string of at most `CHANNEL_TOPIC_MAX_LENGTH` (1024) characters after `normalizeChannelTopic`; on PATCH, `null` or a blank string clears it. A non-string answers `400 channel_topic_invalid`, a longer topic `400 channel_topic_length` with `{ max }` (spaces.md, "Create Channel").
+
 ### Channel Overrides
 ```
-GET    /channels/:id/overrides                                   → { overrides[] }  [MANAGE_ROLES]
-PUT    /channels/:id/overrides  { targetType, targetId, allow, deny } → { success }  [MANAGE_ROLES]
-DELETE /channels/:id/overrides/:targetType/:targetId              → { success }  [MANAGE_ROLES]
+GET    /channels/:id/overrides                                   → { channelId, targetType, targetId, allow, deny, version }[]  [MANAGE_ROLES]
+PUT    /channels/:id/overrides  { targetType, targetId, allow, deny, version? } → { success, version }  [MANAGE_ROLES]
+DELETE /channels/:id/overrides/:targetType/:targetId  ?version=   → { success }  [MANAGE_ROLES]
 ```
 All three check `MANAGE_ROLES` space-wide (permissions.md, "Client gating"). `PUT` and `DELETE` (here and on categories) also follow the role hierarchy (permissions.md, "Role hierarchy"): an override on a role at or above the actor's top role, or on another member ranked at or above the actor, answers `403 role_hierarchy`; a `PUT` naming a role that is not in the space answers `400 role_not_in_space`. `PUT` and `DELETE` (here and on categories) also apply the held-bits rule against the stored override (permissions.md, "Held-bits rule"): a newly allowed unheld bit answers `403 cannot_grant_unowned_permissions`, a newly denied one `403 cannot_deny_unowned_permissions`, and clearing one, or deleting an override that sets one, `403 cannot_change_unowned_permissions`. `DELETE` removes the override row, so the target falls back to its space-wide permissions in that channel; the category routes below do the same for a category. A `PUT` or `DELETE` is followed by `channel_updated` (with the recipient's new `myPermissions`) or `channel_deleted` for each connected member of the space, and a category write also sends `category_updated`. `allow` and `deny` are canonical non-negative decimal strings, else `400 override_bits_invalid`; one left out sets no bits (permissions.md, "Stored form"). The editor stages removals and sends them on Save.
+
+Concurrent edits (here and on categories; permissions.md, "Concurrent edits"): each listed row carries `version` (`overrideVersion` in `packages/shared/src/permissions.ts`, derived from its allow and deny), and a `PUT` answers the `version` of the row it wrote. A `PUT` with `version` (the version of the row the editor loaded, `"none"` when it loaded no row for that target) answers `409 overrides_conflict` and writes nothing when the stored row has another version, including when a row was created meanwhile. A `DELETE` with `?version=` answers the same when the row still exists with another version; a row already gone answers `200`. A `version` that is not a non-empty string answers `400 validation_failed`. Without `version` (clients from before the check, 1.9.x and older) the write is not compared, as before. The check runs after the hierarchy check and before the held-bits rule.
 
 ### Categories
 ```
 POST   /spaces/:id/categories        { name }              → { category }  [MANAGE_CHANNELS]
 PATCH  /categories/:id               { name?, position? }  → { category }  [MANAGE_CHANNELS]
 DELETE /categories/:id                                      → { success }  [MANAGE_CHANNELS]
-GET    /categories/:id/overrides                            → { overrides[] }  [MANAGE_ROLES]
-PUT    /categories/:id/overrides     { targetType, targetId, allow, deny } → { success }  [MANAGE_ROLES]
-DELETE /categories/:id/overrides/:tt/:tid                   → { success }  [MANAGE_ROLES]
+GET    /categories/:id/overrides                            → { categoryId, targetType, targetId, allow, deny, version }[]  [MANAGE_ROLES]
+PUT    /categories/:id/overrides     { targetType, targetId, allow, deny, version? } → { success, version }  [MANAGE_ROLES]
+DELETE /categories/:id/overrides/:tt/:tid  ?version=        → { success }  [MANAGE_ROLES]
 ```
 
 ## Messages (`routes/messages.ts`) — auth required
@@ -372,6 +378,22 @@ PATCH /settings/instance     (admin)       { instanceName?, registrationOpen?, f
 `directoryBrowseEnabled` is the other directory axis: whether people on this instance see spaces from other instances in Explore. It must be a boolean (`400 field_not_boolean`), is independent of `directoryEnabled` (nothing clears it, and the discovery invariant does not touch it), is carried only on `/settings/instance` and not on `/settings/streaming`, and changing it never marks the directory dirty, since it is nowhere in the served document. It gates `GET /directory` and `directoryAvailable` on `GET /instance/info`. Default true. See [directory.md](directory.md).
 
 `supportCardEnabled` must be a boolean (`400 field_not_boolean` with `{ field: 'supportCardEnabled' }`). It is carried only on `/settings/instance` and not on `/settings/streaming`, is reported publicly on `GET /instance/info`, and never marks the directory dirty. Default true. What it hides: [admin.md](admin.md), General panel.
+
+## Notification settings (`routes/notificationSettings.ts`) — auth required
+```
+GET   /users/@me/notification-settings                 → { settings: NotificationSetting[] }
+PATCH /spaces/:spaceId/notification-settings     { level?, mute? } → NotificationSetting
+PATCH /channels/:channelId/notification-settings { level?, mute? } → NotificationSetting
+```
+The signed-in user's per-space and per-channel notification settings on **this** instance, for the spaces it hosts. Keyed by the caller's row here, so a federated member uses their account on the space's instance: the client sends these to the space's origin (`getApiForOrigin`), never to its home. What the settings do is in [sounds.md](sounds.md) ("Notification settings"); the table is `notification_settings` ([database.md](database.md)).
+
+`NotificationSetting` is `{ spaceId, channelId: string | null, level: 'all' | 'mentions' | 'nothing' | null, muted, mutedUntil: number | null, updatedAt }`. `channelId` null is the space-wide setting. `level` null is "not chosen": a channel inherits its space, a space uses `mentions`. `muted` with `mutedUntil` null lasts until lifted; a timed mute ends at `mutedUntil` (epoch ms, server clock). `updatedAt` is the server's write time and is always later than the stored one, so clients merge last-write-wins.
+
+The PATCH body changes only the fields it carries, and needs at least one: `level` is a level or null (clear), `mute` is `'1h' | '8h' | '24h' | 'indefinite'` or null (lift). The server computes `mutedUntil` from the duration with its own clock; a mute that already ended is read as none. A write that leaves nothing chosen (level null, not muted) deletes the row and answers the setting with level null and not muted. Every successful write is pushed as `notification_settings_updated` to all of the user's sockets on this instance ([websocket.md](websocket.md)).
+
+GET lists only rows of spaces the caller is a member of, and channel rows of channels they can see (`VIEW_CHANNEL` or `ADMINISTRATOR`). Rows outlive leaving a space or losing a channel: they come back if the user rejoins or regains it, and go with the user, space or channel row (cascade).
+
+Errors: `400 validation_failed` (no known field, or a value of the wrong kind), `404 space_not_found`, `404 channel_not_found`, `403 not_space_member`, `403 missing_permission` (`{ permission: 'VIEW_CHANNEL' }`) for a channel the caller cannot see.
 
 ## Admin (`routes/admin.ts`) — admin required
 ```

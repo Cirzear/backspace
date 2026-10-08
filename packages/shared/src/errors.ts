@@ -205,6 +205,7 @@ export const ERROR_CODES = [
   'cannot_target_self',
   'role_hierarchy',
   'permissions_invalid',
+  'role_permissions_conflict',
   'role_name_taken',
   'role_name_required',
   'everyone_role_not_deletable',
@@ -219,6 +220,8 @@ export const ERROR_CODES = [
   'message_not_found',
   'channel_name_required',
   'channel_name_length',
+  'channel_topic_invalid',
+  'channel_topic_length',
   'channel_type_invalid',
   'category_not_in_space',
   'channel_not_in_space',
@@ -226,6 +229,7 @@ export const ERROR_CODES = [
   'override_target_invalid',
   'override_target_required',
   'override_bits_invalid',
+  'overrides_conflict',
   'cannot_grant_unowned_permissions',
   'cannot_deny_unowned_permissions',
   'cannot_change_unowned_permissions',
@@ -248,6 +252,8 @@ export const ERROR_CODES = [
   // misc
   'voice_disabled',
   'voice_connect_forbidden',
+  'dm_call_in_progress',
+  'dm_call_not_found',
   'file_not_found',
 
   // Directory

@@ -1,5 +1,7 @@
 import type { StateCreator } from 'zustand';
+import { useAuthStore } from './authStore';
 import { useChatStore } from './chatStore';
+import { useNotificationSettingsStore } from './notificationSettingsStore';
 import { dropOrigin } from './dmConversations';
 import {
   channelIdsWhere,
@@ -17,6 +19,11 @@ export const createRemoveInstanceSpacesSlice: StateCreator<
   Pick<SpaceState, 'removeInstanceSpaces'>
 > = (set, get) => ({
   removeInstanceSpaces: (origin: string) => {
+    // The instance is gone: the id its `ready` gave the user says nothing now,
+    // and neither do the notification settings it stored.
+    useAuthStore.getState().forgetMyRow(origin);
+    useNotificationSettingsStore.getState().forgetOrigin(origin);
+
     // Collect channel IDs before set() for chatStore cleanup
     const currentState = get();
     const channelIdsToRemove = new Set<string>();

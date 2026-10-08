@@ -44,21 +44,21 @@ describe('member social actions', () => {
     const remove = vi.spyOn(useSocialStore.getState(), 'removeFriend').mockResolvedValue(undefined);
     useSocialStore.setState({ friends: [{ ...target, addedAt: 1, _instanceOrigin: '' }] });
     expect(items().map(item => item.key)).toEqual(['remove-friend']);
-    items()[0]!.onClick(); expect(remove).toHaveBeenCalledWith('target');
+    items()[0]!.onClick(); expect(remove).toHaveBeenCalledWith(expect.objectContaining({ id: 'target' }), '');
   });
 
   it('cancels outbound requests', () => {
     const cancel = vi.spyOn(useSocialStore.getState(), 'cancelFriendRequest').mockResolvedValue(undefined);
     useSocialStore.setState({ requests: [request] });
     expect(items().map(item => item.key)).toEqual(['cancel-friend']);
-    items()[0]!.onClick(); expect(cancel).toHaveBeenCalledWith('request');
+    items()[0]!.onClick(); expect(cancel).toHaveBeenCalledWith('request', '');
   });
 
   it.each([['accept-friend', 'accepted'], ['decline-friend', 'declined']] as const)('handles inbound %s', (key, status) => {
     const update = vi.spyOn(useSocialStore.getState(), 'updateFriendRequest').mockResolvedValue(undefined);
     useSocialStore.setState({ requests: [{ ...request, fromId: 'target', toId: 'viewer' }] });
     expect(items().map(item => item.key)).toEqual(['accept-friend', 'decline-friend']);
-    items().find(item => item.key === key)!.onClick(); expect(update).toHaveBeenCalledWith('request', status);
+    items().find(item => item.key === key)!.onClick(); expect(update).toHaveBeenCalledWith('request', '', status);
   });
 
   it('does not offer friend operations for oneself', () => {
@@ -80,20 +80,20 @@ describe('member social actions', () => {
     vi.spyOn(useSpaceStore.getState(), 'findExistingDmForUser').mockReturnValue(null);
     const dm = { id: 'dm-remote', members: [user('viewer'), target] } as DmChannel;
     const create = vi.spyOn(api.dm, 'create').mockResolvedValue(dm);
-    const add = vi.spyOn(useSpaceStore.getState(), 'addDmChannel').mockImplementation(() => { });
+    const upsert = vi.spyOn(useSpaceStore.getState(), 'upsertDmCopy').mockReturnValue('dm-remote');
     const navigate = vi.fn();
     await sendMemberMessage({ ...target, id: 'stub-id', homeUserId: 'home-id', homeInstance: 'home.test' }, navigate);
-    expect(create).toHaveBeenCalledWith({ userId: undefined, homeUserId: 'home-id', homeInstance: 'home.test' });
-    expect(add).toHaveBeenCalledWith(dm);
+    expect(create).toHaveBeenCalledWith({ homeUserId: 'home-id', homeInstance: 'home.test' });
+    expect(upsert).toHaveBeenCalledWith('', dm, 'stated');
     expect(navigate).toHaveBeenCalledWith('/channels/@me/dm-remote');
   });
 
   it('does not navigate or add a channel after DM creation fails', async () => {
     vi.spyOn(useSpaceStore.getState(), 'findExistingDmForUser').mockReturnValue(null);
     vi.spyOn(api.dm, 'create').mockRejectedValue(new Error('DM rejected'));
-    const add = vi.spyOn(useSpaceStore.getState(), 'addDmChannel').mockImplementation(() => { });
+    const upsert = vi.spyOn(useSpaceStore.getState(), 'upsertDmCopy').mockReturnValue('dm-remote');
     const navigate = vi.fn();
     await expect(sendMemberMessage(target, navigate)).rejects.toThrow('DM rejected');
-    expect(add).not.toHaveBeenCalled(); expect(navigate).not.toHaveBeenCalled();
+    expect(upsert).not.toHaveBeenCalled(); expect(navigate).not.toHaveBeenCalled();
   });
 });

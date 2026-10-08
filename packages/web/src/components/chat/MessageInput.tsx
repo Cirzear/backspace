@@ -23,6 +23,7 @@ import { useVisualViewportInset } from '../../hooks/useVisualViewportInset';
 import { useAuthStore } from '../../stores/authStore';
 import { selfIdentityOf } from '../../utils/identity';
 import { findLastOwnEditableMessage } from './messageEditing';
+import { describeError } from '../../i18n/errors';
 import {
   useChannelMentionCandidates,
 } from '../../utils/channelUser';
@@ -93,7 +94,8 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
 
   const sendMessage = useChatStore((s) => s.sendMessage);
   const returnToPresent = useChatStore((s) => s.returnToPresent);
-  const chatReplyTo = useChatStore((s) => s.replyTo);
+  // This channel's reply only: reply state is per channel (#390).
+  const chatReplyTo = useChatStore((s) => s.replyTargets.get(channelId) ?? null);
   const chatSetReplyTo = useChatStore((s) => s.setReplyTo);
   const editingMessageId = useChatStore((s) => s.editingMessageId);
   const setEditingMessage = useChatStore((s) => s.setEditingMessage);
@@ -152,7 +154,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     setMentionState(null);
   }, [channelId]);
 
-  // Sync chatStore.replyTo into composerStore so reload restores it.
+  // Sync this channel's chatStore reply target into composerStore so reload restores it.
   // chatStore holds the live MessageWithUser; composerStore stores a flat snapshot.
   //
   // First-mirror-per-channel guard: chatStore is not persisted, so on a fresh
@@ -329,7 +331,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     const submittedDraft = composer.draftText;
     const trimmed = submittedDraft.trim();
     if (!trimmed && composer.stagedTransferIds.length === 0) return;
-    if (isOverLimit) return;
+    if (submittedDraft.length > MAX_MESSAGE_LENGTH) return;
 
     // Block submission when ANY staged transfer is in a non-shippable state
     // (failed/aborted) — those would prevent the bubble from ever resolving.
@@ -362,8 +364,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
         // Keep both the failed text and anything typed while the request was pending.
         const currentDraft = useComposerStore.getState().get(channelId).draftText;
         setDraft(channelId, submittedDraft + (currentDraft ? '\n' + currentDraft : ''));
-        const msg = err instanceof Error ? err.message : t('chat:composer.sendFailed');
-        addToast(msg, 'warning');
+        addToast(describeError(err), 'warning');
       }
       return;
     }
@@ -399,7 +400,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     // Detach the staged transfers from the composer (they're now owned by the bubble)
     // and clear the draft + reply for this channel.
     clearComposer(channelId);
-    chatSetReplyTo(null);
+    chatSetReplyTo(channelId, null);
 
     // Reset textarea height + focus
     if (textareaRef.current) {
@@ -627,10 +628,10 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
       // should enter the staged local-file pipeline or discard the text draft.
       setActivePopover(null);
       void sendMessage(channelId, url).catch((error: unknown) => {
-        addToast(error instanceof Error ? error.message : t('chat:composer.sendFailed'), 'warning');
+        addToast(describeError(error), 'warning');
       });
     },
-    [channelId, sendMessage, addToast, t],
+    [channelId, sendMessage, addToast],
   );
 
   const togglePopover = useCallback((tab: InputPopoverTab) => {
@@ -780,7 +781,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
             </span>
           </div>
           <button
-            onClick={() => chatSetReplyTo(null)}
+            onClick={() => chatSetReplyTo(channelId, null)}
             className="text-txt-tertiary hover:text-txt-primary transition-colors"
             aria-label={t('chat:composer.cancelReply')}
           >

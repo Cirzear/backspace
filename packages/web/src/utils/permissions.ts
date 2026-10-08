@@ -8,4 +8,7 @@ export {
   hasPermissionBit,
   permissionsToString,
   stringToPermissions,
+  isHiddenFromEveryone,
+  overrideVersion,
+  rolePermissionsVersion,
 } from '@backspace/shared/src/permissions';

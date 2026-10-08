@@ -52,6 +52,15 @@
       "rename": "Переименовать канал",
       "nameLabel": "Название канала",
       "channelLabel": "Канал",
+      "topic": {
+        "label": "Тема",
+        "placeholder": "О чём этот канал?",
+        "hint": "Показывается в заголовке канала. Оттуда любой может открыть полный текст.",
+        "counter": "{{used}}/{{max}}",
+        "tooLong": "Сократите тему до {{max}} символов, чтобы сохранить её.",
+        "empty": "Тема не задана.",
+        "reset": "Отменить изменения"
+      },
       "private": {
         "label": "Закрытый канал",
         "description": "Только выбранные участники и роли смогут видеть этот канал.",
@@ -441,6 +450,7 @@
       "sendMessages": "Отправка сообщений",
       "manageMessages": "Управление сообщениями",
       "attachFiles": "Прикрепление файлов",
+      "mentionEveryone": "Упоминать @everyone",
       "readMessageHistory": "Чтение истории сообщений",
       "addReactions": "Добавление реакций",
       "connect": "Подключение",
@@ -621,6 +631,10 @@
     "selectChannel": "Выберите канал",
     "selectChannelHint": "Выберите текстовый или голосовой канал, чтобы начать",
     "notificationSettings": "Настройки уведомлений",
+    "topic": {
+      "show": "Показать тему полностью",
+      "dialogTitle": "#{{name}}"
+    },
     "voice": {
       "connectionFailed": "Не удалось подключиться",
       "connected": "Подключено",
@@ -647,6 +661,7 @@
       "memberCount_many": "({{count}} участников)",
       "memberCount_other": "({{count}} участника)",
       "startVoiceCall": "Начать голосовой звонок",
+      "joinCall": "Присоединиться к звонку",
       "startVideoCall": "Начать видеозвонок",
       "addFriends": "Добавить друзей в беседу"
     }
@@ -663,37 +678,29 @@
     "failed": "Не удалось передать права владельца"
   },
   "notifications": {
-    "title": "Настройки уведомлений",
-    "description": "Без звука и системных уведомлений. Сообщения и отметки непрочитанного сохраняются. Отключение пространства действует и на каналы.",
-    "level": "Уведомлять о",
-    "inherit": "По умолчанию / как в пространстве",
-    "all": "Всех сообщениях",
-    "mentions": "Только упоминаниях",
-    "nothing": "Ничём",
-    "mute": "Без уведомлений",
-    "off": "Не отключены",
-    "minutes15": "15 минут",
-    "hour1": "1 час",
-    "hours8": "8 часов",
-    "forever": "До включения вручную",
-    "existing": "Сохранить текущее время",
-    "suppressEveryone": "Подавлять @everyone и @here",
-    "suppressRoles": "Подавлять упоминания ролей",
-    "save": "Сохранить",
-    "saving": "Сохранение…",
-    "permission": "Упоминать @everyone, @here и роли",
-    "unmute": "Включить уведомления",
-    "muted": "Уведомления отключены",
-    "active": "Уведомления включены",
-    "expiringNow": "истекает сейчас",
-    "remainingMinutes_one": "осталась {{count}} мин.",
-    "remainingMinutes_few": "осталось {{count}} мин.",
-    "remainingMinutes_many": "осталось {{count}} мин.",
-    "remainingMinutes_other": "осталось {{count}} мин.",
-    "remainingHours_one": "остался {{count}} час",
-    "remainingHours_few": "осталось {{count}} часа",
-    "remainingHours_many": "осталось {{count}} часов",
-    "remainingHours_other": "осталось {{count}} часов",
-    "remainingHoursMinutes": "осталось {{hours}} ч. {{minutes}} мин."
+    "open": "Настройки уведомлений",
+    "channelTitle": "Уведомления для #{{channel}}",
+    "spaceTitle": "Уведомления для «{{space}}»",
+    "levelHeading": "Уведомлять",
+    "level": {
+      "all": "Обо всех сообщениях",
+      "mentions": "Только об @упоминаниях",
+      "nothing": "Ни о чём",
+      "inherit": "Как в пространстве ({{level}})"
+    },
+    "dmNote": "О личных сообщениях вы получаете уведомления всегда.",
+    "muteHeading": "Заглушить",
+    "mute": {
+      "oneHour": "На 1 час",
+      "eightHours": "На 8 часов",
+      "oneDay": "На 24 часа",
+      "indefinite": "Пока я не отменю"
+    },
+    "unmute": "Отменить заглушение",
+    "mutedUntil": "Заглушено до {{time}}",
+    "mutedIndefinitely": "Заглушено, пока вы не отмените",
+    "spaceMuted": "Это пространство заглушено, поэтому заглушены и его каналы.",
+    "mutedIndicator": "Заглушено",
+    "saveFailed": "Не удалось сохранить настройки уведомлений"
   }
 }

@@ -1,126 +1,261 @@
-import type { FastifyInstance } from 'fastify';
-import { and, eq } from 'drizzle-orm';
-import type { NotificationLevel, NotificationSetting, NotificationTargetType, UpdateNotificationSettingRequest } from '@backspace/shared';
+import type { FastifyInstance, FastifyReply } from 'fastify';
+import { and, eq, isNull } from 'drizzle-orm';
+import {
+  isMuteActive,
+  isNotificationLevel,
+  isNotificationMuteDuration,
+  NOTIFICATION_MUTE_DURATION_MS,
+  type NotificationLevel,
+  type NotificationMuteDuration,
+  type NotificationSetting,
+  type NotificationSettingsResponse,
+  type UpdateNotificationSettingRequest,
+} from '@backspace/shared';
 import { getDb, schema } from '../db/index.js';
 import { authenticate } from '../utils/auth.js';
-import { getChannelSpaceId, isMember } from '../utils/permissions.js';
+import { computePermissions, isMember, PermissionBits } from '../utils/permissions.js';
 import { sendError } from '../utils/httpErrors.js';
 import { connectionManager } from '../ws/handler.js';
 
 /**
- * Per-user notification settings for spaces and channels on this instance
- * (docs/systems/api.md, "Notification settings"). The client applies them when
- * deciding whether a message alerts; the server only stores and syncs them.
+ * Per-space and per-channel notification settings of the signed-in user.
+ *
+ * Stored on the instance that hosts the space, keyed by the caller's row on
+ * this instance. A federated member reaches these routes with their account
+ * here (the client routes by the space's origin), so `request.userId` is
+ * already the right identity; no global user id is assumed.
+ *
+ * Every change is pushed to the user's other sessions on this instance as
+ * `notification_settings_updated`. See docs/systems/api.md and
+ * docs/systems/sounds.md ("Notification settings").
  */
 
-const LEVELS: readonly NotificationLevel[] = ['all', 'mentions', 'nothing'];
-const TARGET_TYPES: readonly NotificationTargetType[] = ['space', 'channel'];
+type SettingRow = typeof schema.notificationSettings.$inferSelect;
 
-type Row = typeof schema.notificationSettings.$inferSelect;
+/** What a PATCH leaves the row as, before it is stored or deleted. */
+interface SettingState {
+  level: NotificationLevel | null;
+  muted: boolean;
+  mutedUntil: number | null;
+}
 
-export function notificationRowToSetting(row: Row): NotificationSetting {
+export function rowToNotificationSetting(row: SettingRow): NotificationSetting {
   return {
-    targetType: row.targetType as NotificationTargetType,
-    targetId: row.targetId,
-    level: row.level as NotificationLevel | null,
-    mutedUntil: row.mutedUntil,
-    suppressEveryone: row.suppressEveryone === 1,
-    suppressRoles: row.suppressRoles === 1,
+    spaceId: row.spaceId,
+    channelId: row.channelId ?? null,
+    level: isNotificationLevel(row.level) ? row.level : null,
+    muted: row.muted === 1,
+    mutedUntil: row.muted === 1 ? row.mutedUntil ?? null : null,
+    updatedAt: row.updatedAt,
   };
 }
 
-/** Every setting the user holds on this instance; part of the ready payload. */
 export function listNotificationSettings(userId: string): NotificationSetting[] {
-  return getDb().select().from(schema.notificationSettings)
+  const db = getDb();
+  const rows = db.select()
+    .from(schema.notificationSettings)
     .where(eq(schema.notificationSettings.userId, userId))
-    .all()
-    .map(notificationRowToSetting);
+    .all();
+  return rows.map(rowToNotificationSetting);
 }
 
-/** The space a target belongs to, or null when the target does not exist. */
-function targetSpaceId(targetType: NotificationTargetType, targetId: string): string | null {
-  if (targetType === 'channel') return getChannelSpaceId(targetId);
-  const space = getDb().select({ id: schema.spaces.id }).from(schema.spaces)
-    .where(eq(schema.spaces.id, targetId)).get();
-  return space?.id ?? null;
+type ParsedBody =
+  | { ok: true; level: NotificationLevel | null | undefined; mute: NotificationMuteDuration | null | undefined }
+  | { ok: false };
+
+/** Validates a PATCH body. At least one known field, each of the right shape. */
+export function parseUpdateBody(body: unknown): ParsedBody {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return { ok: false };
+  const input = body as Record<string, unknown>;
+  const hasLevel = Object.prototype.hasOwnProperty.call(input, 'level');
+  const hasMute = Object.prototype.hasOwnProperty.call(input, 'mute');
+  if (!hasLevel && !hasMute) return { ok: false };
+
+  let level: NotificationLevel | null | undefined;
+  if (hasLevel) {
+    if (input.level === null) level = null;
+    else if (isNotificationLevel(input.level)) level = input.level;
+    else return { ok: false };
+  }
+
+  let mute: NotificationMuteDuration | null | undefined;
+  if (hasMute) {
+    if (input.mute === null) mute = null;
+    else if (isNotificationMuteDuration(input.mute)) mute = input.mute;
+    else return { ok: false };
+  }
+
+  return { ok: true, level, mute };
 }
 
-/** Returns the field that fails validation, or null when the body is valid. */
-function invalidField(body: UpdateNotificationSettingRequest | undefined): string | null {
-  if (!body || typeof body !== 'object') return 'body';
-  if (body.level !== null && !LEVELS.includes(body.level)) return 'level';
-  if (body.mutedUntil !== null && (!Number.isSafeInteger(body.mutedUntil) || body.mutedUntil <= 0)) return 'mutedUntil';
-  if (typeof body.suppressEveryone !== 'boolean') return 'suppressEveryone';
-  if (typeof body.suppressRoles !== 'boolean') return 'suppressRoles';
-  return null;
+/**
+ * The state after applying a change to the stored one. A mute that already
+ * ended is read as no mute, so it never survives into the new row.
+ */
+export function applyUpdate(
+  existing: SettingRow | undefined,
+  change: { level: NotificationLevel | null | undefined; mute: NotificationMuteDuration | null | undefined },
+  now: number,
+): SettingState {
+  const stored = existing ? rowToNotificationSetting(existing) : null;
+  const level = change.level !== undefined ? change.level : stored?.level ?? null;
+
+  let muted = isMuteActive(stored, now);
+  let mutedUntil = muted ? stored?.mutedUntil ?? null : null;
+  if (change.mute === null) {
+    muted = false;
+    mutedUntil = null;
+  } else if (change.mute !== undefined) {
+    muted = true;
+    mutedUntil = change.mute === 'indefinite' ? null : now + NOTIFICATION_MUTE_DURATION_MS[change.mute];
+  }
+
+  return { level, muted, mutedUntil };
+}
+
+function findRow(userId: string, spaceId: string, channelId: string | null): SettingRow | undefined {
+  const db = getDb();
+  const t = schema.notificationSettings;
+  return db.select().from(t)
+    .where(channelId === null
+      ? and(eq(t.userId, userId), eq(t.spaceId, spaceId), isNull(t.channelId))
+      : and(eq(t.userId, userId), eq(t.channelId, channelId)))
+    .get();
+}
+
+/**
+ * Writes the new state for one target and returns what the client is sent.
+ * A state with nothing chosen deletes the row; the returned setting then
+ * carries level null and not muted, which is how other sessions learn to
+ * drop theirs.
+ */
+function storeSetting(
+  userId: string,
+  spaceId: string,
+  channelId: string | null,
+  change: { level: NotificationLevel | null | undefined; mute: NotificationMuteDuration | null | undefined },
+): NotificationSetting {
+  const db = getDb();
+  const t = schema.notificationSettings;
+  return db.transaction(() => {
+    const existing = findRow(userId, spaceId, channelId);
+    const now = Date.now();
+    const next = applyUpdate(existing, change, now);
+    // Strictly after the stored write, so a client's last-write-wins merge
+    // never ties two different states on one timestamp.
+    const updatedAt = Math.max(now, (existing?.updatedAt ?? 0) + 1);
+
+    if (next.level === null && !next.muted) {
+      if (existing) {
+        db.delete(t)
+          .where(channelId === null
+            ? and(eq(t.userId, userId), eq(t.spaceId, spaceId), isNull(t.channelId))
+            : and(eq(t.userId, userId), eq(t.channelId, channelId)))
+          .run();
+      }
+      return { spaceId, channelId, level: null, muted: false, mutedUntil: null, updatedAt };
+    }
+
+    const values = {
+      level: next.level,
+      muted: next.muted ? 1 : 0,
+      mutedUntil: next.mutedUntil,
+      updatedAt,
+    };
+    if (existing) {
+      db.update(t)
+        .set(values)
+        .where(channelId === null
+          ? and(eq(t.userId, userId), eq(t.spaceId, spaceId), isNull(t.channelId))
+          : and(eq(t.userId, userId), eq(t.channelId, channelId)))
+        .run();
+    } else {
+      db.insert(t).values({ userId, spaceId, channelId, ...values }).run();
+    }
+    return { spaceId, channelId, level: next.level, muted: next.muted, mutedUntil: next.mutedUntil, updatedAt };
+  });
+}
+
+function canViewChannel(userId: string, spaceId: string, channelId: string): boolean {
+  const perms = computePermissions(userId, spaceId, channelId);
+  return (perms & PermissionBits.VIEW_CHANNEL) !== 0n || (perms & PermissionBits.ADMINISTRATOR) !== 0n;
+}
+
+function respondWithSetting(reply: FastifyReply, userId: string, setting: NotificationSetting): FastifyReply {
+  connectionManager.sendToUser(userId, { type: 'notification_settings_updated', setting });
+  return reply.code(200).send(setting);
 }
 
 export async function notificationSettingsRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/api/users/@me/notification-settings', { preHandler: authenticate }, async (request) => {
-    return listNotificationSettings(request.userId);
+  // GET /api/users/@me/notification-settings: every stored setting of the
+  // caller on this instance, limited to spaces they are a member of and to
+  // channels they can still see.
+  app.get('/api/users/@me/notification-settings', { preHandler: authenticate }, async (request, reply) => {
+    const db = getDb();
+    const rows = db.select().from(schema.notificationSettings)
+      .where(eq(schema.notificationSettings.userId, request.userId))
+      .all();
+
+    const memberOf = new Map<string, boolean>();
+    const settings: NotificationSetting[] = [];
+    for (const row of rows) {
+      let member = memberOf.get(row.spaceId);
+      if (member === undefined) {
+        member = isMember(row.spaceId, request.userId);
+        memberOf.set(row.spaceId, member);
+      }
+      if (!member) continue;
+      if (row.channelId !== null && !canViewChannel(request.userId, row.spaceId, row.channelId)) continue;
+      settings.push(rowToNotificationSetting(row));
+    }
+
+    const body: NotificationSettingsResponse = { settings };
+    return reply.code(200).send(body);
   });
 
-  // PUT /api/users/@me/notification-settings/:targetType/:targetId — replace one setting
-  app.put<{ Params: { targetType: string; targetId: string }; Body: UpdateNotificationSettingRequest }>(
-    '/api/users/@me/notification-settings/:targetType/:targetId',
+  // PATCH /api/spaces/:spaceId/notification-settings: the space-wide setting.
+  app.patch<{ Params: { spaceId: string }; Body: UpdateNotificationSettingRequest }>(
+    '/api/spaces/:spaceId/notification-settings',
     { preHandler: authenticate },
     async (request, reply) => {
-      const { targetType, targetId } = request.params;
-      if (!TARGET_TYPES.includes(targetType as NotificationTargetType)) {
-        return sendError(reply, 400, 'validation_failed', { field: 'targetType', reason: 'must be space or channel' });
-      }
-      const type = targetType as NotificationTargetType;
-      const bad = invalidField(request.body);
-      if (bad) {
-        return sendError(reply, 400, 'validation_failed', { field: bad, reason: 'invalid value' });
-      }
+      const { spaceId } = request.params;
+      const parsed = parseUpdateBody(request.body);
+      if (!parsed.ok) return sendError(reply, 400, 'validation_failed');
 
-      // Suppression is space-scoped; reject channel filters rather than silently discarding them.
-      if (type === 'channel' && (request.body.suppressEveryone || request.body.suppressRoles)) {
-        return sendError(reply, 400, 'validation_failed', { field: 'suppressEveryone/suppressRoles', reason: 'filters are space-only' });
-      }
-
-      const spaceId = targetSpaceId(type, targetId);
-      if (!spaceId) {
-        return sendError(reply, 404, type === 'space' ? 'space_not_found' : 'channel_not_found');
-      }
-      if (!isMember(spaceId, request.userId)) {
-        return sendError(reply, 403, 'not_space_member');
-      }
-
-      const body = request.body;
-      // Mention filters are a space-wide choice; a channel row never carries them.
-      const values = {
-        level: body.level,
-        mutedUntil: body.mutedUntil,
-        suppressEveryone: type === 'space' && body.suppressEveryone ? 1 : 0,
-        suppressRoles: type === 'space' && body.suppressRoles ? 1 : 0,
-        updatedAt: Date.now(),
-      };
       const db = getDb();
-      db.insert(schema.notificationSettings)
-        .values({ userId: request.userId, targetType: type, targetId, ...values })
-        .onConflictDoUpdate({
-          target: [schema.notificationSettings.userId, schema.notificationSettings.targetType, schema.notificationSettings.targetId],
-          set: values,
-        })
-        .run();
+      const space = db.select({ id: schema.spaces.id }).from(schema.spaces)
+        .where(eq(schema.spaces.id, spaceId)).get();
+      if (!space) return sendError(reply, 404, 'space_not_found');
+      if (!isMember(spaceId, request.userId)) return sendError(reply, 403, 'not_space_member');
 
-      const row = db.select().from(schema.notificationSettings)
-        .where(and(
-          eq(schema.notificationSettings.userId, request.userId),
-          eq(schema.notificationSettings.targetType, type),
-          eq(schema.notificationSettings.targetId, targetId),
-        ))
+      const setting = storeSetting(request.userId, spaceId, null, parsed);
+      return respondWithSetting(reply, request.userId, setting);
+    },
+  );
+
+  // PATCH /api/channels/:channelId/notification-settings: one channel's setting.
+  app.patch<{ Params: { channelId: string }; Body: UpdateNotificationSettingRequest }>(
+    '/api/channels/:channelId/notification-settings',
+    { preHandler: authenticate },
+    async (request, reply) => {
+      const { channelId } = request.params;
+      const parsed = parseUpdateBody(request.body);
+      if (!parsed.ok) return sendError(reply, 400, 'validation_failed');
+
+      const db = getDb();
+      const channel = db.select({ id: schema.channels.id, spaceId: schema.channels.spaceId })
+        .from(schema.channels)
+        .where(eq(schema.channels.id, channelId))
         .get();
-      if (!row) {
-        return sendError(reply, 500, 'internal_error');
+      if (!channel) return sendError(reply, 404, 'channel_not_found');
+      if (!isMember(channel.spaceId, request.userId)) return sendError(reply, 403, 'not_space_member');
+      // Refused as the message routes refuse a channel the caller cannot see.
+      if (!canViewChannel(request.userId, channel.spaceId, channelId)) {
+        return sendError(reply, 403, 'missing_permission', { permission: 'VIEW_CHANNEL' });
       }
-      const setting = notificationRowToSetting(row);
 
-      // Multi-device sync: every session of this user applies the new setting.
-      connectionManager.sendToUser(request.userId, { type: 'notification_setting_updated', setting });
-      return reply.code(200).send(setting);
+      const setting = storeSetting(request.userId, channel.spaceId, channelId, parsed);
+      return respondWithSetting(reply, request.userId, setting);
     },
   );
 }

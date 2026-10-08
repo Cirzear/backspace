@@ -1,4 +1,4 @@
-import { PermissionBits, stringToPermissions } from './permissions';
+import { stringToPermissions } from './permissions';
 import type { OverrideBits } from '@backspace/shared/src/permissions';
 
 // Channel and category overrides as the client reads and edits them
@@ -12,6 +12,16 @@ export interface StoredOverride {
   targetId: string;
   allow: string;
   deny: string;
+}
+
+/**
+ * One target's override as an editor writes it: the whole row, with the
+ * version of the row the edit started from (`overrideVersion` of the row as
+ * loaded, `NO_OVERRIDE_VERSION` when there was none), so the server can refuse
+ * a write made from an outdated copy (permissions.md, "Concurrent edits").
+ */
+export interface OverrideWrite extends StoredOverride {
+  version: string;
 }
 
 /** Where a bit of an override stands: allowed, denied, or left to the tier above. */
@@ -38,14 +48,4 @@ export function withOverrideBits(current: OverrideBits | null, bits: bigint, sta
 /** The override of one target, found by type and id. */
 export function findOverride(overrides: readonly StoredOverride[], targetType: string, targetId: string): StoredOverride | undefined {
   return overrides.find((o) => o.targetType === targetType && o.targetId === targetId);
-}
-
-/**
- * Whether these overrides hide their channel or category from everyone: the
- * @everyone override (the role whose id is the space id) denies View
- * Channels. This is what "private" means in channel and category settings.
- */
-export function isHiddenFromEveryone(overrides: readonly StoredOverride[], spaceId: string): boolean {
-  const everyone = overrideBitsOf(findOverride(overrides, 'role', spaceId));
-  return everyone !== null && (everyone.deny & PermissionBits.VIEW_CHANNEL) !== 0n;
 }

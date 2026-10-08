@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getApiForOrigin, type TaggedSpace } from '../stores/spaceStore';
 import { describeError } from '../i18n/errors';
-import { permissionsToString } from '../utils/permissions';
+import { permissionsToString, overrideVersion } from '../utils/permissions';
 import {
   findOverride,
   overrideBitsOf,
   withOverrideBits,
   type OverrideBitState,
+  type OverrideWrite,
   type StoredOverride,
 } from '../utils/overrideBits';
 
@@ -22,15 +23,19 @@ export interface EntityOverrides {
   error: string;
   /** List the overrides again. */
   reload: () => Promise<void>;
-  /** Write one whole override row. */
-  put: (row: StoredOverride) => Promise<unknown>;
-  /** Remove one override row. */
-  remove: (targetType: string, targetId: string) => Promise<unknown>;
+  /**
+   * Write one whole override row, made from the row whose version it names;
+   * rejects with `overrides_conflict` when the stored row has changed since.
+   */
+  put: (row: OverrideWrite) => Promise<unknown>;
+  /** Remove one override row, as loaded at `version`; rejects with `overrides_conflict` when it has changed since. */
+  remove: (targetType: string, targetId: string, version: string) => Promise<unknown>;
   /**
    * Put `bits` of one target's override in `state` and leave every other bit
    * of it alone: the row is written with the change, or removed when nothing
    * is left on it. Then the list is read again. Rejects with the server's
-   * error when the write is refused.
+   * error when the write is refused, `overrides_conflict` when the row
+   * changed after this list was read.
    */
   setBits: (targetType: string, targetId: string, bits: bigint, state: OverrideBitState) => Promise<void>;
 }
@@ -85,24 +90,28 @@ export function useEntityOverrides(
     void reload();
   }, [reload, entityId, enabled]);
 
-  const put = useCallback((row: StoredOverride) => {
+  const put = useCallback((row: OverrideWrite) => {
     if (!entityId) return Promise.reject(new Error('no entity'));
     return routes().putOverride(entityId, row);
   }, [entityId, routes]);
 
-  const remove = useCallback((targetType: string, targetId: string) => {
+  const remove = useCallback((targetType: string, targetId: string, version: string) => {
     if (!entityId) return Promise.reject(new Error('no entity'));
-    return routes().deleteOverride(entityId, targetType, targetId);
+    return routes().deleteOverride(entityId, targetType, targetId, version);
   }, [entityId, routes]);
 
   const setBits = useCallback(async (targetType: string, targetId: string, bits: bigint, state: OverrideBitState) => {
-    const current = overrideBitsOf(findOverride(overrides, targetType, targetId));
+    const loaded = findOverride(overrides, targetType, targetId);
+    const current = overrideBitsOf(loaded);
     const next = withOverrideBits(current, bits, state);
+    // The change is made to the row as this list holds it, so it names that
+    // row's version: a row changed meanwhile is refused, not overwritten.
+    const version = overrideVersion(loaded);
     try {
       if (next) {
-        await put({ targetType, targetId, allow: permissionsToString(next.allow), deny: permissionsToString(next.deny) });
+        await put({ targetType, targetId, allow: permissionsToString(next.allow), deny: permissionsToString(next.deny), version });
       } else if (current) {
-        await remove(targetType, targetId);
+        await remove(targetType, targetId, version);
       }
     } finally {
       await reload();

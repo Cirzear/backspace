@@ -13,6 +13,8 @@ import { roleGrantRefusal } from './spaceRoles.js';
 import { syncNativeVoicePermissions } from '../ws/nativeVoiceSessions.js';
 import { checkVoicePermissions } from '../ws/events.js';
 import { connectionManager } from '../ws/handler.js';
+import { announceAccessChange } from './spaceAccess.js';
+import { memberRolesView } from '../utils/permissionDataView.js';
 
 export function listSpaceMemberRoutes(app: FastifyInstance): void {
   // GET /api/spaces/:id/members - List server members
@@ -63,16 +65,7 @@ export function listSpaceMemberRoutes(app: FastifyInstance): void {
           .filter(mr => mr.userId === m.userId)
           .map(mr => mr.roleId);
 
-        const assignedRoles = roles
-          .filter(r => assignedRoleIds.includes(r.id))
-          .map(r => ({
-            id: r.id,
-            spaceId: r.spaceId,
-            name: r.name,
-            color: r.color ?? '#b9bbbe',
-            position: r.position ?? 0,
-            createdAt: r.createdAt,
-          }));
+        const assignedRoles = memberRolesView(roles, new Set(assignedRoleIds));
 
         return {
           spaceId: m.spaceId,
@@ -238,9 +231,7 @@ export function updateSpaceMemberRoutes(app: FastifyInstance): void {
     persistMemberUpdate({ spaceId: id, userId: uid }, request.body);
 
     if (roleIds !== undefined) {
-      // Recompute the target's permissions in addition to refreshing everyone's member display.
-      connectionManager.pushReadyPayload(uid);
-      checkVoicePermissions(id);
+      announceAccessChange(id, [uid]);
     }
 
     return publishUpdatedMember(id, uid, reply);
@@ -282,16 +273,7 @@ function publishUpdatedMember(id: string, uid: string, reply: FastifyReply) {
     .orderBy(schema.roles.position)
     .all();
 
-  const memberRoles = allRoles
-    .filter(r => updatedRoleIds.includes(r.id))
-    .map(r => ({
-      id: r.id,
-      spaceId: r.spaceId,
-      name: r.name,
-      color: r.color ?? '#b9bbbe',
-      position: r.position ?? 0,
-      createdAt: r.createdAt,
-    }));
+  const memberRoles = memberRolesView(allRoles, new Set(updatedRoleIds));
 
   const result: MemberWithUser = {
     spaceId: updatedMember.spaceId,

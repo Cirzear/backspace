@@ -73,8 +73,10 @@ const DETACHED_ID = 'detached-1';
 const DETACHED_HOME_UID = 'old-home-uid';
 
 // A REAL federated account whose home domain (orbit.test) was reset. It has been
-// detached (federationHomeOrphaned = 1): sovereign local account, never re-bindable
-// to the reset domain's new incarnation.
+// detached (federationHomeOrphaned = 1): sovereign local account homed here (its
+// former identity kept in the detached_home_* columns), never re-bindable to the
+// reset domain's new incarnation. Every guard below is driven by the new
+// incarnation replaying the FORMER identity.
 function seedDetachedAccount(): void {
   testDb.insert(schema.users).values({
     id: DETACHED_ID,
@@ -84,8 +86,10 @@ function seedDetachedAccount(): void {
     status: 'offline',
     isAdmin: 0,
     isDeleted: 0,
-    homeInstance: PEER_DOMAIN,
-    homeUserId: DETACHED_HOME_UID,
+    homeInstance: null,
+    homeUserId: null,
+    detachedHomeInstance: PEER_DOMAIN,
+    detachedHomeUserId: DETACHED_HOME_UID,
     federationHomeOrphaned: 1,
     profileUpdatedAt: 1000,
     createdAt: Date.now(),

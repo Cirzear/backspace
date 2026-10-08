@@ -2,38 +2,230 @@ import type { WebSocket } from 'ws';
 import { eq } from 'drizzle-orm';
 import { getDb, schema } from '../db/index.js';
 import { generateSnowflake } from '../utils/snowflake.js';
-import { connectionManager } from './connectionManager.js';
-import type { DmRoomMeta } from './voiceRoomTypes.js';
+import { connectionManager } from './handler.js';
+import type { DmRoomMeta, FederatedCallEntry, SpaceRoomMeta, VoiceRoom } from './voiceRoomTypes.js';
 import { isDmMember } from '../utils/permissions.js';
 import { reopenForClosedMembers } from '../routes/dm.js';
 import { type ServerEvent, type DmCallUndeliverableFailure, type DmCallUndeliverableReason } from '@backspace/shared';
+import type { ErrorCode } from '@backspace/shared/src/errors';
 import type { CallRelayResult, CallFanoutFailure } from '../utils/federationOutbox.js';
 import { mapCallReasonToEventReason } from '../utils/federationOutbox.js';
 import { sendCallRelay } from '../utils/federationOutbox.js';
 import { canonicalizeHomeInstance, getOurOrigin, normalizeOriginForCompare } from '../utils/federationAuth.js';
 import { generateFederatedCallToken } from '../routes/livekit.js';
 import { config } from '../config.js';
-import { broadcastRoomLeave } from './voiceEvents.js';
+import { ERROR_MESSAGES } from '../utils/httpErrors.js';
 
 // ─── DM Call Handlers (Unified Room API) ───────────────────────────────────
 
-export function handleDmCallStart(event: Record<string, unknown>, userId: string, username: string, ws: WebSocket): void {
-  const dmChannelId = event.dmChannelId as string;
+/** Helper: broadcast a voice leave and end a DM call its last participant left. */
+export function broadcastRoomLeave(roomId: string, room: VoiceRoom, userId: string): void {
+  if (room.roomType === 'space') {
+    const meta = room.metadata as SpaceRoomMeta;
+    connectionManager.sendToSpace(meta.spaceId, {
+      type: 'voice_state_update',
+      channelId: roomId,
+      userId,
+      action: 'leave',
+    });
+  } else if (connectionManager.afterDmCallLeave(roomId, userId) === 'ended') {
+    sendFederatedCallEnd(roomId, userId).catch(err =>
+      console.error('[federation] sendFederatedCallEnd (last participant left) error:', err),
+    );
+  }
+}
+
+/**
+ * Refuse a `dm_call_start` or `dm_call_accept` on the socket that sent it.
+ * Only that socket set a calling or joined state, and another session of the
+ * same user may be the one in a call in this DM, so the refusal is not sent
+ * to the user's other sessions. `dmChannelId` tells the client which call
+ * state to drop.
+ */
+function refuseDmCall(ws: WebSocket, code: ErrorCode, dmChannelId?: string): void {
+  connectionManager.sendToWs(ws, { type: 'error', message: ERROR_MESSAGES[code], code, dmChannelId });
+}
+
+/**
+ * `userId` joins the call hosted here for `dmChannelId`. The first join turns
+ * a ringing call active and seats its caller; any later one is a late join,
+ * which every call allows (voice.md, "DM Call State Machine").
+ */
+async function joinHostedDmCall(dmChannelId: string, userId: string, ws: WebSocket): Promise<void> {
+  const room = connectionManager.getRoom(dmChannelId);
+  if (!room || room.roomType !== 'dm') return;
+  const meta = room.metadata as DmRoomMeta;
+
+  if (meta.state === 'ringing') {
+    connectionManager.activateDmRoom(dmChannelId);
+    const callerLeft = connectionManager.leaveCurrentRoom(meta.callerId);
+    if (callerLeft) broadcastRoomLeave(callerLeft.roomId, callerLeft.room, meta.callerId);
+    connectionManager.joinRoom(dmChannelId, meta.callerId);
+    connectionManager.sendToDmMembers(dmChannelId, {
+      type: 'voice_state_update',
+      channelId: dmChannelId,
+      userId: meta.callerId,
+      action: 'join',
+    });
+  }
+
+  // Leave the room the user is in, unless it is this call: a session taking
+  // the call over from another session of the same user must not empty, and
+  // so end, the call it is joining.
+  if (connectionManager.getUserRoom(userId)?.roomId !== dmChannelId) {
+    const acceptorLeft = connectionManager.leaveCurrentRoom(userId);
+    if (acceptorLeft) broadcastRoomLeave(acceptorLeft.roomId, acceptorLeft.room, userId);
+  }
+  leaveJoinedFederatedCall(userId);
+  meta.declinedUserIds.delete(userId);
+  connectionManager.joinRoom(dmChannelId, userId);
+  connectionManager.setVoiceWs(userId, ws);
+  // Look up federatedId for the broadcast so all clients (including remote) can match
+  const fedIdRow = getDb().select({ federatedId: schema.dmChannels.federatedId })
+    .from(schema.dmChannels).where(eq(schema.dmChannels.id, dmChannelId)).get();
+  connectionManager.sendToDmMembers(dmChannelId, {
+    type: 'dm_call_accepted',
+    dmChannelId,
+    federatedCallId: fedIdRow?.federatedId ?? undefined,
+  } as ServerEvent);
+  connectionManager.sendToDmMembers(dmChannelId, {
+    type: 'voice_state_update',
+    channelId: dmChannelId,
+    userId,
+    action: 'join',
+  });
+  const acceptFanoutFailures = await sendFederatedCallAccept(dmChannelId, userId);
+  emitFanoutUndeliverable(
+    userId,
+    dmChannelId,
+    fedIdRow?.federatedId ?? null,
+    'accept',
+    acceptFanoutFailures,
+  );
+}
+
+/**
+ * Relay a member's accept, decline or hang-up of a call hosted on a peer to
+ * its host, in that member's name. A group call (`FederatedCallEntry.group`)
+ * carries `perMember`: this instance applies the group rules and keeps the
+ * call for its other members, and it tells the host when this member leaves
+ * (voice.md, "Group calls across instances").
+ */
+function relayToCallHost(
+  fedCall: FederatedCallEntry,
+  userId: string,
+  eventType: 'dm_call_accept' | 'dm_call_reject' | 'dm_call_end',
+): Promise<CallRelayResult> {
+  const user = getDb().select({ homeUserId: schema.users.homeUserId })
+    .from(schema.users)
+    .where(eq(schema.users.id, userId))
+    .get();
+  const actor = { homeUserId: user?.homeUserId || userId, homeInstance: getOurOrigin() };
+  const perMember = fedCall.group ? { perMember: true } : {};
+  const call = eventType === 'dm_call_accept' ? { acceptor: actor, ...perMember }
+    : eventType === 'dm_call_reject' ? { rejector: actor, ...perMember }
+      : { endedBy: actor, ...perMember };
+  return sendCallRelay(fedCall.federatedCallHost, [{
+    eventType,
+    messageId: generateSnowflake(),
+    encryptionVersion: 0,
+    timestamp: Date.now(),
+    federatedId: fedCall.federatedId,
+    call,
+  }]);
+}
+
+/**
+ * `userId` leaves the call hosted on a peer that they joined through this
+ * instance, without a hang-up of their own: their voice session was lost
+ * past its reconnect grace, they joined other voice or another call, or their
+ * account is going. In a group call this is their hang-up: they leave the
+ * entry, and the host hears it (`perMember`) and ends the call with its last
+ * participant. Any other entry keeps the rules a host up to 1.8.0 applies,
+ * where an end from one member ends the call for everyone: the member only
+ * leaves the entry here, and nothing is relayed.
+ */
+export function leaveJoinedFederatedCall(userId: string): void {
+  const fedCall = connectionManager.getJoinedFederatedCall(userId);
+  if (!fedCall) return;
+  fedCall.joinedUserIds = fedCall.joinedUserIds.filter(id => id !== userId);
+  if (!fedCall.group) return;
+  fedCall.ringedUserIds = fedCall.ringedUserIds.filter(id => id !== userId);
+  const host = fedCall.federatedCallHost;
+  relayToCallHost(fedCall, userId, 'dm_call_end')
+    .then(result => {
+      if (!result.ok) console.error('[federation] dm_call_end relay (member left) to %s failed (%s): %s', host, result.reason, result.error);
+    })
+    .catch(err => console.error('[federation] dm_call_end relay (member left) threw:', err));
+}
+
+/**
+ * Whether the call hosted on a peer for a DM is still live, so a start in
+ * that DM must be refused. It is while it rings (the host's end or the 60 s
+ * ring timeout ends that), and while a member here is in it. The starter's
+ * own place in it counts only while another of their sessions holds it: the
+ * socket that starts a call holds none (the client starts one only then),
+ * and a place no voice session holds any more is gone, so they leave it
+ * first. Anything else is a record the host's end never replaced (a host up
+ * to 1.8.0 ends some calls without telling its peers, and a relay can be
+ * lost). Nobody here is in that call, so it does not block the DM.
+ */
+function federatedCallStillLive(fedCall: FederatedCallEntry, userId: string, ws: WebSocket): boolean {
+  if (fedCall.joinedUserIds.includes(userId)) {
+    const session = connectionManager.getVoiceWs(userId);
+    if (session === undefined || session === ws) leaveJoinedFederatedCall(userId);
+  }
+  return fedCall.state === 'ringing' || fedCall.joinedUserIds.length > 0;
+}
+
+export async function handleDmCallStart(event: Record<string, unknown>, userId: string, username: string, ws: WebSocket): Promise<void> {
+  const dmChannelId = event.dmChannelId;
   if (!dmChannelId || typeof dmChannelId !== 'string') {
-    connectionManager.sendToUser(userId, { type: 'error', message: 'dmChannelId is required' });
+    refuseDmCall(ws, 'validation_failed');
     return;
   }
 
   if (!isDmMember(dmChannelId, userId)) {
-    connectionManager.sendToUser(userId, { type: 'error', message: 'You are not a member of this DM channel' });
+    refuseDmCall(ws, 'not_dm_member', dmChannelId);
     return;
   }
 
-  // Leave current room if in one
+  // The DM already has a call hosted here. A member who is not in it joins
+  // it, as if they had accepted the ring; one who is already in it (as a
+  // participant, or as the caller of a call still ringing) has nothing to
+  // start.
+  const existing = connectionManager.getRoom(dmChannelId);
+  if (existing && existing.roomType === 'dm') {
+    const meta = existing.metadata as DmRoomMeta;
+    if (existing.participants.has(userId) || (meta.state === 'ringing' && meta.callerId === userId)) {
+      refuseDmCall(ws, 'dm_call_in_progress', dmChannelId);
+      return;
+    }
+    await joinHostedDmCall(dmChannelId, userId, ws);
+    return;
+  }
+
+  // The DM has a call hosted on another instance. While that call is live a
+  // second call here would split the conversation across two rooms, and the
+  // host minted its room tokens when the call started, so there is nothing
+  // to join it with: the start is refused. A record of a call that is no
+  // longer live must not block the DM, so it is dropped and the start goes
+  // on (`federatedCallStillLive`).
+  const fedCall = connectionManager.getFederatedCallByDmChannel(dmChannelId);
+  if (fedCall) {
+    if (federatedCallStillLive(fedCall, userId, ws)) {
+      refuseDmCall(ws, 'dm_call_in_progress', dmChannelId);
+      return;
+    }
+    connectionManager.clearFederatedCall(fedCall.federatedId);
+  }
+
+  // Leave current room if in one, and any call hosted on a peer
   const left = connectionManager.leaveCurrentRoom(userId);
   if (left) {
     broadcastRoomLeave(left.roomId, left.room, userId);
   }
+  leaveJoinedFederatedCall(userId);
   connectionManager.clearVoiceUserStatus(userId);
 
   // Cancel any other ringing rooms started by this user
@@ -50,10 +242,11 @@ export function handleDmCallStart(event: Record<string, unknown>, userId: string
     }
   }
 
-  // Create DM room in ringing state (fails if already active)
+  // Create DM room in ringing state. No room exists for this DM (checked
+  // above), so this only fails on a concurrent start.
   const created = connectionManager.createDmRoom(dmChannelId, userId);
   if (!created) {
-    connectionManager.sendToUser(userId, { type: 'error', message: 'A call is already active in this DM channel' });
+    refuseDmCall(ws, 'dm_call_in_progress', dmChannelId);
     return;
   }
 
@@ -83,7 +276,7 @@ export async function handleDmCallAccept(event: Record<string, unknown>, userId:
   let dmChannelId = (event.dmChannelId as string) || null;
   const federatedCallId = (event.federatedCallId as string) || null;
   if (!dmChannelId && !federatedCallId) {
-    connectionManager.sendToUser(userId, { type: 'error', message: 'dmChannelId or federatedCallId is required' });
+    refuseDmCall(ws, 'validation_failed');
     return;
   }
 
@@ -104,53 +297,13 @@ export async function handleDmCallAccept(event: Record<string, unknown>, userId:
   // Path 1: Local room (we're the host) — only possible with dmChannelId
   if (dmChannelId) {
     if (!isDmMember(dmChannelId, userId)) {
-      connectionManager.sendToUser(userId, { type: 'error', message: 'You are not a member of this DM channel' });
+      refuseDmCall(ws, 'not_dm_member', (event.dmChannelId as string) || federatedCallId || undefined);
       return;
     }
 
     const room = connectionManager.getRoom(dmChannelId);
     if (room && room.roomType === 'dm') {
-      const meta = room.metadata as DmRoomMeta;
-
-      if (meta.state === 'ringing') {
-        connectionManager.activateDmRoom(dmChannelId);
-        const callerLeft = connectionManager.leaveCurrentRoom(meta.callerId);
-        if (callerLeft) broadcastRoomLeave(callerLeft.roomId, callerLeft.room, meta.callerId);
-        connectionManager.joinRoom(dmChannelId, meta.callerId);
-        connectionManager.sendToDmMembers(dmChannelId, {
-          type: 'voice_state_update',
-          channelId: dmChannelId,
-          userId: meta.callerId,
-          action: 'join',
-        });
-      }
-
-      const acceptorLeft = connectionManager.leaveCurrentRoom(userId);
-      if (acceptorLeft) broadcastRoomLeave(acceptorLeft.roomId, acceptorLeft.room, userId);
-      connectionManager.joinRoom(dmChannelId, userId);
-      connectionManager.setVoiceWs(userId, ws);
-      // Look up federatedId for the broadcast so all clients (including remote) can match
-      const fedIdRow = getDb().select({ federatedId: schema.dmChannels.federatedId })
-        .from(schema.dmChannels).where(eq(schema.dmChannels.id, dmChannelId)).get();
-      connectionManager.sendToDmMembers(dmChannelId, {
-        type: 'dm_call_accepted',
-        dmChannelId,
-        federatedCallId: fedIdRow?.federatedId ?? undefined,
-      } as ServerEvent);
-      connectionManager.sendToDmMembers(dmChannelId, {
-        type: 'voice_state_update',
-        channelId: dmChannelId,
-        userId,
-        action: 'join',
-      });
-      const acceptFanoutFailures = await sendFederatedCallAccept(dmChannelId, userId);
-      emitFanoutUndeliverable(
-        userId,
-        dmChannelId,
-        fedIdRow?.federatedId ?? null,
-        'accept',
-        acceptFanoutFailures,
-      );
+      await joinHostedDmCall(dmChannelId, userId, ws);
       return;
     }
   }
@@ -163,9 +316,20 @@ export async function handleDmCallAccept(event: Record<string, unknown>, userId:
       : undefined;
 
   if (fedCall) {
+    // The member is in one call at a time: whatever voice they hold here, or
+    // another call hosted on a peer, they leave first.
+    connectionManager.leaveCurrentRoomAnnounced(userId);
+    const otherCall = connectionManager.getJoinedFederatedCall(userId);
+    if (otherCall && otherCall.federatedId !== fedCall.federatedId) connectionManager.leaveFederatedCall(userId);
+
     // Optimistic transition so the acceptor's client flips to active immediately.
     // Rolled back below if the relay to host fails.
     connectionManager.activateFederatedCall(fedCall.federatedId);
+    if (!fedCall.joinedUserIds.includes(userId)) fedCall.joinedUserIds.push(userId);
+    // Voice binding tied to the socket accepting the call: in a group call
+    // the only leave the host hears of when the tab closes or the network
+    // goes.
+    connectionManager.setVoiceWs(userId, ws);
     connectionManager.sendToFederatedCallUsers(fedCall.federatedId, {
       type: 'dm_call_accepted',
       dmChannelId: fedCall.dmChannelId,
@@ -173,25 +337,10 @@ export async function handleDmCallAccept(event: Record<string, unknown>, userId:
     } as ServerEvent);
 
     const db = getDb();
-    const user = db.select({ homeUserId: schema.users.homeUserId })
-      .from(schema.users)
-      .where(eq(schema.users.id, userId))
-      .get();
-    const homeUserId = user?.homeUserId || userId;
-
-    const result = await sendCallRelay(fedCall.federatedCallHost, [{
-      eventType: 'dm_call_accept',
-      messageId: generateSnowflake(),
-      encryptionVersion: 0,
-      timestamp: Date.now(),
-      federatedId: fedCall.federatedId,
-      call: {
-        acceptor: { homeUserId, homeInstance: getOurOrigin() },
-      },
-    }]);
+    const result = await relayToCallHost(fedCall, userId, 'dm_call_accept');
 
     if (!result.ok) {
-      console.error(`[federation] dm_call_accept relay to ${fedCall.federatedCallHost} failed (${result.reason}): ${result.error}`);
+      console.error('[federation] dm_call_accept relay to %s failed (%s): %s', fedCall.federatedCallHost, result.reason, result.error);
       const failure = buildFailureFromResult(result, fedCall.federatedCallHost, db);
       // Clear first so a concurrent end-handler sees a cleared entry (idempotent).
       connectionManager.clearFederatedCall(fedCall.federatedId);
@@ -210,7 +359,9 @@ export async function handleDmCallAccept(event: Record<string, unknown>, userId:
     return;
   }
 
-  connectionManager.sendToUser(userId, { type: 'error', message: 'No active call in this DM channel' });
+  // The call ended before this accept arrived. The client already joined it
+  // on its side, so it is told which call to drop, by the id it sent.
+  refuseDmCall(ws, 'dm_call_not_found', (event.dmChannelId as string) || federatedCallId || undefined);
 }
 
 export async function handleDmCallReject(event: Record<string, unknown>, userId: string): Promise<void> {
@@ -234,11 +385,19 @@ export async function handleDmCallReject(event: Record<string, unknown>, userId:
     if (!isDmMember(dmChannelId, userId)) return;
 
     const room = connectionManager.getRoom(dmChannelId);
-    if (room) {
+    if (room && room.roomType === 'dm') {
       const meta = room.metadata as DmRoomMeta;
-      connectionManager.clearVoiceWs(meta.callerId);
-      connectionManager.destroyRoom(dmChannelId);
-      connectionManager.sendToDmMembers(dmChannelId, { type: 'dm_call_rejected', dmChannelId });
+      if (meta.group) {
+        // A group decline stops only the decliner's ring (all their
+        // sessions). The call ends only when nobody is left to answer it.
+        const outcome = connectionManager.declineGroupDmCall(dmChannelId, userId);
+        if (outcome === 'declined') {
+          connectionManager.sendToUser(userId, { type: 'dm_call_rejected', dmChannelId });
+        }
+        if (outcome !== 'ended') return;
+      } else {
+        connectionManager.endDmRoom(dmChannelId, 'dm_call_rejected');
+      }
       const fedIdRejectRow = getDb().select({ federatedId: schema.dmChannels.federatedId })
         .from(schema.dmChannels).where(eq(schema.dmChannels.id, dmChannelId)).get();
       const rejectFanoutFailures = await sendFederatedCallEnd(dmChannelId, userId);
@@ -261,37 +420,35 @@ export async function handleDmCallReject(event: Record<string, unknown>, userId:
       : undefined;
 
   if (fedCall) {
-    // Optimistic local clear — user intent is to reject.
-    connectionManager.sendToFederatedCallUsers(fedCall.federatedId, {
-      type: 'dm_call_rejected',
-      dmChannelId: fedCall.dmChannelId,
-      federatedCallId: fedCall.federatedId,
-    } as ServerEvent, userId);
     const host = fedCall.federatedCallHost;
     const fedId = fedCall.federatedId;
     const dmId = fedCall.dmChannelId;
-    connectionManager.clearFederatedCall(fedId);
+    if (fedCall.group) {
+      // A member in the call cannot decline it. Anyone else stops ringing
+      // on all their sessions; the call goes on for the others here, and
+      // the host decides whether anyone is left to answer.
+      if (fedCall.joinedUserIds.includes(userId)) return;
+      fedCall.ringedUserIds = fedCall.ringedUserIds.filter(id => id !== userId);
+      connectionManager.sendToUser(userId, {
+        type: 'dm_call_rejected',
+        dmChannelId: dmId,
+        federatedCallId: fedId,
+      } as ServerEvent);
+    } else {
+      // Optimistic local clear: the user means to reject.
+      connectionManager.sendToFederatedCallUsers(fedId, {
+        type: 'dm_call_rejected',
+        dmChannelId: dmId,
+        federatedCallId: fedId,
+      } as ServerEvent, userId);
+      connectionManager.clearFederatedCall(fedId);
+    }
 
     const db = getDb();
-    const user = db.select({ homeUserId: schema.users.homeUserId })
-      .from(schema.users)
-      .where(eq(schema.users.id, userId))
-      .get();
-    const homeUserId = user?.homeUserId || userId;
-
-    const result = await sendCallRelay(host, [{
-      eventType: 'dm_call_reject',
-      messageId: generateSnowflake(),
-      encryptionVersion: 0,
-      timestamp: Date.now(),
-      federatedId: fedId,
-      call: {
-        rejector: { homeUserId, homeInstance: getOurOrigin() },
-      },
-    }]);
+    const result = await relayToCallHost(fedCall, userId, 'dm_call_reject');
 
     if (!result.ok) {
-      console.error(`[federation] dm_call_reject relay to ${host} failed (${result.reason}): ${result.error}`);
+      console.error('[federation] dm_call_reject relay to %s failed (%s): %s', host, result.reason, result.error);
       const failure = buildFailureFromResult(result, host, db);
       connectionManager.sendToUser(userId, {
         type: 'dm_call_undeliverable',
@@ -326,17 +483,18 @@ export async function handleDmCallEnd(event: Record<string, unknown>, userId: st
     if (!isDmMember(dmChannelId, userId)) return;
 
     const room = connectionManager.getRoom(dmChannelId);
-    if (room) {
+    if (room && room.roomType === 'dm') {
       const meta = room.metadata as DmRoomMeta;
-      connectionManager.clearVoiceWs(meta.callerId);
-      for (const participantId of room.participants) {
-        connectionManager.clearVoiceUserStatus(participantId);
-        connectionManager.clearVoiceWs(participantId);
+      if (meta.group) {
+        // Hanging up or cancelling takes only the sender out of a group
+        // call; it ends with the last one out. A member who is not in the
+        // call changes nothing.
+        if (connectionManager.leaveGroupDmCall(dmChannelId, userId) !== 'ended') return;
+      } else {
+        connectionManager.endDmRoom(dmChannelId, 'dm_call_ended');
       }
       const fedIdEndRow = getDb().select({ federatedId: schema.dmChannels.federatedId })
         .from(schema.dmChannels).where(eq(schema.dmChannels.id, dmChannelId)).get();
-      connectionManager.destroyRoom(dmChannelId);
-      connectionManager.sendToDmMembers(dmChannelId, { type: 'dm_call_ended', dmChannelId });
       const endFanoutFailures = await sendFederatedCallEnd(dmChannelId, userId);
       emitFanoutUndeliverable(
         userId,
@@ -357,37 +515,32 @@ export async function handleDmCallEnd(event: Record<string, unknown>, userId: st
       : undefined;
 
   if (fedCall) {
-    // Exclude the user who ended the call — they already disconnected client-side.
-    connectionManager.sendToFederatedCallUsers(fedCall.federatedId, {
-      type: 'dm_call_ended',
-      dmChannelId: fedCall.dmChannelId,
-      federatedCallId: fedCall.federatedId,
-    } as ServerEvent, userId);
     const host = fedCall.federatedCallHost;
     const fedId = fedCall.federatedId;
     const dmId = fedCall.dmChannelId;
-    connectionManager.clearFederatedCall(fedId);
+    if (fedCall.group) {
+      // Only a member in the call can leave it, and the others here stay
+      // in. The host ends the call when its last participant is gone and
+      // tells us with a dm_call_end of its own.
+      if (!fedCall.joinedUserIds.includes(userId)) return;
+      fedCall.joinedUserIds = fedCall.joinedUserIds.filter(id => id !== userId);
+      fedCall.ringedUserIds = fedCall.ringedUserIds.filter(id => id !== userId);
+      if (!connectionManager.getUserRoom(userId)) connectionManager.clearVoiceWs(userId);
+    } else {
+      // Exclude the user who ended the call: they already disconnected client-side.
+      connectionManager.sendToFederatedCallUsers(fedId, {
+        type: 'dm_call_ended',
+        dmChannelId: dmId,
+        federatedCallId: fedId,
+      } as ServerEvent, userId);
+      connectionManager.clearFederatedCall(fedId);
+    }
 
     const db = getDb();
-    const user = db.select({ homeUserId: schema.users.homeUserId })
-      .from(schema.users)
-      .where(eq(schema.users.id, userId))
-      .get();
-    const homeUserId = user?.homeUserId || userId;
-
-    const result = await sendCallRelay(host, [{
-      eventType: 'dm_call_end',
-      messageId: generateSnowflake(),
-      encryptionVersion: 0,
-      timestamp: Date.now(),
-      federatedId: fedId,
-      call: {
-        endedBy: { homeUserId, homeInstance: getOurOrigin() },
-      },
-    }]);
+    const result = await relayToCallHost(fedCall, userId, 'dm_call_end');
 
     if (!result.ok) {
-      console.error(`[federation] dm_call_end relay to ${host} failed (${result.reason}): ${result.error}`);
+      console.error('[federation] dm_call_end relay to %s failed (%s): %s', host, result.reason, result.error);
       const failure = buildFailureFromResult(result, host, db);
       connectionManager.sendToUser(userId, {
         type: 'dm_call_undeliverable',
@@ -489,6 +642,11 @@ async function sendFederatedCallStart(
 
   const callerHomeUserId = members.find(m => m.userId === callerId)?.homeUserId || callerId;
 
+  // A group call follows the group rules here, and the peers holding its
+  // entry are told so (`perMember`, voice.md "Group calls across instances").
+  const room = connectionManager.getRoom(dmChannelId);
+  const perMember = room?.roomType === 'dm' && (room.metadata as DmRoomMeta).group;
+
   // Group remote members by the instance that homes them. Each bucket is the
   // exact set of identities its peer is entitled to act for.
   const targetedPeers = new Map<string, typeof members>();
@@ -540,6 +698,7 @@ async function sendFederatedCallStart(
           displayName: callerName,
         },
         participants,
+        ...(perMember ? { perMember: true } : {}),
       },
     };
   };
@@ -679,44 +838,29 @@ function emitUndeliverableAndMaybeDestroy(args: {
  * No-op when there were no failures or no federatedId to reference.
  */
 function emitFanoutUndeliverable(
-  userId: string,
-  dmChannelId: string | null,
-  federatedId: string | null | undefined,
-  phase: 'accept' | 'reject' | 'end',
-  fanoutFailures: CallFanoutFailure[],
+  userId: string, dmChannelId: string | null, federatedId: string | null | undefined,
+  phase: 'accept' | 'reject' | 'end', fanoutFailures: CallFanoutFailure[],
 ): void {
   if (fanoutFailures.length === 0 || !federatedId) return;
   const failures: DmCallUndeliverableFailure[] = fanoutFailures.map(f => ({
-    reason: f.reason,
-    peerOrigin: f.origin,
-    peerLabel: f.peerLabel,
+    reason: f.reason, peerOrigin: f.origin, peerLabel: f.peerLabel,
   }));
   connectionManager.sendToUser(userId, {
-    type: 'dm_call_undeliverable',
-    dmChannelId,
-    federatedCallId: federatedId,
-    terminal: false,
-    phase,
-    failures,
+    type: 'dm_call_undeliverable', dmChannelId, federatedCallId: federatedId,
+    terminal: false, phase, failures,
   });
 }
 
-async function sendFederatedCallAccept(
-  dmChannelId: string,
-  acceptorUserId: string,
-): Promise<CallFanoutFailure[]> {
+async function sendFederatedCallAccept(dmChannelId: string, acceptorUserId: string): Promise<CallFanoutFailure[]> {
   const db = getDb();
   const channel = db.select({ federatedId: schema.dmChannels.federatedId })
-    .from(schema.dmChannels)
-    .where(eq(schema.dmChannels.id, dmChannelId))
-    .get();
+    .from(schema.dmChannels).where(eq(schema.dmChannels.id, dmChannelId)).get();
   if (!channel?.federatedId) return [];
 
   const members = db.select({ homeInstance: schema.users.homeInstance })
     .from(schema.dmMembers)
     .innerJoin(schema.users, eq(schema.dmMembers.userId, schema.users.id))
-    .where(eq(schema.dmMembers.dmChannelId, dmChannelId))
-    .all();
+    .where(eq(schema.dmMembers.dmChannelId, dmChannelId)).all();
 
   const ourOrigin = getOurOrigin();
   const targets = new Set<string>();
@@ -729,9 +873,7 @@ async function sendFederatedCallAccept(
   if (targets.size === 0) return [];
 
   const user = db.select({ homeUserId: schema.users.homeUserId })
-    .from(schema.users)
-    .where(eq(schema.users.id, acceptorUserId))
-    .get();
+    .from(schema.users).where(eq(schema.users.id, acceptorUserId)).get();
   const homeUserId = user?.homeUserId || acceptorUserId;
 
   const event = {
@@ -740,15 +882,12 @@ async function sendFederatedCallAccept(
     encryptionVersion: 0 as const,
     timestamp: Date.now(),
     federatedId: channel.federatedId,
-    call: {
-      acceptor: { homeUserId, homeInstance: ourOrigin },
-    },
+    call: { acceptor: { homeUserId, homeInstance: ourOrigin } },
   };
 
   const labelByOrigin = new Map<string, string | null>();
   for (const r of db.select({ origin: schema.federationPeers.origin, instanceName: schema.federationPeers.instanceName })
-    .from(schema.federationPeers)
-    .all()) {
+    .from(schema.federationPeers).all()) {
     labelByOrigin.set(r.origin, r.instanceName ?? null);
   }
 
@@ -770,22 +909,16 @@ async function sendFederatedCallAccept(
   return failures;
 }
 
-async function sendFederatedCallEnd(
-  dmChannelId: string,
-  endedByUserId: string,
-): Promise<CallFanoutFailure[]> {
+async function sendFederatedCallEnd(dmChannelId: string, endedByUserId: string): Promise<CallFanoutFailure[]> {
   const db = getDb();
   const channel = db.select({ federatedId: schema.dmChannels.federatedId })
-    .from(schema.dmChannels)
-    .where(eq(schema.dmChannels.id, dmChannelId))
-    .get();
+    .from(schema.dmChannels).where(eq(schema.dmChannels.id, dmChannelId)).get();
   if (!channel?.federatedId) return [];
 
   const members = db.select({ homeInstance: schema.users.homeInstance })
     .from(schema.dmMembers)
     .innerJoin(schema.users, eq(schema.dmMembers.userId, schema.users.id))
-    .where(eq(schema.dmMembers.dmChannelId, dmChannelId))
-    .all();
+    .where(eq(schema.dmMembers.dmChannelId, dmChannelId)).all();
 
   const ourOrigin = getOurOrigin();
   const targets = new Set<string>();
@@ -798,9 +931,7 @@ async function sendFederatedCallEnd(
   if (targets.size === 0) return [];
 
   const endUser = db.select({ homeUserId: schema.users.homeUserId })
-    .from(schema.users)
-    .where(eq(schema.users.id, endedByUserId))
-    .get();
+    .from(schema.users).where(eq(schema.users.id, endedByUserId)).get();
   const resolvedHomeUserId = endUser?.homeUserId || endedByUserId;
 
   const event = {
@@ -809,15 +940,12 @@ async function sendFederatedCallEnd(
     encryptionVersion: 0 as const,
     timestamp: Date.now(),
     federatedId: channel.federatedId,
-    call: {
-      endedBy: { homeUserId: resolvedHomeUserId, homeInstance: ourOrigin },
-    },
+    call: { endedBy: { homeUserId: resolvedHomeUserId, homeInstance: ourOrigin } },
   };
 
   const labelByOrigin = new Map<string, string | null>();
   for (const r of db.select({ origin: schema.federationPeers.origin, instanceName: schema.federationPeers.instanceName })
-    .from(schema.federationPeers)
-    .all()) {
+    .from(schema.federationPeers).all()) {
     labelByOrigin.set(r.origin, r.instanceName ?? null);
   }
 
@@ -852,10 +980,12 @@ export function registerCallRelayHooks(): void {
       console.warn('[federation] Ring-timeout fan-out had failures:', failures);
     }
   });
+  connectionManager.setFederatedCallLeaveHook(leaveJoinedFederatedCall);
 }
 
 // ─── Test-only exports ──────────────────────────────────────────────────────
 /** Direct export for unit tests — do not use in production code paths. */
+export const handleDmCallStartForTest = handleDmCallStart;
 export const handleDmCallAcceptForTest = handleDmCallAccept;
 export const handleDmCallRejectForTest = handleDmCallReject;
 export const handleDmCallEndForTest = handleDmCallEnd;

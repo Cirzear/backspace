@@ -106,8 +106,11 @@ describe('GET /api/federation/reset-events', () => {
       displayName: 'Dave',
       avatarColor: '#abc',
       passwordHash: 'real-hash',
-      homeInstance: 'orbit.ddns.net',
-      homeUserId: 'h',
+      // Detached: homed here, its former home names the origin.
+      homeInstance: null,
+      homeUserId: null,
+      detachedHomeInstance: 'orbit.ddns.net',
+      detachedHomeUserId: 'h',
       federationHomeOrphaned: 1,
       isDeleted: 0,
       createdAt: 1,

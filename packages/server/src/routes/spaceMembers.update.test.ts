@@ -17,11 +17,17 @@ let testDb: ReturnType<typeof drizzle<typeof schema>>;
 let app: FastifyInstance;
 let currentUserId = 'owner';
 const sendToSpace = vi.fn();
-const pushReadyPayload = vi.fn();
+const announceSpaceAccessChange = vi.fn();
 const checkVoicePermissions = vi.fn();
 vi.mock('../db/index.js', () => ({ getDb: () => testDb, getRawDb: () => sqlite, schema }));
 vi.mock('../utils/auth.js', () => ({ authenticate: async (req: { userId?: string }) => { req.userId = currentUserId; } }));
-vi.mock('../ws/handler.js', () => ({ connectionManager: { sendToSpace: (...args: unknown[]) => sendToSpace(...args), pushReadyPayload: (...args: unknown[]) => pushReadyPayload(...args) } }));
+vi.mock('../ws/handler.js', () => ({
+  connectionManager: {
+    sendToSpace: (...args: unknown[]) => sendToSpace(...args),
+    announceSpaceAccessChange: (...args: unknown[]) => announceSpaceAccessChange(...args),
+    getAllRooms: () => [],
+  },
+}));
 
 vi.mock('../ws/events.js', () => ({ checkVoicePermissions: (...args: unknown[]) => checkVoicePermissions(...args) }));
 
@@ -79,7 +85,7 @@ describe('space member nickname and roles', () => {
     const members = (await app.inject('/api/spaces/space/members')).json();
     expect(members.find((m: { userId: string }) => m.userId === 'member').nickname).toBe('宇航员');
     expect(sendToSpace).toHaveBeenCalledWith('space', { type: 'member_updated', spaceId: 'space', member: response.json() });
-    expect(pushReadyPayload).not.toHaveBeenCalled();
+    expect(announceSpaceAccessChange).not.toHaveBeenCalled();
     expect(checkVoicePermissions).not.toHaveBeenCalled();
   });
 
@@ -127,7 +133,7 @@ describe('space member nickname and roles', () => {
     const response = await update({ roleIds: ['manager-role'] });
     expect(response.statusCode).toBe(200);
     expect(response.json().roles.map((r: { id: string }) => r.id)).toEqual(['manager-role']);
-    expect(pushReadyPayload).toHaveBeenCalledWith('member');
+    expect(announceSpaceAccessChange).toHaveBeenCalledWith('space', ['member']);
     expect(checkVoicePermissions).toHaveBeenCalledWith('space');
     expect(sendToSpace).toHaveBeenCalledWith('space', expect.objectContaining({ type: 'member_updated' }));
     expect(testDb.select().from(schema.roles).where(eq(schema.roles.id, 'manager-role')).get()?.permissions).toBe(PermissionBits.MANAGE_SPACE.toString());

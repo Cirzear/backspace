@@ -4,7 +4,7 @@ import { hasMassMention } from '@backspace/shared/src/mentions.js';
 import { eq, and } from 'drizzle-orm';
 import { getDb, schema } from '../db/index.js';
 import { generateSnowflake } from '../utils/snowflake.js';
-import { connectionManager } from './connectionManager.js';
+import { connectionManager } from './handler.js';
 import { isMember, getChannelSpaceId, isDmMember, hasPermission, PermissionBits } from '../utils/permissions.js';
 import { broadcastDmMessage, getDmMessageWithUser, isDmReplyTargetInChannel } from '../routes/dm.js';
 import { fetchReplyToMessages, isReplyTargetInChannel } from '../routes/messages.js';
@@ -20,12 +20,14 @@ import { handleReactionAdd, handleReactionRemove } from './reactionEvents.js';
 import { handleVoiceJoin, handleVoiceLeave, handleVoiceStatus, handleVoiceSpaceMute, handleVoiceSpaceDeafen, handleVoiceMove, handleVoiceDisconnect } from './voiceEvents.js';
 import { handleDmCallStart, handleDmCallAccept, handleDmCallReject, handleDmCallEnd } from './dmCallEvents.js';
 import { ERROR_MESSAGES } from '../utils/httpErrors.js';
+import type { ErrorCode } from '@backspace/shared/src/errors';
 import { dmMessageEditRefusal } from '../utils/dmSystemMessages.js';
 
 // Keep the established public entry points while implementations stay domain-scoped.
 export { checkVoicePermissions } from './voiceEvents.js';
 export {
   registerCallRelayHooks,
+  handleDmCallStartForTest,
   handleDmCallAcceptForTest,
   handleDmCallRejectForTest,
   handleDmCallEndForTest,
@@ -165,7 +167,9 @@ export function handleClientEvent(
       handleMarkUnread(event, userId, isFederated);
       break;
     case 'dm_call_start':
-      handleDmCallStart(event, userId, username, ws);
+      handleDmCallStart(event, userId, username, ws).catch(err =>
+        console.error('[ws] handleDmCallStart error:', err),
+      );
       break;
     case 'dm_call_accept':
       handleDmCallAccept(event, userId, ws).catch(err =>

@@ -39,7 +39,7 @@ Source: `packages/server/src/ws/handler.ts` (transport/auth), `packages/server/s
 ### Reactions (space + DM, auto-detected)
 | type | fields | notes |
 |------|--------|-------|
-| `reaction_add` | messageId, emoji | ADD_REACTIONS perm (space) |
+| `reaction_add` | messageId, emoji | ADD_REACTIONS perm (space). One reaction per user and emoji: a repeat stores nothing, sends no `reaction_added` and queues no relay. The client does not send one either (`chatStore.addReaction` skips a reaction the user holds or has an add in flight for) |
 | `reaction_remove` | messageId, emoji | own reactions only |
 
 Adds are idempotent by `(messageId, instance-local userId, emoji)` (the DM table
@@ -105,10 +105,10 @@ All four also need the actor to outrank the target (permissions.md, "Role hierar
 ### DM Calls
 | type | fields | notes |
 |------|--------|-------|
-| `dm_call_start` | dmChannelId?, federatedCallId? | `dmChannelId` can be null when `federatedCallId` is provided. 60s auto-timeout if not accepted |
-| `dm_call_accept` | dmChannelId?, federatedCallId? | ringing→active |
-| `dm_call_reject` | dmChannelId?, federatedCallId? | |
-| `dm_call_end` | dmChannelId?, federatedCallId? | |
+| `dm_call_start` | dmChannelId | 60s auto-timeout if not accepted. In a DM whose call is hosted here, a member not in it joins it (handled as `dm_call_accept`). A member already in it, or any member while the DM's call hosted on another instance still rings or has a member here in it, gets `error` with `code: 'dm_call_in_progress'` and the `dmChannelId`, on the sending socket only (a record of such a call with nobody here in it is dropped and the start goes on); a non-member gets `code: 'not_dm_member'`, a missing `dmChannelId` `code: 'validation_failed'` |
+| `dm_call_accept` | dmChannelId?, federatedCallId? | ringing→active; later accepts join the active call (late join). Refused on the sending socket only with `error` and a code: `dm_call_not_found` (no call any more), `not_dm_member`, `validation_failed`, with the id the client sent as `dmChannelId` |
+| `dm_call_reject` | dmChannelId?, federatedCallId? | 1-on-1: ends the call. Group: stops only the sender's ring; ends the call only when it still rings and every member but the caller has declined. Ignored from the caller or a participant |
+| `dm_call_end` | dmChannelId?, federatedCallId? | 1-on-1: ends the call. Group: takes only the sender out; the caller of a call nobody joined ends it; the call ends with its last participant. Ignored from a member who is not in the call |
 
 ### System
 | type | fields |
@@ -125,7 +125,7 @@ All four also need the actor to outrank the target (permissions.md, "Role hierar
 |------|--------|-------|
 | `ready` | (see Ready Payload below) | user |
 | `pong` | — | user |
-| `error` | message, code? | user |
+| `error` | message, code?, dmChannelId? | user; a refused `dm_call_start` or `dm_call_accept` goes to the sending socket only and names its `dmChannelId` |
 
 ### Messages
 | type | fields | scope |
@@ -180,15 +180,35 @@ handler alike, so both paths reach the same audience. (`reaction_added` and
 | `category_updated` | category, spaceId | space |
 | `category_deleted` | categoryId, spaceId | space |
 | `channel_layout_updated` | spaceId, channels[], categories[] | space |
-| `space_access_changed` | spaceId | space |
+| `space_access_changed` | spaceId | space; one user for an instance admin change |
 | `space_layout_updated` | layout[], folders[], updatedAt? | user |
+| `notification_settings_updated` | setting: NotificationSetting | user (all of their sockets on this instance) |
+
+`notification_settings_updated` follows every successful
+`PATCH /spaces/:spaceId/notification-settings` and
+`PATCH /channels/:channelId/notification-settings` (api.md, "Notification
+settings"), including to the socket of the session that made the change. It
+names the instance's own ids; the client files it under the origin of the
+socket that delivered it, which is the instance that hosts the space
+(`notificationSettingsStore.apply`), and keeps the newer `updatedAt` when
+several sources disagree. A setting with `level` null and `muted` false was
+cleared. Clients load the full list with `GET /users/@me/notification-settings`
+when each instance's `ready` arrives; the `ready` payload itself does not
+carry it. Mixed versions: an old client ignores the event; a new client on an
+old server gets a 404 from the list route, logs it and uses the defaults.
 
 `space_access_changed` follows any change to the space's roles or to a
 member's roles: `POST`, `PATCH`, `DELETE /spaces/:id/roles[/:rid]`,
 `PATCH /spaces/:id/members/:uid`, `POST`/`DELETE /spaces/:id/members/:uid/roles`.
-What the receiver may see or do there, and how the roles and members look,
-may be different now. The client refetches the space's detail from its own
-instance with `loadSpaceDetail(spaceId, { quiet: true })`: no loading state
+It also follows `PATCH /spaces/:id/transfer-ownership` (sent to the space,
+after `space_updated`; the former and the new owner are the members whose own
+permissions changed), and `PATCH /admin/users/:id/role` when the admin flag
+changes: an instance admin holds every permission in every space on the
+instance, so that user alone is sent one event for each space they belong to
+(`ConnectionManager.announceUserAccessChange`), followed by the
+`space_voice_state` they can see there now. What the receiver may see or do
+there, and how the roles and members look, may be different now. The client
+refetches the space's detail from its own instance with `loadSpaceDetail(spaceId, { quiet: true })`: no loading state
 (no skeleton) and no message cache touched. One action can send several of
 these events (a member role edit, quick role moves), and their refetches can
 answer out of order; which load lands, and what lands for a space that is
@@ -198,7 +218,8 @@ goes through the `channel_deleted` path, which also closes it when it is
 open (`refreshSpaceAccess` in `hooks/useWebSocket.ts`). The detail carries no
 voice presence, so the members whose own permissions the change may reach
 (the member whose roles changed; the holders of a changed or deleted role;
-everyone for @everyone; nobody for a new role) are each sent a
+everyone for @everyone; nobody for a new role; the former and the new owner)
+are each sent a
 `space_voice_state` right after the event, built by `pushSpaceVoiceState`
 exactly as for a mid-session join (below): a voice channel a member just
 gained shows who is in it at once (`ConnectionManager.announceSpaceAccessChange`).
@@ -209,9 +230,15 @@ and misses live role changes in that space until it reconnects; a new client
 connected to an old server still gets the old `ready` push.
 
 An `error` that carries a `code` is the refusal of something the user just
-did (so far `role_hierarchy` from the voice moderation events); the client
-shows it as a warning toast in the user's language (`describeErrorCode`).
-An `error` without a code is only logged.
+did (`role_hierarchy` from the voice moderation events, `dm_call_in_progress`,
+`not_dm_member` and `validation_failed` from `dm_call_start`, `dm_call_not_found`,
+`not_dm_member` and `validation_failed` from `dm_call_accept`); the client shows it as a warning
+toast in the user's language (`describeErrorCode`). An `error` without a code
+is only logged. An `error` with a `dmChannelId` equal to the DM the client is
+calling, from the instance that serves that DM, also clears the calling state
+(`outgoingCall`), which stops the outgoing ring. A `dm_call_not_found` or
+`not_dm_member` naming the call the client is in, from that call's instance,
+takes the client out of it (`teardownDmCall`).
 
 ### DM Channel Management
 | type | fields | scope |
@@ -227,7 +254,7 @@ An `error` without a code is only logged.
 |------|--------|-------|
 | `voice_state_update` | channelId, userId, action: join/leave, channelElapsedSeconds? | space |
 | `voice_status_update` | userId, channelId, isMuted, isDeafened, isCameraOn, isScreenSharing | room |
-| `space_voice_state` | spaceId, voiceStates, voiceChannelElapsedSeconds, voiceUserStates, spaceVoiceStates | the joining user, or a member whose access changed. Scoped per-space voice-presence snapshot pushed when a user joins a space mid-session, and after `space_access_changed` (see below). |
+| `space_voice_state` | spaceId, voiceStates, voiceChannelElapsedSeconds, voiceUserStates, spaceVoiceStates | the joining user, or a member whose access changed. Scoped per-space voice-presence snapshot pushed when a user joins a space mid-session, after `space_access_changed` (see below), and to each member who can see a voice channel after an override on it or its category changed or it moved to another category (spaces.md, "Channel/Category Permission Overrides"). |
 | `voice_space_muted` | userId, channelId, spaceId, muted | space |
 | `voice_space_deafened` | userId, channelId, spaceId, deafened | space |
 | `voice_permission_muted` | userId, spaceId, muted | space |
@@ -239,9 +266,9 @@ reason: `'displaced'` (new tab) | `'session_closed'`
 | type | fields | scope |
 |------|--------|-------|
 | `dm_call_incoming` | dmChannelId?, federatedCallId, callerId, callerName, callOrigin?, livekitUrl?, livekitToken? | DM members (excludes caller). `dmChannelId` can be null for Path B federated calls (no local DM channel). `callOrigin` identifies the hosting instance for cross-instance calls. |
-| `dm_call_accepted` | dmChannelId?, federatedCallId? | DM members |
-| `dm_call_rejected` | dmChannelId?, federatedCallId? | DM members |
-| `dm_call_ended` | dmChannelId?, federatedCallId? | DM members |
+| `dm_call_accepted` | dmChannelId?, federatedCallId? | DM members, on every accept including late joins. A client acts on it only when it names the call it holds (`dmCallEventIsOurs`) |
+| `dm_call_rejected` | dmChannelId?, federatedCallId? | DM members when the call ends as rejected; only the decliner (all sessions) for a group decline that leaves the call running |
+| `dm_call_ended` | dmChannelId?, federatedCallId? | DM members. Preceded by a `voice_state_update` leave for each participant still in the call. A client tears down its call state only when the event names the call it holds (`dmCallEventIsOurs`) |
 | `dm_call_undeliverable` | Sent to the originator when a call relay (start / accept / reject / end) to one or more peers fails. Includes `phase: 'start' \| 'accept' \| 'reject' \| 'end' \| 'host_unreachable'` identifying the action; `failures[]` enumerates failed peers with a `reason` (`peer_rejected` / `peer_awaiting_approval` / `peer_transient_failure` / `livekit_unavailable` / `no_recipient`). `terminal: true` means local call state should be (or has been) torn down; `terminal: false` is informational. See `docs/systems/voice.md` for the full phase × terminal matrix. | originator (caller / acceptor / rejector / ender) |
 
 ### Social
@@ -281,7 +308,7 @@ reason: `'displaced'` (new tab) | `'session_closed'`
 {
   type: 'ready',
   user: User,
-  spaces: SpaceWithChannelsAndMembers[],
+  spaces: SpaceWithChannelsAndMembers[], // channels and categories carry isPrivate (permissions.md, "Private channels and categories")
   dmChannels: DmChannel[],
   folders?: SpaceFolder[],
   spaceLayout?: SpaceLayoutItem[] | null,
@@ -299,6 +326,8 @@ reason: `'displaced'` (new tab) | `'session_closed'`
   pendingApprovalCount: number           // count of peer_approval_requests rows; only non-zero for admins
 }
 ```
+
+**Roles:** each space's `roles` carry their display fields for every member and their `permissions` only when the user holds `MANAGE_ROLES` there; `members[].roles` carry display fields only. The payload has no override rows; the user's own permissions are `myPermissions` on the space and on each channel. The same shaping applies to the `space` in `join_request_accepted` (permissions.md, "Who receives role and override data").
 
 **Federated users:** When the connecting user is federated (`homeInstance` is set), the ready payload carries their DMs on this instance like anyone else's: `dmChannels` (this instance's copies, each with its `federatedId`, which is how the client shows a conversation it also gets from the user's home once) and `activeCalls` for those memberships. `readStates` is filtered to the space channels and DMs in the payload, and a DM with messages but no read state yet gets one at its newest message, so conversations mirrored here before the user first connected do not show as unread.
 

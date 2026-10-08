@@ -1,12 +1,13 @@
 import type { WebSocket } from 'ws';
 import { eq, and } from 'drizzle-orm';
 import { getDb, schema } from '../db/index.js';
-import { connectionManager } from './connectionManager.js';
+import { connectionManager } from './handler.js';
 import { getVoiceRoomElapsedSeconds, type VoiceRoom, type DmRoomMeta, type SpaceRoomMeta } from './voiceRoomTypes.js';
 import { getChannelSpaceId, hasPermission, computePermissions, PermissionBits } from '../utils/permissions.js';
 import { canActOnMemberInSpace } from '../utils/roleHierarchy.js';
 import { ERROR_MESSAGES } from '../utils/httpErrors.js';
 import { syncNativeVoicePermissions } from './nativeVoiceSessions.js';
+import { broadcastRoomLeave } from './dmCallEvents.js';
 
 /**
  * Re-evaluate SPEAK permission for all participants in voice channels
@@ -41,35 +42,6 @@ export function checkVoicePermissions(spaceId: string): void {
 }
 
 // ─── Voice Handlers (Unified Room API) ─────────────────────────────────────
-
-/** Helper: broadcast a voice leave and auto-end empty DM calls. */
-export function broadcastRoomLeave(roomId: string, room: VoiceRoom, userId: string): void {
-  if (room.roomType === 'space') {
-    const meta = room.metadata as SpaceRoomMeta;
-    connectionManager.sendToSpace(meta.spaceId, {
-      type: 'voice_state_update',
-      channelId: roomId,
-      userId,
-      action: 'leave',
-    });
-  } else {
-    connectionManager.sendToDmMembers(roomId, {
-      type: 'voice_state_update',
-      channelId: roomId,
-      userId,
-      action: 'leave',
-    });
-    // Auto-end call if DM room is now empty and was active
-    const updatedRoom = connectionManager.getRoom(roomId);
-    if (updatedRoom && updatedRoom.participants.size === 0 && (updatedRoom.metadata as DmRoomMeta).state === 'active') {
-      connectionManager.destroyRoom(roomId);
-      connectionManager.sendToDmMembers(roomId, {
-        type: 'dm_call_ended',
-        dmChannelId: roomId,
-      });
-    }
-  }
-}
 
 /**
  * A refused join is terminal for the client, so it must be terminal on the
@@ -206,6 +178,9 @@ export function handleVoiceJoin(event: Record<string, unknown>, userId: string, 
       reason: 'displaced',
     });
   }
+  if (connectionManager.getJoinedFederatedCall(userId)) {
+    connectionManager.leaveFederatedCall(userId);
+  }
 
   // Cancel any ringing DM rooms where this user is the caller
   // (edge case: user starts DM call then joins server voice before anyone accepts)
@@ -318,7 +293,10 @@ export function handleVoiceStatus(event: Record<string, unknown>, userId: string
   // BUG FIX: uses unified getUserRoom() instead of server-only getUserVoiceChannel()
   // This now works for both server channels AND DM calls.
   const userRoom = connectionManager.getUserRoom(userId);
-  if (!userRoom) return;
+  if (!userRoom) {
+    if (connectionManager.getJoinedFederatedCall(userId)) connectionManager.setVoiceWs(userId, ws);
+    return;
+  }
   // Space sessions must resume through voice_join so an ordinary tab cannot
   // keep a stale session alive merely by sending status. DM calls have no
   // voice_join event, so voice_status is their explicit resume signal.

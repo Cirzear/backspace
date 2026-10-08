@@ -52,6 +52,15 @@
       "rename": "Kanal umbenennen",
       "nameLabel": "Kanalname",
       "channelLabel": "Kanal",
+      "topic": {
+        "label": "Thema",
+        "placeholder": "Worum geht es in diesem Kanal?",
+        "hint": "Wird in der Kopfzeile des Kanals angezeigt. Dort kann jeder den vollständigen Text öffnen.",
+        "counter": "{{used}}/{{max}}",
+        "tooLong": "Kürze das Thema auf höchstens {{max}} Zeichen, um es zu speichern.",
+        "empty": "Kein Thema festgelegt.",
+        "reset": "Änderungen verwerfen"
+      },
       "private": {
         "label": "Privater Kanal",
         "description": "Nur ausgewählte Mitglieder und Rollen können diesen Kanal sehen.",
@@ -435,6 +444,7 @@
       "sendMessages": "Nachrichten senden",
       "manageMessages": "Nachrichten verwalten",
       "attachFiles": "Dateien anhängen",
+      "mentionEveryone": "@everyone erwähnen",
       "readMessageHistory": "Nachrichtenverlauf lesen",
       "addReactions": "Reaktionen hinzufügen",
       "connect": "Verbinden",
@@ -605,6 +615,10 @@
     "selectChannel": "Wähle einen Kanal",
     "selectChannelHint": "Wähle einen Text- oder Sprachkanal, um loszulegen",
     "notificationSettings": "Benachrichtigungseinstellungen",
+    "topic": {
+      "show": "Vollständiges Thema anzeigen",
+      "dialogTitle": "#{{name}}"
+    },
     "voice": {
       "connectionFailed": "Verbindung fehlgeschlagen",
       "connected": "Verbunden",
@@ -625,6 +639,7 @@
       "memberCount_one": "({{count}} Mitglied)",
       "memberCount_other": "({{count}} Mitglieder)",
       "startVoiceCall": "Sprachanruf starten",
+      "joinCall": "Anruf beitreten",
       "startVideoCall": "Videoanruf starten",
       "addFriends": "Freunde zur Unterhaltung hinzufügen"
     }
@@ -641,33 +656,29 @@
     "failed": "Besitz konnte nicht übertragen werden"
   },
   "notifications": {
-    "title": "Benachrichtigungseinstellungen",
-    "description": "Stummschalten deaktiviert Töne und Systembenachrichtigungen. Nachrichten und Ungelesen-Markierungen bleiben erhalten. Stumme Spaces schalten auch Kanäle stumm.",
-    "level": "Benachrichtigen bei",
-    "inherit": "Standard / Space übernehmen",
-    "all": "Allen Nachrichten",
-    "mentions": "Nur Erwähnungen",
-    "nothing": "Nichts",
-    "mute": "Stummschalten",
-    "off": "Nicht stumm",
-    "minutes15": "15 Minuten",
-    "hour1": "1 Stunde",
-    "hours8": "8 Stunden",
-    "forever": "Bis ich es wieder einschalte",
-    "existing": "Aktuelle Stummschaltung beibehalten",
-    "suppressEveryone": "@everyone und @here unterdrücken",
-    "suppressRoles": "Rollenerwähnungen unterdrücken",
-    "save": "Speichern",
-    "saving": "Wird gespeichert…",
-    "permission": "@everyone, @here und Rollen erwähnen",
+    "open": "Benachrichtigungseinstellungen",
+    "channelTitle": "Benachrichtigungen für #{{channel}}",
+    "spaceTitle": "Benachrichtigungen für {{space}}",
+    "levelHeading": "Benachrichtigungen",
+    "level": {
+      "all": "Alle Nachrichten",
+      "mentions": "Nur @Erwähnungen",
+      "nothing": "Keine",
+      "inherit": "Standard des Space ({{level}})"
+    },
+    "dmNote": "Bei Direktnachrichten wirst du immer benachrichtigt.",
+    "muteHeading": "Stummschalten",
+    "mute": {
+      "oneHour": "Für 1 Stunde",
+      "eightHours": "Für 8 Stunden",
+      "oneDay": "Für 24 Stunden",
+      "indefinite": "Bis ich es wieder aufhebe"
+    },
     "unmute": "Stummschaltung aufheben",
-    "muted": "Stummgeschaltet",
-    "active": "Benachrichtigungen aktiviert",
-    "expiringNow": "läuft gerade ab",
-    "remainingMinutes_one": "noch {{count}} Min.",
-    "remainingMinutes_other": "noch {{count}} Min.",
-    "remainingHours_one": "noch {{count}} Stunde",
-    "remainingHours_other": "noch {{count}} Stunden",
-    "remainingHoursMinutes": "noch {{hours}} Std. {{minutes}} Min."
+    "mutedUntil": "Stummgeschaltet bis {{time}}",
+    "mutedIndefinitely": "Stummgeschaltet, bis du es aufhebst",
+    "spaceMuted": "Dieser Space ist stummgeschaltet, damit auch seine Kanäle.",
+    "mutedIndicator": "Stummgeschaltet",
+    "saveFailed": "Benachrichtigungseinstellungen konnten nicht gespeichert werden"
   }
 }

@@ -1,14 +1,30 @@
 import { create } from 'zustand';
 import type { Friend, FriendRequest, SendFriendRequest, User } from '@backspace/shared';
-import { api } from '../api/client';
-import { useInstanceStore, waitForAutoConnect } from './instanceStore';
+import { api, type BackspaceApiClient } from '../api/client';
+import { getFriendsHomeOrigin, useInstanceStore, waitForAutoConnect } from './instanceStore';
 import { normalizeUserAssets } from '../utils/assetUrls';
-import { profileFieldsOf, updateIsAbout, updateIsAboutRowId, userKey, userUpdateReach, type IdentityFields, type PresenceSubject } from '../utils/identity';
+import { addressedTo } from '../utils/friendRequestTarget';
+import { hostOf, isIssuedByHome, profileFieldsOf, updateIsAbout, updateIsAboutRowId, userKey, userUpdateReach, type IdentityFields, type PresenceSubject } from '../utils/identity';
+import i18n from '../i18n';
 
 // ─── Tagged types (origin tracking for federation) ───────────────────────────
 
-export type TaggedFriend = Friend & { _instanceOrigin: string };
-export type TaggedFriendRequest = FriendRequest & { _instanceOrigin: string };
+/** A friend row as one instance listed it. */
+export type FriendRow = Friend & { _instanceOrigin: string };
+/** A friend request row as one instance listed it. */
+export type FriendRequestRow = FriendRequest & { _instanceOrigin: string };
+
+/**
+ * An entry of the friends or requests list: one person. Its own fields are
+ * the row it is shown by (see `entryOf`). `_rows` holds every instance's row
+ * of the person when more than one instance listed them, so an event from any
+ * of those instances finds the entry; it is absent for a person only one
+ * instance listed.
+ */
+export type ListEntry<R> = R & { _rows?: readonly R[] };
+
+export type TaggedFriend = ListEntry<FriendRow>;
+export type TaggedFriendRequest = ListEntry<FriendRequestRow>;
 export type TaggedUser = User & { _instanceOrigin: string };
 
 /**
@@ -29,10 +45,194 @@ export function isOutgoingRequest(request: FriendRequest): boolean {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function getApiForOrigin(origin: string) {
+/**
+ * A friend or request action names rows of an instance the client no longer
+ * holds a session for (it was removed from Connections). Refused rather than
+ * sent to another instance: row ids mean nothing outside the instance that
+ * issued them.
+ */
+export class SocialInstanceNotConnectedError extends Error {
+  constructor(public readonly origin: string) {
+    super(i18n.t('social:instanceNotConnected', { host: hostOf(origin) }));
+    this.name = 'SocialInstanceNotConnectedError';
+  }
+}
+
+/**
+ * The client for the instance at `origin` (`''` is the page's own). An origin
+ * the client holds no entry for throws `SocialInstanceNotConnectedError`; it
+ * never falls back to the page's instance, which would act on whichever of
+ * its own rows has the same id. Strict on purpose, unlike the shared
+ * `getApiForOrigin` in `crossStoreResolvers.ts`, which other surfaces rely on
+ * to fall back.
+ */
+function apiAt(origin: string): BackspaceApiClient {
   if (!origin) return api;
   const instance = useInstanceStore.getState().instances.find(i => i.origin === origin);
-  return instance?.api ?? api;
+  if (!instance) throw new SocialInstanceNotConnectedError(origin);
+  return instance.api;
+}
+
+// ─── One entry per person ────────────────────────────────────────────────────
+// The friends and requests lists hold one entry per person (`userKey`), built
+// from the rows every connected instance listed. Two rows are the same row
+// only when the same instance issued them with the same id; an id alone names
+// no one across instances (#353).
+
+/** How a list names the person a row is about, and whether the row is their home's own view. */
+interface PersonRule<R> {
+  keyOf: (row: R) => string;
+  isHomeView: (row: R) => boolean;
+}
+
+/** A user row is about the user it names: their home's row, a replicated row of them, or a native. */
+function userRowRule<R extends IdentityFields & { _instanceOrigin: string }>(): PersonRule<R> {
+  return {
+    keyOf: (row) => userKey(row, row._instanceOrigin),
+    isHomeView: (row) => isIssuedByHome(row, row._instanceOrigin),
+  };
+}
+
+const friendRule = userRowRule<FriendRow>();
+const searchRule = userRowRule<TaggedUser>();
+
+/** A request is about its other party; a request without one is only ever itself. */
+const requestRule: PersonRule<FriendRequestRow> = {
+  keyOf: (row) => row.user
+    ? userKey(row.user, row._instanceOrigin)
+    : `request ${row._instanceOrigin} ${row.id}`,
+  isHomeView: (row) => !!row.user && isIssuedByHome(row.user, row._instanceOrigin),
+};
+
+/** Whether `row` is the row instance `origin` issued with id `id`. */
+function isRowAt(row: { id: string; _instanceOrigin: string }, id: string, origin: string): boolean {
+  return row.id === id && row._instanceOrigin === origin;
+}
+
+/**
+ * Matches the request row instance `origin` holds with id `id`, and, when
+ * `other` (the other party as `origin` issued them) is given, every request
+ * row with that person. The second half is for a caller whose request row may
+ * not be in the list, such as a discover card loaded before the list reloaded.
+ */
+function isRequestWith(id: string, origin: string, other?: IdentityFields): (row: FriendRequestRow) => boolean {
+  const key = other ? userKey(other, origin) : null;
+  return (row) => isRowAt(row, id, origin) || (key !== null && requestRule.keyOf(row) === key);
+}
+
+/** Every instance's row an entry stands for. */
+function rowsOf<R>(entry: ListEntry<R>): readonly R[] {
+  return entry._rows ?? [entry];
+}
+
+/** `rows` grouped by person, each group in listing order, people in the order each was first listed. */
+function groupByPerson<R>(rows: readonly R[], rule: PersonRule<R>): R[][] {
+  const people = new Map<string, R[]>();
+  for (const row of rows) {
+    const key = rule.keyOf(row);
+    const listed = people.get(key);
+    if (listed) listed.push(row);
+    else people.set(key, [row]);
+  }
+  return [...people.values()];
+}
+
+/** The row one person's rows are shown by: their home's own row when one is listed, else the first. */
+function shownRow<R>(rows: readonly R[], rule: PersonRule<R>): NonNullable<R> {
+  return (rows.find(rule.isHomeView) ?? rows[0])!;
+}
+
+/**
+ * The entry for one person's rows. It is shown by `shownRow`, so its ids and
+ * origin match the profile and discover cards.
+ */
+function entryOf<R>(rows: readonly R[], rule: PersonRule<R>): ListEntry<R> {
+  const shown = shownRow(rows, rule);
+  return rows.length === 1 ? shown : { ...shown, _rows: rows };
+}
+
+/** One entry per person for `rows`, in the order each person was first listed. */
+function mergeRows<R>(rows: readonly R[], rule: PersonRule<R>): ListEntry<R>[] {
+  return groupByPerson(rows, rule).map(listed => entryOf(listed, rule));
+}
+
+/** `entries` with `row` added, or replacing the row the same instance issued with the same id. */
+function withRow<R extends { id: string; _instanceOrigin: string }>(
+  entries: readonly ListEntry<R>[],
+  row: R,
+  rule: PersonRule<R>,
+): ListEntry<R>[] {
+  let replaced = false;
+  const rows = entries.flatMap(rowsOf).map((r) => {
+    if (!isRowAt(r, row.id, row._instanceOrigin)) return r;
+    replaced = true;
+    return row;
+  });
+  return mergeRows(replaced ? rows : [...rows, row], rule);
+}
+
+/**
+ * `entries` without the rows `drop` matches; a person whose rows all go is
+ * dropped, and one with rows left is shown by one of them. `entries` itself
+ * when no row matched.
+ */
+function withoutRows<R>(entries: ListEntry<R>[], drop: (row: R) => boolean, rule: PersonRule<R>): ListEntry<R>[] {
+  const rows = entries.flatMap(rowsOf);
+  const kept = rows.filter(row => !drop(row));
+  return kept.length === rows.length ? entries : mergeRows(kept, rule);
+}
+
+/** `entries` without the people any of whose rows `drop` matches; `entries` itself when none did. */
+function withoutPeople<R>(entries: ListEntry<R>[], drop: (row: R) => boolean): ListEntry<R>[] {
+  const kept = entries.filter(entry => !rowsOf(entry).some(drop));
+  return kept.length === entries.length ? entries : kept;
+}
+
+/** `entries` with `update` applied to every row; `entries` itself when no row changed. */
+function withEachRow<R>(entries: ListEntry<R>[], update: (row: R) => R, rule: PersonRule<R>): ListEntry<R>[] {
+  let changed = false;
+  const next = entries.map((entry) => {
+    const rows = rowsOf(entry);
+    const updated = rows.map(update);
+    if (updated.every((row, i) => row === rows[i])) return entry;
+    changed = true;
+    return entryOf(updated, rule);
+  });
+  return changed ? next : entries;
+}
+
+// ─── Lookups for other modules ───────────────────────────────────────────────
+// The `_rows` shape stays private to this file; other modules ask through these.
+
+/** The friend row instance `origin` issued with id `id`, whichever entry holds it. */
+export function friendRowAt(friends: readonly TaggedFriend[], id: string, origin: string): FriendRow | undefined {
+  for (const entry of friends) {
+    const row = rowsOf(entry).find(r => isRowAt(r, id, origin));
+    if (row) return row;
+  }
+  return undefined;
+}
+
+/** The friend entry of the person `row` (issued by `origin`) names. */
+export function friendEntryOf(friends: readonly TaggedFriend[], row: IdentityFields, origin: string): TaggedFriend | undefined {
+  const key = userKey(row, origin);
+  return friends.find(f => friendRule.keyOf(f) === key);
+}
+
+/**
+ * The pending request row with the person `row` (issued by `origin`) names:
+ * the row `origin` holds when it holds one, so its id is good on `origin`,
+ * else the row their entry is shown by.
+ */
+export function pendingRequestWith(
+  requests: readonly TaggedFriendRequest[],
+  row: IdentityFields,
+  origin: string,
+): FriendRequestRow | undefined {
+  const key = userKey(row, origin);
+  const entry = requests.find(r => r.status === 'pending' && requestRule.keyOf(r) === key);
+  if (!entry) return undefined;
+  return rowsOf(entry).find(r => r._instanceOrigin === origin) ?? entry;
 }
 
 // ─── Concurrency guards (module-level, not in store state) ──────────────────
@@ -50,13 +250,24 @@ interface SocialState {
   loadFriends: () => Promise<void>;
   loadRequests: () => Promise<void>;
   /**
-   * Send a friend request from the home instance. A typed handle is
-   * `{ username }`; a user the client holds is named by `friendRequestTarget`.
+   * Send a friend request from the user's home (`getFriendsHomeOrigin`), the
+   * only instance that accepts one from them. `target` is as the page's own
+   * instance reads it: a typed handle is `{ username }`, a user the client
+   * holds is named by `friendRequestTarget`. It is readdressed for the home
+   * when that is another instance (`addressedTo`).
    */
   sendFriendRequest: (target: SendFriendRequest | string) => Promise<string | undefined>;
-  updateFriendRequest: (id: string, status: 'accepted' | 'declined') => Promise<void>;
-  cancelFriendRequest: (id: string) => Promise<void>;
-  removeFriend: (id: string) => Promise<void>;
+  /**
+   * Accept or decline the request instance `origin` holds with id `id`, and
+   * drop the person's request entry. `other` is the request's other party as
+   * `origin` issued them, for a caller (a discover card) whose request may not
+   * be in the list: the entry is then found by person.
+   */
+  updateFriendRequest: (id: string, origin: string, status: 'accepted' | 'declined', other?: IdentityFields) => Promise<void>;
+  /** Cancel the request instance `origin` holds with id `id`; `other` as for `updateFriendRequest`. */
+  cancelFriendRequest: (id: string, origin: string, other?: IdentityFields) => Promise<void>;
+  /** Remove the friend `row` (issued by `origin`) is a row of, on the instance whose row the entry is shown by. */
+  removeFriend: (row: IdentityFields, origin: string) => Promise<void>;
   searchUsers: (query: string) => Promise<TaggedUser[]>;
   addIncomingRequest: (request: FriendRequest, origin: string) => void;
   addOutboundRequest: (request: FriendRequest, origin: string) => void;
@@ -64,10 +275,22 @@ interface SocialState {
   updateFriendPresence: (subject: PresenceSubject, origin: string, status: string) => void;
   /** Apply a `user_updated` row issued by `origin` to the friend rows it is about (`userUpdateReach`); profile fields only. */
   updateFriendProfile: (user: User, origin: string) => void;
+  /** Drop the friend instance `origin` names by its row id `userId` (`friend_removed`). */
   removeFriendLocally: (userId: string, origin: string) => void;
+  /**
+   * Drop the request instance `origin` holds with id `requestId`, or with the
+   * other party `userId` (that instance's row id), and with it the person's
+   * rows from every other instance.
+   */
   removeRequestById: (requestId: string, origin: string, userId?: string) => void;
   /** Drop the friends and pending requests the deleted user's `user_updated` row (issued by `origin`) is about (`updateIsAbout`). */
   removeDeletedUser: (user: IdentityFields, origin: string) => void;
+  /**
+   * Drop every row instance `origin` issued, when its connection is
+   * disconnected or removed. A person another instance also lists stays,
+   * shown by that instance's row, so actions on them go there.
+   */
+  removeInstanceRows: (origin: string) => void;
   reset: () => void;
 }
 
@@ -99,43 +322,23 @@ export const useSocialStore = create<SocialState>((set, get) => ({
         ),
       ]);
 
-      const allFriends: TaggedFriend[] = [];
-      // Deduplicate by canonical identity — a user who exists on multiple
-      // instances (native + replicated stub) should appear once.
-      // Native profiles (homeInstance is null) replace stubs when found.
-      // Note: homeUserId alone is NOT a native indicator — the server backfills
-      // native users' homeUserId to their own id so federation tier-1 lookups
-      // can find them. Only homeInstance distinguishes native from replicated.
-      const seen = new Map<string, number>(); // canonicalId → index in allFriends
-
+      // One entry per person (`userKey`): a friend two instances list (their
+      // home's row and a replicated row of them) is one entry, and two people
+      // native to different instances are two entries whatever their ids.
+      const rows: FriendRow[] = [];
       for (const result of results) {
         if (result.status !== 'fulfilled') continue;
         const { friends, origin } = result.value;
         for (const friend of friends) {
-          const canonicalId = friend.homeUserId ?? friend.id;
-          const isNative = !friend.homeInstance;
-          const existingIdx = seen.get(canonicalId);
-
-          if (existingIdx !== undefined) {
-            // Replace replicated stub with native profile when found
-            if (isNative) {
-              if (origin) normalizeUserAssets(friend, origin);
-              allFriends[existingIdx] = { ...friend, _instanceOrigin: origin };
-              // Upsert the upgraded (native) view into the userViews cache.
-              // Friend carries all identity/avatar fields the cache needs.
-              useSpaceStore.getState().upsertUserView(friend as unknown as User, origin);
-            }
-            continue;
-          }
-
-          seen.set(canonicalId, allFriends.length);
           if (origin) normalizeUserAssets(friend, origin);
-          allFriends.push({ ...friend, _instanceOrigin: origin });
+          rows.push({ ...friend, _instanceOrigin: origin });
+          // Friend carries all identity/avatar fields the cache needs; the
+          // cache keeps the home's view when several instances deliver one.
           useSpaceStore.getState().upsertUserView(friend as unknown as User, origin);
         }
       }
 
-      set({ friends: allFriends, isLoading: false });
+      set({ friends: mergeRows(rows, friendRule), isLoading: false });
     } catch (err) {
       set({ error: (err as Error).message, isLoading: false });
     } finally {
@@ -164,42 +367,23 @@ export const useSocialStore = create<SocialState>((set, get) => ({
         ),
       ]);
 
-      const allRequests: TaggedFriendRequest[] = [];
-      // Deduplicate by the canonical identity of the other party —
-      // there can only be one pending request between any two users.
-      // Prefer the record from the instance where the other party is native
-      // (homeInstance is null), because that record's ids and _instanceOrigin
-      // line up with the discover/search cards and the UserProfileModal —
-      // this is what lets buttons like "Request Pending" match correctly.
-      // Note: homeUserId alone is NOT a native indicator — see loadFriends.
-      const seen = new Map<string, number>();
-
+      // One entry per other party (`userKey`): a cross-instance request is a
+      // row on each instance, and there is one pending request between two
+      // people. The entry is shown by the row from the other party's home,
+      // whose ids and origin line up with the discover and search cards and
+      // the profile modal ("Request Pending").
+      const rows: FriendRequestRow[] = [];
       for (const result of results) {
         if (result.status !== 'fulfilled') continue;
         const { requests, origin } = result.value;
         for (const request of requests) {
-          const otherCanonicalId = request.user?.homeUserId ?? request.user?.id;
-          const otherIsNativeHere = !request.user?.homeInstance;
-          const existingIdx = otherCanonicalId ? seen.get(otherCanonicalId) : undefined;
-
-          if (existingIdx !== undefined) {
-            // Replace prior stub-origin record with native one
-            if (otherIsNativeHere) {
-              if (origin && request.user) normalizeUserAssets(request.user, origin);
-              allRequests[existingIdx] = { ...request, _instanceOrigin: origin };
-              if (request.user) useSpaceStore.getState().upsertUserView(request.user, origin);
-            }
-            continue;
-          }
-
-          if (otherCanonicalId) seen.set(otherCanonicalId, allRequests.length);
           if (origin && request.user) normalizeUserAssets(request.user, origin);
-          allRequests.push({ ...request, _instanceOrigin: origin });
+          rows.push({ ...request, _instanceOrigin: origin });
           if (request.user) useSpaceStore.getState().upsertUserView(request.user, origin);
         }
       }
 
-      set({ requests: allRequests, isLoading: false });
+      set({ requests: mergeRows(rows, requestRule), isLoading: false });
     } catch (err) {
       set({ error: (err as Error).message, isLoading: false });
     } finally {
@@ -214,7 +398,10 @@ export const useSocialStore = create<SocialState>((set, get) => ({
       const body: SendFriendRequest = input.username === undefined
         ? input
         : { ...input, username: input.username.trim() };
-      const res = await api.social.sendRequest(body);
+      // Only the user's home accepts a request from them; a federated account
+      // on any other instance is refused (`not_authoritative_for_sender`).
+      const home = getFriendsHomeOrigin();
+      const res = await apiAt(home).social.sendRequest(addressedTo(body, home));
       set({ isLoading: false });
       // Server emits friend_request_sent over WS; useWebSocket appends the row
       // optimistically. As a safety net for tabs that race the WS event, refresh
@@ -227,24 +414,16 @@ export const useSocialStore = create<SocialState>((set, get) => ({
     }
   },
 
-  updateFriendRequest: async (id: string, status: 'accepted' | 'declined') => {
+  updateFriendRequest: async (id: string, origin: string, status: 'accepted' | 'declined', other?: IdentityFields) => {
     set({ isLoading: true, error: null });
     try {
-      // Find the request to determine which instance owns it
-      const request = get().requests.find(r => r.id === id);
-      const origin = request?._instanceOrigin ?? '';
-      const client = getApiForOrigin(origin);
+      await apiAt(origin).social.updateRequest(id, status);
 
-      await client.social.updateRequest(id, status);
-
-      // Optimistically remove all requests from the same canonical user —
-      // the S2S relay will eventually clean up the other instance, but
-      // re-fetching immediately would race with relay propagation.
-      const canonicalId = request?.user?.homeUserId ?? request?.user?.id;
+      // Drop the person's entry with every instance's row of the request:
+      // the relay clears the other instances' rows, and reloading now would
+      // race it.
       set((state) => ({
-        requests: canonicalId
-          ? state.requests.filter(r => (r.user?.homeUserId ?? r.user?.id) !== canonicalId)
-          : state.requests.filter(r => r.id !== id),
+        requests: withoutPeople(state.requests, isRequestWith(id, origin, other)),
         isLoading: false,
       }));
 
@@ -257,19 +436,12 @@ export const useSocialStore = create<SocialState>((set, get) => ({
     }
   },
 
-  cancelFriendRequest: async (id: string) => {
+  cancelFriendRequest: async (id: string, origin: string, other?: IdentityFields) => {
     set({ isLoading: true, error: null });
     try {
-      const request = get().requests.find(r => r.id === id);
-      const origin = request?._instanceOrigin ?? '';
-      const client = getApiForOrigin(origin);
-
-      await client.social.cancelRequest(id);
-      const canonicalId = request?.user?.homeUserId ?? request?.user?.id;
+      await apiAt(origin).social.cancelRequest(id);
       set((state) => ({
-        requests: canonicalId
-          ? state.requests.filter(r => (r.user?.homeUserId ?? r.user?.id) !== canonicalId)
-          : state.requests.filter(r => r.id !== id),
+        requests: withoutPeople(state.requests, isRequestWith(id, origin, other)),
         isLoading: false,
       }));
     } catch (err) {
@@ -278,17 +450,15 @@ export const useSocialStore = create<SocialState>((set, get) => ({
     }
   },
 
-  removeFriend: async (id: string) => {
+  removeFriend: async (row: IdentityFields, origin: string) => {
+    const key = userKey(row, origin);
+    const friend = friendEntryOf(get().friends, row, origin);
+    if (!friend) return;
     set({ isLoading: true, error: null });
     try {
-      // Find the friend to determine which instance owns it
-      const friend = get().friends.find(f => f.id === id);
-      const origin = friend?._instanceOrigin ?? '';
-      const client = getApiForOrigin(origin);
-
-      await client.social.removeFriend(id);
+      await apiAt(friend._instanceOrigin).social.removeFriend(friend.id);
       set((state) => ({
-        friends: state.friends.filter(f => !(f.id === id && f._instanceOrigin === origin)),
+        friends: withoutPeople(state.friends, f => friendRule.keyOf(f) === key),
         isLoading: false,
       }));
     } catch (err) {
@@ -316,115 +486,96 @@ export const useSocialStore = create<SocialState>((set, get) => ({
 
       const results = await Promise.allSettled(searches.map(s => s.promise));
 
-      const allUsers: TaggedUser[] = [];
-      // Map canonical ID → index in allUsers for dedup with replacement
-      const seen = new Map<string, number>();
-
+      const rows: TaggedUser[] = [];
       results.forEach((result, i) => {
         if (result.status !== 'fulfilled') return;
         const origin = searches[i]!.origin;
         for (const user of result.value) {
-          // Deduplicate by canonical identity: replicated profiles share
-          // the same homeUserId as the native profile's id, so collapse them.
-          // Prefer native profiles (homeInstance is null) over replicated ones.
-          // Note: homeUserId alone is NOT a native indicator — the server
-          // backfills native users' homeUserId to their own id so federation
-          // tier-1 lookups can find them. Only homeInstance distinguishes
-          // native from replicated.
-          const canonicalId = user.homeUserId ?? user.id;
-          const isNative = !user.homeInstance;
-          const existingIdx = seen.get(canonicalId);
-
-          if (existingIdx !== undefined) {
-            // Replace replicated with native when found
-            if (isNative) {
-              if (origin) normalizeUserAssets(user, origin);
-              allUsers[existingIdx] = { ...user, _instanceOrigin: origin };
-              useSpaceStore.getState().upsertUserView(user, origin);
-            }
-            continue;
-          }
-
-          seen.set(canonicalId, allUsers.length);
           if (origin) normalizeUserAssets(user, origin);
-          allUsers.push({ ...user, _instanceOrigin: origin });
+          rows.push({ ...user, _instanceOrigin: origin });
           useSpaceStore.getState().upsertUserView(user, origin);
         }
       });
 
-      return allUsers;
+      // One result per person (`userKey`), the same rule as the friends and
+      // requests lists: a person two instances return (their home's row and a
+      // replicated row of them) is one result, shown by their home's row, and
+      // two users native to different instances are two results whatever
+      // their ids (#353).
+      return groupByPerson(rows, searchRule).map(listed => shownRow(listed, searchRule));
     } catch (err) {
       console.error('Failed to search users:', err);
       return [];
     }
   },
 
-  // Called from WS handler when another user sends you a friend request
+  // Called from WS handler when another user sends you a friend request.
+  // A row of a person already listed joins their entry.
   addIncomingRequest: (request: FriendRequest, origin: string) => {
-    set((state) => {
-      const canonicalId = request.user?.homeUserId ?? request.user?.id;
-      if (canonicalId && state.requests.some(r => (r.user?.homeUserId ?? r.user?.id) === canonicalId)) {
-        return state;
-      }
-      return { requests: [...state.requests, { ...request, _instanceOrigin: origin }] };
-    });
+    set((state) => ({ requests: withRow(state.requests, { ...request, _instanceOrigin: origin }, requestRule) }));
   },
 
   // Called from WS handler for multi-tab sync when this user creates an outbound request
   addOutboundRequest: (request: FriendRequest, origin: string) => {
-    set((state) => {
-      const canonicalId = request.user?.homeUserId ?? request.user?.id;
-      if (canonicalId && state.requests.some(r => (r.user?.homeUserId ?? r.user?.id) === canonicalId)) {
-        return state;
-      }
-      return { requests: [...state.requests, { ...request, _instanceOrigin: origin }] };
-    });
+    set((state) => ({ requests: withRow(state.requests, { ...request, _instanceOrigin: origin }, requestRule) }));
   },
 
-  // Called from WS handler when someone accepts your friend request
+  // Called from WS handler when someone accepts your friend request. The new
+  // friend joins their entry if another instance listed them already, and
+  // no pending request with them is left.
   addFriendFromAccepted: (friend: Friend, requestId: string, origin: string) => {
     set((state) => {
-      const canonicalId = friend.homeUserId ?? friend.id;
-      const alreadyExists = state.friends.some(f => (f.homeUserId ?? f.id) === canonicalId);
+      const row: FriendRow = { ...friend, _instanceOrigin: origin };
+      const key = friendRule.keyOf(row);
       return {
-        friends: alreadyExists ? state.friends : [...state.friends, { ...friend, _instanceOrigin: origin }],
-        requests: state.requests.filter(r => !(r.id === requestId && r._instanceOrigin === origin)),
+        friends: withRow(state.friends, row, friendRule),
+        requests: withoutPeople(state.requests, r => isRowAt(r, requestId, origin) || requestRule.keyOf(r) === key),
       };
     });
   },
 
-  // Called from WS handler when the other user removes us as a friend
-  removeFriendLocally: (userId: string, _origin: string) => {
-    set((state) => ({
-      friends: state.friends.filter(f => f.id !== userId && f.homeUserId !== userId),
-    }));
+  // Called from WS handler when the other user removes us as a friend. The
+  // friendship is one relationship however many instances list it, so the
+  // person's entry goes; the relay clears the other instances' rows.
+  removeFriendLocally: (userId: string, origin: string) => {
+    set((state) => {
+      const friends = withoutPeople(state.friends, f => isRowAt(f, userId, origin));
+      return friends === state.friends ? state : { friends };
+    });
   },
 
-  // Called from WS handler when a friend request is cancelled or declined
-  removeRequestById: (requestId: string, _origin: string, userId?: string) => {
-    set((state) => ({
-      requests: state.requests.filter(r => {
-        if (r.id === requestId) return false;
-        // Also match by canonical identity — the WS event may carry a different
-        // request ID than the one stored (different instance's copy)
-        if (userId) {
-          const canonical = r.user?.homeUserId ?? r.user?.id;
-          if (canonical === userId || r.user?.id === userId || r.user?.homeUserId === userId) return false;
-        }
-        return true;
-      }),
-    }));
+  // Called from WS handler when a friend request is cancelled, declined or
+  // its relay failed. The event names the request and the other party by the
+  // ids of the instance that sent it, never another instance's rows.
+  removeRequestById: (requestId: string, origin: string, userId?: string) => {
+    set((state) => {
+      const requests = withoutPeople(state.requests, r =>
+        r._instanceOrigin === origin && (r.id === requestId || (userId !== undefined && r.user?.id === userId)));
+      return requests === state.requests ? state : { requests };
+    });
   },
 
+  // A deletion reaches rows, not people: a deleted copy drops only that
+  // instance's row, and the person's entry is then shown by another row.
   removeDeletedUser: (user: IdentityFields, origin: string) => {
     set((state) => {
-      const friends = state.friends.filter(f => !updateIsAbout(f, f._instanceOrigin, user, origin));
-      const requests = state.requests.filter(r => {
+      const friends = withoutRows(state.friends, f => updateIsAbout(f, f._instanceOrigin, user, origin), friendRule);
+      const requests = withoutRows(state.requests, (r) => {
         const rowOrigin = r._instanceOrigin;
-        if (r.user && updateIsAbout(r.user, rowOrigin, user, origin)) return false;
-        return !updateIsAboutRowId(r.fromId, rowOrigin, user, origin) && !updateIsAboutRowId(r.toId, rowOrigin, user, origin);
-      });
-      if (friends.length === state.friends.length && requests.length === state.requests.length) return state;
+        if (r.user && updateIsAbout(r.user, rowOrigin, user, origin)) return true;
+        return updateIsAboutRowId(r.fromId, rowOrigin, user, origin) || updateIsAboutRowId(r.toId, rowOrigin, user, origin);
+      }, requestRule);
+      if (friends === state.friends && requests === state.requests) return state;
+      return { friends, requests };
+    });
+  },
+
+  removeInstanceRows: (origin: string) => {
+    set((state) => {
+      const fromOrigin = (row: { _instanceOrigin: string }) => row._instanceOrigin === origin;
+      const friends = withoutRows(state.friends, fromOrigin, friendRule);
+      const requests = withoutRows(state.requests, fromOrigin, requestRule);
+      if (friends === state.friends && requests === state.requests) return state;
       return { friends, requests };
     });
   },
@@ -434,23 +585,19 @@ export const useSocialStore = create<SocialState>((set, get) => ({
   // any instance reaches the friend it is about and no other.
   updateFriendPresence: (subject: PresenceSubject, origin: string, status: string) => {
     const key = userKey(subject, origin);
-    set((state) => ({
-      friends: state.friends.map(f =>
-        userKey(f, f._instanceOrigin) === key ? { ...f, status: status as Friend['status'] } : f
-      ),
-    }));
+    set((state) => {
+      const friends = withEachRow(state.friends, f =>
+        friendRule.keyOf(f) === key ? { ...f, status: status as Friend['status'] } : f, friendRule);
+      return friends === state.friends ? state : { friends };
+    });
   },
 
   // Called from WS handler on user_updated to keep friend profile data live
   updateFriendProfile: (user: User, origin: string) => {
     set((state) => {
-      let changed = false;
-      const friends = state.friends.map(f => {
-        if (!userUpdateReach(f, f._instanceOrigin, user, origin)) return f;
-        changed = true;
-        return { ...f, ...profileFieldsOf(user) };
-      });
-      return changed ? { friends } : state;
+      const friends = withEachRow(state.friends, f =>
+        userUpdateReach(f, f._instanceOrigin, user, origin) ? { ...f, ...profileFieldsOf(user) } : f, friendRule);
+      return friends === state.friends ? state : { friends };
     });
   },
 

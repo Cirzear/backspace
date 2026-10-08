@@ -922,3 +922,7 @@ export function getLayoutHomeOrigin(): string {
 
 /** The signed-in user's row id on an instance; defined with the record it reads (`authStore.myRowIds`). */
 export { getMyUserIdForOrigin };
+
+export function setMyUserIdForOrigin(origin: string, userId: string): void {
+  useAuthStore.getState().recordMyRow(origin, userId);
+}

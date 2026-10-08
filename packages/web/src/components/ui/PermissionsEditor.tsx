@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSpaceStore } from '../../stores/spaceStore';
-import { PermissionBits, permissionsToString, stringToPermissions } from '../../utils/permissions';
+import { PermissionBits, permissionsToString, stringToPermissions, isHiddenFromEveryone, overrideVersion } from '../../utils/permissions';
 import { OverrideEntry, type PermissionDef } from './OverrideEntry';
 import { LOCK_ICON } from './LockNote';
 import { describeError } from '../../i18n/errors';
+import { HttpError } from '../../api/client';
 import { userDisplayName } from '../../utils/identity';
-import { isHiddenFromEveryone, type StoredOverride } from '../../utils/overrideBits';
+import type { StoredOverride, OverrideWrite } from '../../utils/overrideBits';
 import {
   useViewerHeldPermissions,
   unswitchableBits,
@@ -29,8 +30,14 @@ export interface PermissionsEditorProps {
   overrides: Override[];
   /** Why the list could not be loaded; empty when it could. */
   loadError?: string;
-  putOverride: (data: Override) => Promise<unknown>;
-  deleteOverride: (targetType: string, targetId: string) => Promise<unknown>;
+  /**
+   * Write one row. `version` is the version of the row the edit of it started
+   * from; the owner's route refuses it with `overrides_conflict` when the row
+   * has changed since (permissions.md, "Concurrent edits").
+   */
+  putOverride: (data: OverrideWrite) => Promise<unknown>;
+  /** Delete one row, as loaded at `version`. */
+  deleteOverride: (targetType: string, targetId: string, version: string) => Promise<unknown>;
   /** Called after a save, landed or partly refused, so the owner lists the overrides again. */
   onSaved: () => Promise<void> | void;
   /** Shown above Save while the staged edit would stop hiding this channel or category from @everyone. */
@@ -69,10 +76,14 @@ export function PermissionsEditor({
     return !!member && !viewerCanActOn(space, members, member);
   }, [space, roles, members]);
 
-  // Draft state: keyed by "role:id" or "member:id"
-  const [draftOverrides, setDraftOverrides] = useState<Map<string, { allow: bigint; deny: bigint }>>(new Map());
-  const [pendingRemovals, setPendingRemovals] = useState<Set<string>>(new Set());
-  const [newOverrides, setNewOverrides] = useState<Map<string, { targetType: string; targetId: string; allow: bigint; deny: bigint }>>(new Map());
+  // Draft state: keyed by "role:id" or "member:id". Each staged row keeps the
+  // version of the saved row it started from (`overrideVersion`, the "none"
+  // version when there was none), taken when it was first staged: the list
+  // can be read again while the edit is open (the Private switch, another
+  // save), and the save must still name what this edit was made against.
+  const [draftOverrides, setDraftOverrides] = useState<Map<string, { allow: bigint; deny: bigint; version: string }>>(new Map());
+  const [pendingRemovals, setPendingRemovals] = useState<Map<string, string>>(new Map());
+  const [newOverrides, setNewOverrides] = useState<Map<string, { targetType: string; targetId: string; allow: bigint; deny: bigint; version: string }>>(new Map());
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
 
@@ -89,7 +100,7 @@ export function PermissionsEditor({
   useEffect(() => {
     setDraftOverrides(new Map());
     setNewOverrides(new Map());
-    setPendingRemovals(new Set());
+    setPendingRemovals(new Map());
     setSaveError('');
   }, [entityId]);
 
@@ -157,7 +168,8 @@ export function PermissionsEditor({
       const n = newOverrides.get(key)!;
       return { allow: n.allow, deny: n.deny };
     }
-    if (draftOverrides.has(key)) return draftOverrides.get(key)!;
+    const draft = draftOverrides.get(key);
+    if (draft) return { allow: draft.allow, deny: draft.deny };
     const orig = existingOverrideMap.get(key);
     if (orig) return { allow: stringToPermissions(orig.allow), deny: stringToPermissions(orig.deny) };
     return { allow: 0n, deny: 0n };
@@ -176,17 +188,23 @@ export function PermissionsEditor({
     } else {
       setDraftOverrides(prev => {
         const next = new Map(prev);
-        next.set(key, { allow, deny });
+        const version = prev.get(key)?.version ?? overrideVersion(existingOverrideMap.get(key));
+        next.set(key, { allow, deny, version });
         return next;
       });
     }
-  }, [newOverrides, isAboveViewer]);
+  }, [newOverrides, isAboveViewer, existingOverrideMap]);
 
   // Remove handler. Whatever the row held in this edit (a staged addition or
   // edited bits) is dropped, and a row the server already stores is marked for
   // deletion, so removing works the same after a remove-and-re-add.
   const handleRemove = useCallback((key: string) => {
     if (isRemoveLocked(key)) return;
+    // The row's version as this edit first saw it: from its staged edit or
+    // re-add when there is one, else the saved row as listed now.
+    const version = draftOverrides.get(key)?.version
+      ?? newOverrides.get(key)?.version
+      ?? overrideVersion(existingOverrideMap.get(key));
     setNewOverrides(prev => {
       if (!prev.has(key)) return prev;
       const next = new Map(prev);
@@ -201,53 +219,57 @@ export function PermissionsEditor({
     });
     if (existingOverrideMap.has(key)) {
       setPendingRemovals(prev => {
-        const next = new Set(prev);
-        next.add(key);
+        const next = new Map(prev);
+        next.set(key, version);
         return next;
       });
     }
-  }, [existingOverrideMap, isRemoveLocked]);
+  }, [existingOverrideMap, isRemoveLocked, draftOverrides, newOverrides]);
 
   // Add role override
   const handleAddRole = useCallback((roleId: string) => {
     const key = `role:${roleId}`;
+    // Re-adding a row staged for removal keeps the version it was removed at.
+    const version = pendingRemovals.get(key) ?? overrideVersion(existingOverrideMap.get(key));
     setNewOverrides(prev => {
       const next = new Map(prev);
-      next.set(key, { targetType: 'role', targetId: roleId, allow: 0n, deny: 0n });
+      next.set(key, { targetType: 'role', targetId: roleId, allow: 0n, deny: 0n, version });
       return next;
     });
     // If it was pending removal, unmark it
     setPendingRemovals(prev => {
-      const next = new Set(prev);
+      const next = new Map(prev);
       next.delete(key);
       return next;
     });
     setShowAddRole(false);
-  }, []);
+  }, [pendingRemovals, existingOverrideMap]);
 
   // Add member override
   const handleAddMember = useCallback((userId: string) => {
     const key = `member:${userId}`;
+    // Re-adding a row staged for removal keeps the version it was removed at.
+    const version = pendingRemovals.get(key) ?? overrideVersion(existingOverrideMap.get(key));
     setNewOverrides(prev => {
       const next = new Map(prev);
-      next.set(key, { targetType: 'member', targetId: userId, allow: 0n, deny: 0n });
+      next.set(key, { targetType: 'member', targetId: userId, allow: 0n, deny: 0n, version });
       return next;
     });
     setPendingRemovals(prev => {
-      const next = new Set(prev);
+      const next = new Map(prev);
       next.delete(key);
       return next;
     });
     setShowAddMember(false);
     setMemberSearch('');
-  }, []);
+  }, [pendingRemovals, existingOverrideMap]);
 
   const hasChanges = draftOverrides.size > 0 || newOverrides.size > 0 || pendingRemovals.size > 0;
 
   const handleDiscard = useCallback(() => {
     setDraftOverrides(new Map());
     setNewOverrides(new Map());
-    setPendingRemovals(new Set());
+    setPendingRemovals(new Map());
     setSaveError('');
   }, []);
 
@@ -259,13 +281,13 @@ export function PermissionsEditor({
       const promises: Promise<unknown>[] = [];
 
       // Delete removed overrides
-      for (const key of pendingRemovals) {
+      for (const [key, version] of pendingRemovals) {
         const parts = key.split(':');
-        promises.push(deleteOverride(parts[0]!, parts[1]!));
+        promises.push(deleteOverride(parts[0]!, parts[1]!, version));
       }
 
       // Update modified existing overrides
-      for (const [key, { allow, deny }] of draftOverrides) {
+      for (const [key, { allow, deny, version }] of draftOverrides) {
         if (pendingRemovals.has(key)) continue;
         const parts = key.split(':');
         promises.push(putOverride({
@@ -273,26 +295,32 @@ export function PermissionsEditor({
           targetId: parts[1]!,
           allow: permissionsToString(allow),
           deny: permissionsToString(deny),
+          version,
         }));
       }
 
       // Create new overrides
-      for (const [, { targetType, targetId, allow, deny }] of newOverrides) {
+      for (const [, { targetType, targetId, allow, deny, version }] of newOverrides) {
         promises.push(putOverride({
           targetType,
           targetId,
           allow: permissionsToString(allow),
           deny: permissionsToString(deny),
+          version,
         }));
       }
 
       const results = await Promise.allSettled(promises);
-      const failures = results.filter(r => r.status === 'rejected');
+      const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
       if (failures.length > 0) {
-        const first = failures[0] as PromiseRejectedResult;
+        // A row someone else changed meanwhile is reported before any other
+        // refusal: the list is read again below, and the viewer reviews it
+        // and saves again (permissions.md, "Concurrent edits").
+        const conflict = failures.find((f) => f.reason instanceof HttpError && f.reason.code === 'overrides_conflict');
+        const shown = conflict ?? failures[0]!;
         setSaveError(
-          first.reason instanceof Error
-            ? describeError(first.reason)
+          shown.reason instanceof Error
+            ? describeError(shown.reason)
             : t('spaces:permissions.partialFailure', { count: failures.length }),
         );
       }
@@ -300,7 +328,7 @@ export function PermissionsEditor({
       // Reset draft state; the owner lists the overrides again
       setDraftOverrides(new Map());
       setNewOverrides(new Map());
-      setPendingRemovals(new Set());
+      setPendingRemovals(new Map());
       await onSaved();
     } catch (err) {
       setSaveError(describeError(err));

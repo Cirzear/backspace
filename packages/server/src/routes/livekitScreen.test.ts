@@ -113,7 +113,10 @@ describe('native screen API authorization', () => {
     user('collision', { id: 'same-home-id', origin: 'evil.test' });
     db.insert(schema.dmChannels).values({ id: 'dm', federatedId: 'fed-call', createdAt: 1 }).run();
     db.insert(schema.dmMembers).values([{ dmChannelId: 'dm', userId: 'owner' }, { dmChannelId: 'dm', userId: 'remote' }]).run();
-    connectionManager.createRoom('dm', 'dm', { type: 'dm', callerId: 'owner', state: 'active' });
+    connectionManager.createRoom('dm', 'dm', {
+      type: 'dm', callerId: 'owner', state: 'active', group: false,
+      declinedUserIds: new Set(), remoteParticipants: new Map(),
+    });
     const payload = { federatedCallId: 'fed-call', ownerIdentity: 'same-home-id:remote', actor: { homeUserId: 'same-home-id', homeInstance: 'remote.test' } };
     const response = await token(payload, '/api/federation/livekit/screen-token');
     expect(response.statusCode).toBe(200);
@@ -133,7 +136,7 @@ describe('native screen API authorization', () => {
     connectionManager.createFederatedCall({
       dmChannelId: null, federatedId: 'proxy-call', callerId: 'remote', callerHomeUserId: 'remote',
       federatedCallHost: 'https://host.test', livekitUrl: 'wss://host.test/livekit',
-      tokens: new Map([['owner', 'main-token']]), ringedUserIds: ['owner'], state: 'active', startedAt: 1,
+      tokens: new Map([['owner', 'main-token']]), ringedUserIds: ['owner'], joinedUserIds: ['owner'], group: false, state: 'active', startedAt: 1,
     });
     const pair = {
       token: 'screen-token', voiceToken: 'voice-token', url: 'wss://host.test/livekit', roomName: 'proxy-call',
