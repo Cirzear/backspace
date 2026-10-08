@@ -82,7 +82,8 @@
     "searchMembers": "Pesquisar membros…",
     "noMembersFound": "Nenhum membro encontrado",
     "or": "ou",
-    "nameAZ": "Nome (A-Z)"
+    "nameAZ": "Nome (A-Z)",
+    "suggestions": "Suggestions"
   },
   "time": {
     "today": "Hoje às {{time}}",

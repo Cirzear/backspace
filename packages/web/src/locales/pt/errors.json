@@ -219,5 +219,7 @@
   "directory_disabled": "Esta instância não está conectada a um diretório.",
   "directory_unreachable": "O Espaço Externo não está acessível no momento. O Espaço Interno continua funcionando.",
   "directory_private_space": "Defina o espaço como público ou por solicitação antes de listá-lo.",
-  "directory_requires_discovery": "Ative primeiro a descoberta de espaços."
+  "directory_requires_discovery": "Ative primeiro a descoberta de espaços.",
+  "space_owner_title_invalid": "Owner title must be a single line of 1–{{max}} characters",
+  "member_nickname_invalid": "Nickname must contain 1–32 characters on a single line. Use reset to restore the default."
 }

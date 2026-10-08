@@ -7,6 +7,34 @@
   "chat": {
     "openCall": "Abrir chamada",
     "cancelCall": "Cancelar chamada",
-    "unknownChannel": "canal"
+    "unknownChannel": "canal",
+    "channelFallback": "Channel"
+  },
+  "instance": {
+    "title": "Choose your instance",
+    "description": "Connect to the Backspace server you trust.",
+    "address": "Instance address",
+    "httpsHelp": "Enter a complete HTTPS origin, such as https://chat.example.com. HTTP and invalid certificates are not supported.",
+    "check": "Check instance",
+    "checking": "Checking…",
+    "confirm": "Use this instance",
+    "connectionError": "Could not verify the instance. Check the address, connection and HTTPS certificate.",
+    "invalidOrigin": "Enter a complete HTTPS origin without credentials, path, query or fragment.",
+    "httpError": "The instance returned HTTP {{status}}.",
+    "invalidResponse": "The server did not return valid Backspace instance information.",
+    "sessionHelp": "Unsent drafts and transfers are kept only for this session.",
+    "selected": "Instance: {{host}}",
+    "change": "Change instance",
+    "logoutRequired": "Log out before changing the instance."
+  },
+  "startup": {
+    "title": "Unable to start Backspace",
+    "description": "Startup or secure session storage failed. The app is blocked to protect your session.",
+    "reload": "Reload"
+  },
+  "nav": {
+    "spaces": "Spaces",
+    "dms": "DMs",
+    "you": "You"
   }
 }
