@@ -32,6 +32,52 @@ export interface ScreenShareConfig {
 export type ScreenShareAudioState = 'published' | 'held' | 'acquiring' | 'acquirable' | 'unavailable';
 
 export type VoiceConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
+
+/**
+ * How this client names one DM call and reaches it. Every call slot carries
+ * its own, so a ring for another call never changes the call the client is
+ * in (voice.md, "Client-Side Call Routing").
+ *
+ * - `dmChannelId`: the conversation's id on the instance the call goes
+ *   through. Null only for a call rung by an instance that has no copy of
+ *   the conversation (federation Path B); never the call's key.
+ * - `federatedCallId`: the conversation key the host names a federated call
+ *   by. Null for a call hosted on the conversation's own instance.
+ * - `callOrigin`: the WebSocket origin the call's accept, decline and
+ *   hang-up go to (the one that rang it). Null means the conversation's own
+ *   origin (`getChannelOrigin(dmChannelId)`).
+ */
+export type DmCallRef =
+  | { dmChannelId: string; federatedCallId: string | null; callOrigin: string | null }
+  | { dmChannelId: null; federatedCallId: string; callOrigin: string };
+
+/** LiveKit credentials a ring brought, for a call hosted on another instance. */
+export interface DmCallCredentials {
+  token: string;
+  url: string;
+}
+
+/** A call ringing in. */
+export type IncomingDmCall = DmCallRef & {
+  callerId: string;
+  callerName: string;
+  livekit: DmCallCredentials | null;
+};
+
+/** A call this client placed that nobody answered yet. It is always hosted on the conversation's instance. */
+export interface OutgoingDmCall {
+  dmChannelId: string;
+  /** The caller asked for a video call: the camera goes on once the call connects. */
+  withCamera: boolean;
+}
+
+/**
+ * The call this client is in. `livekit` holds the credentials a ring brought
+ * until the connect uses them once.
+ */
+export type ActiveDmCall = DmCallRef & {
+  livekit: DmCallCredentials | null;
+};
 export type VoiceConnectionQuality = 'excellent' | 'good' | 'poor' | 'lost' | 'unknown';
 
 export interface VoiceChannelElapsed {
@@ -41,7 +87,7 @@ export interface VoiceChannelElapsed {
   observedAt: number;
 }
 
-interface VoiceState {
+export interface VoiceState {
   voiceUsers: Map<string, string[]>; // channelId → userIds
   voiceChannelElapsedSeconds: Map<string, VoiceChannelElapsed>; // channelId → server duration + local observation time
   currentVoiceChannelId: string | null;
@@ -104,6 +150,8 @@ interface VoiceState {
   recordStreamWatch: (sharerIdentity: string, watcherIdentity: string, watching: boolean) => void;
   clearStreamWatchers: (sharerIdentity: string) => void;
   evictWatcher: (watcherIdentity: string) => void;
+  /** Drop every watcher not among `present` (the room's participants after a full reconnect). */
+  retainWatchers: (present: ReadonlySet<string>) => void;
   soundEffectVolume: number;                 // 0-200 (100 = default)
   setSoundEffectVolume: (volume: number) => void;
   messageSoundAllChannels: boolean;          // false (default) = DM + mention only; true = every channel
@@ -123,20 +171,12 @@ interface VoiceState {
   setStreamAttenuationEnabled: (enabled: boolean) => void;
   setStreamAttenuationStrength: (strength: number) => void;
   // DM call state
-  incomingCall: { dmChannelId: string | null; callerId: string; callerName: string } | null;
-  outgoingCall: { dmChannelId: string } | null;
-  activeDmCall: { dmChannelId: string } | null;
-  setIncomingCall: (call: { dmChannelId: string | null; callerId: string; callerName: string } | null) => void;
-  setOutgoingCall: (call: { dmChannelId: string } | null) => void;
-  setActiveDmCall: (call: { dmChannelId: string } | null) => void;
-  federatedCallToken: string | null;
-  federatedCallUrl: string | null;
-  federatedCallId: string | null;
-  callOrigin: string | null;
-  setFederatedCallData: (token: string, url: string) => void;
-  clearFederatedCallData: () => void;
-  setFederatedCallId: (id: string | null) => void;
-  setCallOrigin: (origin: string | null) => void;
+  incomingCall: IncomingDmCall | null;
+  outgoingCall: OutgoingDmCall | null;
+  activeDmCall: ActiveDmCall | null;
+  setIncomingCall: (call: IncomingDmCall | null) => void;
+  setOutgoingCall: (call: OutgoingDmCall | null) => void;
+  setActiveDmCall: (call: ActiveDmCall | null) => void;
   setVoiceUsers: (channelId: string, userIds: string[]) => void;
   setVoiceChannelElapsedSeconds: (channelId: string, elapsedSeconds: number | null) => void;
   addVoiceUser: (channelId: string, userId: string) => void;
@@ -229,6 +269,17 @@ export function hasVoiceSession(
   if (state.voiceConnectionStatus !== 'disconnected') return true;
   if (state.outgoingCall !== null || state.incomingCall !== null) return true;
   return state.activeDmCall !== null && state.connectionError === null;
+}
+
+/**
+ * Whether the client is in its LiveKit room, counting a reconnect in
+ * progress: a short network reconnect is not a leave. `isLiveKitConnected` is
+ * false while LiveKit reconnects; `voiceConnectionStatus` says 'reconnecting'
+ * then, and turns 'disconnected' only when the reconnect gives up or the user
+ * leaves.
+ */
+export function isInVoiceRoom(state: Pick<VoiceState, 'isLiveKitConnected' | 'voiceConnectionStatus'>): boolean {
+  return state.isLiveKitConnected || state.voiceConnectionStatus === 'reconnecting';
 }
 
 export const useVoiceStore = create<VoiceState>()(
@@ -330,6 +381,18 @@ export const useVoiceStore = create<VoiceState>()(
           return mutated ? { streamWatchers: newMap } : state;
         });
       },
+      retainWatchers: (present) => {
+        set((state) => {
+          let mutated = false;
+          const newMap = new Map<string, Set<string>>();
+          for (const [streamerId, watchers] of state.streamWatchers) {
+            const next = new Set([...watchers].filter((w) => present.has(w)));
+            if (next.size !== watchers.size) mutated = true;
+            if (next.size > 0) newMap.set(streamerId, next);
+          }
+          return mutated ? { streamWatchers: newMap } : state;
+        });
+      },
       streamAttenuationEnabled: false,
       streamAttenuationStrength: 50,
 
@@ -395,26 +458,10 @@ export const useVoiceStore = create<VoiceState>()(
       incomingCall: null,
       outgoingCall: null,
       activeDmCall: null,
-      federatedCallToken: null,
-      federatedCallUrl: null,
-      federatedCallId: null,
-      callOrigin: null,
 
       setIncomingCall: (call) => set({ incomingCall: call }),
       setOutgoingCall: (call) => set({ outgoingCall: call }),
-      setActiveDmCall: (call) => set(call
-        ? { activeDmCall: call }
-        : { activeDmCall: null, federatedCallToken: null, federatedCallUrl: null, federatedCallId: null, callOrigin: null }),
-      setFederatedCallData: (token, url) => set({ federatedCallToken: token, federatedCallUrl: url }),
-      // Token consumption is not call termination: screen-token and dm_call_end
-      // still need the issuing origin and federated locator after room.connect().
-      clearFederatedCallData: () => set((state) => (
-        state.activeDmCall
-          ? { federatedCallToken: null, federatedCallUrl: null }
-          : { federatedCallToken: null, federatedCallUrl: null, federatedCallId: null, callOrigin: null }
-      )),
-      setFederatedCallId: (id) => set({ federatedCallId: id }),
-      setCallOrigin: (origin) => set({ callOrigin: origin }),
+      setActiveDmCall: (call) => set({ activeDmCall: call }),
 
       setVoiceUsers: (channelId, userIds) => {
         set((state) => {
@@ -467,10 +514,6 @@ export const useVoiceStore = create<VoiceState>()(
       setCurrentVoiceChannel: (channelId) => set({ 
         currentVoiceChannelId: channelId,
         activeDmCall: null, // Clear DM routing when joining a space channel.
-        federatedCallToken: null,
-        federatedCallUrl: null,
-        federatedCallId: null,
-        callOrigin: null,
       }),
 
       setParticipants: (participants) => set({ participants }),
@@ -656,10 +699,6 @@ export const useVoiceStore = create<VoiceState>()(
         incomingCall: null,
         outgoingCall: null,
         activeDmCall: null,
-        federatedCallToken: null,
-        federatedCallUrl: null,
-        federatedCallId: null,
-        callOrigin: null,
         // Per-session media state
         isCameraOn: false,
         isScreenSharing: false,
@@ -726,10 +765,6 @@ export const useVoiceStore = create<VoiceState>()(
             focusedParticipantId: null,
             activeDmCall: null,
             outgoingCall: null,
-            federatedCallToken: null,
-            federatedCallUrl: null,
-            federatedCallId: null,
-            callOrigin: null,
             deafenedUserIds: new Set(),
             participantMutes: new Map(),
             streamVolumes: new Map(),
@@ -775,10 +810,6 @@ export const useVoiceStore = create<VoiceState>()(
           focusedParticipantId: null,
           activeDmCall: null,
           outgoingCall: null,
-          federatedCallToken: null,
-          federatedCallUrl: null,
-          federatedCallId: null,
-          callOrigin: null,
           deafenedUserIds: new Set(),
           participantMutes: new Map(),
           streamVolumes: new Map(),
@@ -817,10 +848,6 @@ export const useVoiceStore = create<VoiceState>()(
         incomingCall: null,
         outgoingCall: null,
         activeDmCall: null,
-        federatedCallToken: null,
-        federatedCallUrl: null,
-        federatedCallId: null,
-        callOrigin: null,
         deafenedUserIds: new Set(),
         voiceUserStates: new Map(),
         streamVolumes: new Map(),

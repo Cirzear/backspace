@@ -1,7 +1,9 @@
 import React, { useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useUIStore } from '../../stores/uiStore';
 import { registerNativeDismiss } from '../../mobile/nativeBack';
+import { usePortalContainer } from '../../hooks/usePortalContainer';
 
 interface ModalProps {
   isOpen: boolean;
@@ -14,7 +16,24 @@ interface ModalProps {
   mobileStyle?: 'fullscreen' | 'sheet' | 'default';
 }
 
-export function Modal({ isOpen, onClose, title, children, maxWidth = 'max-w-md', size, mobileStyle = 'default' }: ModalProps) {
+/**
+ * Shared dialog shell. It always renders through a portal into
+ * `usePortalContainer()`, never in place. A `fixed inset-0` overlay is only
+ * sized to the window while no ancestor sets `transform`, `filter` or
+ * `backdrop-filter`; any of those makes the ancestor the containing block, and
+ * the dialog is then sized and clipped to it (the 72px space strip is
+ * `.glass-strip`, a dialog opened from its menu rendered inside the strip).
+ * Callers mount a Modal wherever its state lives and do not portal it again.
+ * Overlays stack by portal order: one opened from inside an open Modal is
+ * appended after it.
+ */
+export function Modal(props: ModalProps) {
+  const portalContainer = usePortalContainer();
+  if (!props.isOpen) return null;
+  return createPortal(<ModalSurface {...props} />, portalContainer);
+}
+
+function ModalSurface({ onClose, title, children, maxWidth = 'max-w-md', size, mobileStyle = 'default' }: ModalProps) {
   const { t } = useTranslation('common');
   const isMobile = useUIStore((s) => s.isMobile);
   const closeLabel = size === 'settings' ? t('chrome.closeSettings') : t('actions.close');
@@ -26,17 +45,12 @@ export function Modal({ isOpen, onClose, title, children, maxWidth = 'max-w-md',
   }, [onClose]);
 
   useEffect(() => {
-    if (isOpen) {
-      document.addEventListener('keydown', handleKeyDown);
-      return () => document.removeEventListener('keydown', handleKeyDown);
-    }
-  }, [isOpen, handleKeyDown]);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [handleKeyDown]);
 
-  useEffect(() => {
-    if (isOpen) return registerNativeDismiss(onClose);
-  }, [isOpen, onClose]);
-
-  if (!isOpen) return null;
+  // The portal surface exists only while open; keep Android back dismissal scoped to it.
+  useEffect(() => registerNativeDismiss(onClose), [onClose]);
 
   // Mobile fullscreen style
   if (isMobile && mobileStyle === 'fullscreen') {

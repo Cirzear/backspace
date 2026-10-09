@@ -1,15 +1,93 @@
+import type { ErrorCode, ErrorDetails } from '@backspace/shared/src/errors';
 import type { JoinSpaceRequest, MemberWithUser } from '@backspace/shared';
 import crypto from 'crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { getDb, schema } from '../db/index.js';
 import { authenticate } from '../utils/auth.js';
 import { sendError } from '../utils/httpErrors';
 import { hasPermission, isBanned, isMember, PermissionBits } from '../utils/permissions.js';
 import { sanitizeUser } from '../utils/sanitize.js';
-import { getLocalInviteSnapshot } from '../utils/spaceInviteSnapshot.js';
+import { getLocalInvitePreview } from '../utils/spaceInviteSnapshot.js';
 import { connectionManager } from '../ws/handler.js';
 import { rowToSpace } from './spaceSerialization.js';
+
+interface InviteJoinRefusal {
+  status: number;
+  code: ErrorCode;
+  details?: ErrorDetails;
+}
+
+/**
+ * Why a valid invite code does not admit this user, or null when it does.
+ * Shared by both join-by-code routes. Read against the space's visibility at
+ * the time of the call, so a link follows the space when its visibility
+ * changes.
+ *
+ * Banned and already-member answer as every join path does. A request space
+ * never admits anyone by code: entry is `POST /api/spaces/:id/request-join`
+ * and a manager's approval. A user with a request waiting is told so
+ * (`409 join_request_pending`, the answer the request route gives); anyone
+ * else gets `403 join_request_required` with the space's id, which is all a
+ * client needs to send the request. Private and public spaces admit by code.
+ */
+function inviteJoinRefusal(space: typeof schema.spaces.$inferSelect, userId: string): InviteJoinRefusal | null {
+  if (isBanned(space.id, userId)) {
+    return { status: 403, code: 'user_banned' };
+  }
+  if (isMember(space.id, userId)) {
+    return { status: 409, code: 'already_member' };
+  }
+  if (space.visibility === 'request') {
+    const pending = getDb().select({ id: schema.joinRequests.id }).from(schema.joinRequests)
+      .where(and(
+        eq(schema.joinRequests.spaceId, space.id),
+        eq(schema.joinRequests.userId, userId),
+        eq(schema.joinRequests.status, 'pending'),
+      ))
+      .get();
+    if (pending) {
+      return { status: 409, code: 'join_request_pending' };
+    }
+    return { status: 403, code: 'join_request_required', details: { spaceId: space.id } };
+  }
+  return null;
+}
+
+/**
+ * Add a member admitted by an invite code: the membership row, the user's
+ * WebSocket subscription to the space, and `member_joined` to the space.
+ */
+function admitByInvite(spaceId: string, userId: string): void {
+  const db = getDb();
+  const now = Date.now();
+  db.insert(schema.spaceMembers).values({
+    spaceId,
+    userId,
+    joinedAt: now,
+  }).run();
+
+  // Register the user in connectionManager so they receive WS broadcasts for this space
+  connectionManager.addUserSpace(userId, spaceId);
+
+  // Broadcast member_joined to existing space members
+  const joiningUser = db.select().from(schema.users).where(eq(schema.users.id, userId)).get();
+  if (joiningUser) {
+    const memberPayload: MemberWithUser = {
+      spaceId,
+      userId,
+      nickname: null,
+      joinedAt: now,
+      user: sanitizeUser(joiningUser),
+      roles: [],
+    };
+    connectionManager.sendToSpace(spaceId, {
+      type: 'member_joined',
+      spaceId,
+      member: memberPayload,
+    });
+  }
+}
 
 export function spaceInviteRoutes(app: FastifyInstance): void {
   // POST /api/spaces/:id/invite - Generate invite code (admin+)
@@ -34,12 +112,9 @@ export function spaceInviteRoutes(app: FastifyInstance): void {
       return sendError(reply, 403, 'missing_permission', { permission: 'CREATE_INVITE' });
     }
 
-    // Request-only spaces are approval-gated and never joinable by invite code
-    // (see the join endpoints), so they have no usable invite links. Refuse to
-    // hand one out rather than mint a code that would dead-end at the join guard.
-    if (server.visibility === 'request') {
-      return sendError(reply, 403, 'space_uses_join_requests');
-    }
+    // Every space hands out its link, a request space included: the link
+    // never admits anyone to a request space (see inviteJoinRefusal), it leads
+    // to the join request flow.
 
     // Return existing invite code if one exists, otherwise generate a new one
     if (server.inviteCode) {
@@ -74,49 +149,12 @@ export function spaceInviteRoutes(app: FastifyInstance): void {
       return sendError(reply, 400, 'invite_not_found');
     }
 
-    if (isBanned(id, request.userId)) {
-      return sendError(reply, 403, 'user_banned');
+    const refusal = inviteJoinRefusal(server, request.userId);
+    if (refusal) {
+      return sendError(reply, refusal.status, refusal.code, refusal.details);
     }
 
-    if (isMember(id, request.userId)) {
-      return sendError(reply, 409, 'already_member');
-    }
-
-    // Request-only spaces are gated by manager approval: entry must go through
-    // POST /request-join + approval, never a bearer invite code. (Private spaces
-    // remain invite-joinable — that is their only entry path; public too.)
-    if (server.visibility === 'request') {
-      return sendError(reply, 403, 'join_request_required');
-    }
-
-    const now = Date.now();
-    db.insert(schema.spaceMembers).values({
-      spaceId: id,
-      userId: request.userId,
-      joinedAt: now,
-    }).run();
-
-    // Register the user in connectionManager so they receive WS broadcasts for this server
-    connectionManager.addUserSpace(request.userId, id);
-
-    // Broadcast member_joined to existing server members
-    const joiningUser = db.select().from(schema.users).where(eq(schema.users.id, request.userId)).get();
-    if (joiningUser) {
-      const memberPayload: MemberWithUser = {
-        spaceId: id,
-        userId: request.userId,
-        nickname: null,
-        joinedAt: now,
-        user: sanitizeUser(joiningUser),
-        roles: [],
-      };
-      connectionManager.sendToSpace(id, {
-        type: 'member_joined',
-        spaceId: id,
-        member: memberPayload,
-      });
-    }
-
+    admitByInvite(server.id, request.userId);
     return reply.code(200).send(rowToSpace(server));
   });
 
@@ -137,58 +175,23 @@ export function spaceInviteRoutes(app: FastifyInstance): void {
       return sendError(reply, 404, 'invite_not_found');
     }
 
-    if (isBanned(server.id, request.userId)) {
-      return sendError(reply, 403, 'user_banned');
+    const refusal = inviteJoinRefusal(server, request.userId);
+    if (refusal) {
+      return sendError(reply, refusal.status, refusal.code, refusal.details);
     }
 
-    if (isMember(server.id, request.userId)) {
-      return sendError(reply, 409, 'already_member');
-    }
-
-    // Request-only spaces are gated by manager approval (see POST /:id/join).
-    if (server.visibility === 'request') {
-      return sendError(reply, 403, 'join_request_required');
-    }
-
-    const now = Date.now();
-    db.insert(schema.spaceMembers).values({
-      spaceId: server.id,
-      userId: request.userId,
-      joinedAt: now,
-    }).run();
-
-    // Register the user in connectionManager so they receive WS broadcasts for this server
-    connectionManager.addUserSpace(request.userId, server.id);
-
-    // Broadcast member_joined to existing server members
-    const joiningUser = db.select().from(schema.users).where(eq(schema.users.id, request.userId)).get();
-    if (joiningUser) {
-      const memberPayload: MemberWithUser = {
-        spaceId: server.id,
-        userId: request.userId,
-        nickname: null,
-        joinedAt: now,
-        user: sanitizeUser(joiningUser),
-        roles: [],
-      };
-      connectionManager.sendToSpace(server.id, {
-        type: 'member_joined',
-        spaceId: server.id,
-        member: memberPayload,
-      });
-    }
-
+    admitByInvite(server.id, request.userId);
     return reply.code(200).send(rowToSpace(server));
   });
 
   // GET /api/spaces/invite/:code/preview — Public invite preview (no auth)
   app.get<{ Params: { code: string } }>('/api/spaces/invite/:code/preview', async (request, reply) => {
     const { code } = request.params;
-    const snapshot = getLocalInviteSnapshot(code);
-    if (!snapshot) {
+    const preview = getLocalInvitePreview(code);
+    if (!preview) {
       return sendError(reply, 404, 'invite_not_found');
     }
-    return reply.code(200).send(snapshot);
+    return reply.code(200).send(preview);
   });
 
   // ─── Ban Management ───────────────────────────────────────────────────────

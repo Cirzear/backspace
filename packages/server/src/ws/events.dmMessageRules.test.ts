@@ -1,0 +1,658 @@
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import Fastify, { type FastifyInstance } from 'fastify';
+import Database from 'better-sqlite3';
+import { drizzle } from 'drizzle-orm/better-sqlite3';
+import { eq } from 'drizzle-orm';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { WebSocket } from 'ws';
+import { MAX_MESSAGE_LENGTH } from '@backspace/shared';
+import * as schema from '../db/schema.js';
+import { setWorkerId, generateSnowflake } from '../utils/snowflake.js';
+import rateLimit from '@fastify/rate-limit';
+import { errorBody } from '../utils/httpErrors.js';
+import { recordSocketAddress } from './socketAddress.js';
+import {
+  DM_MESSAGE_CREATE_RATE_LIMIT,
+  _resetWsDmMessageCreateLimit,
+  consumeWsDmMessageCreate,
+} from '../utils/dmMessageRateLimit.js';
+
+// #420: the WebSocket create, edit and delete paths for DM messages follow
+// the REST routes' rules, including the read-only rule for a 1-on-1 whose
+// partner was deleted, and every refusal carries an error code.
+
+setWorkerId(1);
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+type TestDb = ReturnType<typeof drizzle<typeof schema>>;
+let sqlite: Database.Database;
+let testDb: TestDb;
+let currentUserId = 'alice';
+
+vi.mock('../db/index.js', () => ({
+  getDb: () => testDb,
+  getRawDb: () => sqlite,
+  schema,
+}));
+
+vi.mock('../utils/auth.js', () => ({
+  authenticate: async (req: { userId?: string }) => {
+    req.userId = currentUserId;
+  },
+}));
+
+const sendToUser = vi.fn();
+const sendToWs = vi.fn();
+vi.mock('./handler.js', () => ({
+  connectionManager: {
+    sendToUser: (...args: unknown[]) => sendToUser(...args),
+    sendToWs: (...args: unknown[]) => sendToWs(...args),
+    sendToDmMembers: vi.fn(),
+    sendToRoom: vi.fn(),
+    sendToAdmins: vi.fn(),
+    getUserRoom: () => undefined,
+    getRoom: () => undefined,
+    getAllRooms: () => new Map(),
+    getAllOnlineUserIds: () => [],
+  },
+  getVoiceRoomElapsedSeconds: () => 0,
+}));
+
+const queueDmRelay = vi.fn();
+const queueDmMessageDeleteRelay = vi.fn();
+vi.mock('../utils/federationOutbox.js', async () => {
+  const actual = await vi.importActual<typeof import('../utils/federationOutbox.js')>('../utils/federationOutbox.js');
+  return {
+    ...actual,
+    isFederationRelayEnabled: () => false,
+    queueDmCloseRelay: vi.fn(),
+    queueDmRelay: (...args: unknown[]) => queueDmRelay(...args),
+    queueDmMessageDeleteRelay: (...args: unknown[]) => queueDmMessageDeleteRelay(...args),
+    queueOutboxEvent: vi.fn(),
+    queueReadStateRelay: vi.fn(),
+    sendTypingRelay: vi.fn(),
+    appendMutationLog: vi.fn(),
+  };
+});
+
+vi.mock('../utils/federationAuth.js', async (importActual) => {
+  const actual = await importActual<typeof import('../utils/federationAuth.js')>();
+  return { ...actual, getOurOrigin: () => 'https://local.test' };
+});
+
+vi.mock('../utils/embedResolver.js', async (importActual) => {
+  const actual = await importActual<typeof import('../utils/embedResolver.js')>();
+  return {
+    ...actual,
+    resolveEmbeds: vi.fn(async () => {}),
+    reResolveEmbeds: vi.fn(async () => {}),
+  };
+});
+
+function applyMigrations(db: Database.Database): void {
+  const migrationsDir = path.resolve(__dirname, '../../drizzle');
+  const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
+  for (const f of files) {
+    const sqlText = fs.readFileSync(path.join(migrationsDir, f), 'utf8');
+    for (const stmt of sqlText.split(/-->\s*statement-breakpoint/)) {
+      const clean = stmt.trim();
+      if (clean) db.exec(clean);
+    }
+  }
+}
+
+interface SeedUserOpts {
+  deleted?: boolean;
+  homeUserId?: string;
+  homeInstance?: string;
+}
+
+function seedUser(id: string, opts: SeedUserOpts = {}): void {
+  testDb.insert(schema.users).values({
+    id,
+    username: opts.deleted ? `!deleted:${id}` : id,
+    displayName: null,
+    passwordHash: 'x',
+    status: 'offline',
+    isAdmin: 0,
+    isDeleted: opts.deleted ? 1 : 0,
+    discoverable: 1,
+    homeInstance: opts.homeInstance ?? null,
+    homeUserId: opts.homeUserId ?? null,
+    createdAt: Date.now(),
+  }).run();
+}
+
+function seedDm(id: string, memberIds: string[], ownerId: string | null = null): void {
+  testDb.insert(schema.dmChannels).values({
+    id,
+    ownerId,
+    federatedId: null,
+    createdAt: Date.now(),
+    metadataUpdatedAt: 0,
+  }).run();
+  for (const userId of memberIds) {
+    testDb.insert(schema.dmMembers).values({ dmChannelId: id, userId, closed: 0 }).run();
+  }
+}
+
+function seedMessage(dmChannelId: string, userId: string, content: string, type: 'user' | 'system' = 'user'): string {
+  const id = generateSnowflake();
+  testDb.insert(schema.dmMessages).values({
+    id,
+    dmChannelId,
+    userId,
+    replyToId: null,
+    content,
+    type,
+    createdAt: Date.now(),
+  }).run();
+  return id;
+}
+
+function seedAttachment(id: string, uploaderId: string): void {
+  testDb.insert(schema.attachments).values({
+    id,
+    uploaderId,
+    filename: `${id}.png`,
+    originalName: 'a.png',
+    mimetype: 'image/png',
+    size: 1,
+    createdAt: Date.now(),
+  }).run();
+}
+
+function messagesIn(dmChannelId: string): (typeof schema.dmMessages.$inferSelect)[] {
+  return testDb.select().from(schema.dmMessages).where(eq(schema.dmMessages.dmChannelId, dmChannelId)).all();
+}
+
+function messageRow(id: string): typeof schema.dmMessages.$inferSelect | undefined {
+  return testDb.select().from(schema.dmMessages).where(eq(schema.dmMessages.id, id)).get();
+}
+
+/** The socket of the last `send`, a fresh object per call. */
+let lastSocket: WebSocket | undefined;
+
+async function send(event: Record<string, unknown>, userId = 'alice', address?: string): Promise<void> {
+  const { handleClientEvent } = await import('./events.js');
+  lastSocket = {} as WebSocket;
+  if (address) recordSocketAddress(lastSocket, address);
+  handleClientEvent(event, userId, userId, lastSocket, false);
+}
+
+/** Every event the server sent to a user's sessions, as `[recipient, event]` pairs. */
+function sent(): [string, Record<string, unknown>][] {
+  return sendToUser.mock.calls.map((c) => [c[0] as string, c[1] as Record<string, unknown>]);
+}
+
+/**
+ * The server answered with one coded `error`, on the socket that sent the
+ * event and nowhere else: the user's other sessions did not act, and a coded
+ * error shows as a toast there.
+ */
+function expectOnlyRefusal(code: string, details?: Record<string, unknown>): void {
+  expect(sent()).toHaveLength(0);
+  expect(sendToWs).toHaveBeenCalledTimes(1);
+  const [socket, event] = sendToWs.mock.calls[0] as [WebSocket, Record<string, unknown>];
+  expect(socket).toBe(lastSocket);
+  expect(event.type).toBe('error');
+  expect(event.code).toBe(code);
+  expect(typeof event.message).toBe('string');
+  if (details) expect(event.details).toEqual(details);
+  else expect(event.details).toBeUndefined();
+}
+
+// Dead 1-on-1s: alice with a deleted native user, alice with a deleted
+// replicated user, and a federated account acting here with a deleted native
+// user. Live conversations: a 1-on-1 and a group that still holds a deleted
+// member's row.
+const DEAD_LOCAL = 'dm-dead-local';
+const DEAD_REMOTE = 'dm-dead-remote';
+const DEAD_FOR_FEDERATED = 'dm-dead-federated';
+const LIVE = 'dm-live';
+const GROUP = 'dm-group';
+// A group alice and fed-carol wrote in and then left: only bob is still in it.
+const LEFT_GROUP = 'dm-left-group';
+
+beforeEach(() => {
+  sqlite = new Database(':memory:');
+  testDb = drizzle(sqlite, { schema });
+  applyMigrations(sqlite);
+
+  seedUser('alice');
+  seedUser('bob');
+  seedUser('gone', { deleted: true });
+  seedUser('gone-remote', { deleted: true, homeUserId: 'r-gone-1', homeInstance: 'https://orbit.test' });
+  seedUser('fed-carol', { homeUserId: 'r-carol-1', homeInstance: 'https://orbit.test' });
+
+  seedDm(DEAD_LOCAL, ['alice', 'gone']);
+  seedDm(DEAD_REMOTE, ['alice', 'gone-remote']);
+  seedDm(DEAD_FOR_FEDERATED, ['fed-carol', 'gone']);
+  seedDm(LIVE, ['alice', 'bob']);
+  seedDm(GROUP, ['alice', 'bob', 'gone'], 'alice');
+  seedDm(LEFT_GROUP, ['bob'], 'bob');
+
+  currentUserId = 'alice';
+  _resetWsDmMessageCreateLimit();
+  sendToUser.mockClear();
+  sendToWs.mockClear();
+  queueDmRelay.mockClear();
+  queueDmMessageDeleteRelay.mockClear();
+});
+
+describe('WS DM message writes in a 1-on-1 whose partner was deleted', () => {
+  it.each([
+    ['a deleted user of this instance', DEAD_LOCAL, 'alice'],
+    ['a deleted replicated user', DEAD_REMOTE, 'alice'],
+    ['a federated account acting here', DEAD_FOR_FEDERATED, 'fed-carol'],
+  ])('refuses dm_message_create with %s, stores and sends nothing', async (_label, dmId, userId) => {
+    await send({ type: 'dm_message_create', dmChannelId: dmId, content: 'hello?' }, userId);
+
+    expectOnlyRefusal('recipient_deleted');
+    expect(messagesIn(dmId)).toHaveLength(0);
+    expect(queueDmRelay).not.toHaveBeenCalled();
+  });
+
+  it('refuses an attachment-only create and leaves the attachment unlinked', async () => {
+    seedAttachment('att-1', 'alice');
+
+    await send({ type: 'dm_message_create', dmChannelId: DEAD_LOCAL, attachments: ['att-1'] });
+
+    expectOnlyRefusal('recipient_deleted');
+    const att = testDb.select().from(schema.attachments).where(eq(schema.attachments.id, 'att-1')).get();
+    expect(att?.dmMessageId).toBeNull();
+  });
+
+  it.each([
+    ['a deleted user of this instance', DEAD_LOCAL, 'alice'],
+    ['a deleted replicated user', DEAD_REMOTE, 'alice'],
+    ['a federated account acting here', DEAD_FOR_FEDERATED, 'fed-carol'],
+  ])('refuses dm_message_edit with %s and keeps the text', async (_label, dmId, userId) => {
+    const id = seedMessage(dmId, userId, 'before');
+
+    await send({ type: 'dm_message_edit', messageId: id, content: 'after' }, userId);
+
+    expectOnlyRefusal('recipient_deleted');
+    expect(messageRow(id)?.content).toBe('before');
+    expect(messageRow(id)?.editedAt).toBeNull();
+    expect(queueDmRelay).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a deleted user of this instance', DEAD_LOCAL, 'alice'],
+    ['a deleted replicated user', DEAD_REMOTE, 'alice'],
+    ['a federated account acting here', DEAD_FOR_FEDERATED, 'fed-carol'],
+  ])('refuses dm_message_delete with %s and keeps the message', async (_label, dmId, userId) => {
+    const id = seedMessage(dmId, userId, 'keep me');
+
+    await send({ type: 'dm_message_delete', messageId: id }, userId);
+
+    expectOnlyRefusal('recipient_deleted');
+    expect(messageRow(id)).toBeDefined();
+    expect(queueDmMessageDeleteRelay).not.toHaveBeenCalled();
+  });
+});
+
+describe('WS DM message writes where the rule does not apply', () => {
+  it.each([
+    ['a live 1-on-1', LIVE],
+    ['a group that holds a deleted member', GROUP],
+  ])('creates, edits and deletes in %s', async (_label, dmId) => {
+    await send({ type: 'dm_message_create', dmChannelId: dmId, content: 'hi' });
+    const [created] = messagesIn(dmId);
+    expect(created?.content).toBe('hi');
+    expect(sent().some(([, e]) => e.type === 'dm_message_created')).toBe(true);
+    expect(sent().some(([, e]) => e.type === 'error')).toBe(false);
+    expect(queueDmRelay).toHaveBeenCalledTimes(1);
+    expect(queueDmRelay).toHaveBeenCalledWith(expect.objectContaining({ id: created!.id }), dmId, 'create');
+
+    sendToUser.mockClear();
+    queueDmRelay.mockClear();
+    await send({ type: 'dm_message_edit', messageId: created!.id, content: 'hi again' });
+    expect(messageRow(created!.id)?.content).toBe('hi again');
+    expect(sent().some(([, e]) => e.type === 'dm_message_updated')).toBe(true);
+    expect(queueDmRelay).toHaveBeenCalledTimes(1);
+    expect(queueDmRelay).toHaveBeenCalledWith(
+      expect.objectContaining({ id: created!.id, content: 'hi again' }), dmId, 'update',
+    );
+
+    sendToUser.mockClear();
+    await send({ type: 'dm_message_delete', messageId: created!.id });
+    expect(messageRow(created!.id)).toBeUndefined();
+    expect(sent().some(([, e]) => e.type === 'dm_message_deleted')).toBe(true);
+    expect(sent().some(([, e]) => e.type === 'error')).toBe(false);
+    expect(queueDmMessageDeleteRelay).toHaveBeenCalledTimes(1);
+    expect(sendToWs).not.toHaveBeenCalled();
+  });
+
+  it('creates with an attachment: links it, sends one dm_message_created per member, relays once', async () => {
+    seedAttachment('att-own', 'alice');
+
+    await send({ type: 'dm_message_create', dmChannelId: LIVE, content: 'look', attachments: ['att-own'] });
+
+    const [created] = messagesIn(LIVE);
+    expect(created?.content).toBe('look');
+    const att = testDb.select().from(schema.attachments).where(eq(schema.attachments.id, 'att-own')).get();
+    expect(att?.dmMessageId).toBe(created!.id);
+
+    const createdEvents = sent().filter(([, e]) => e.type === 'dm_message_created');
+    expect(createdEvents.map(([to]) => to).sort()).toEqual(['alice', 'bob']);
+    const message = createdEvents[0]![1].message as { id: string; attachments: { id: string }[] };
+    expect(message.id).toBe(created!.id);
+    expect(message.attachments.map((a) => a.id)).toEqual(['att-own']);
+
+    expect(queueDmRelay).toHaveBeenCalledTimes(1);
+    expect(queueDmRelay).toHaveBeenCalledWith(
+      expect.objectContaining({ id: created!.id, attachments: [expect.objectContaining({ id: 'att-own' })] }),
+      LIVE,
+      'create',
+    );
+    expect(sendToWs).not.toHaveBeenCalled();
+  });
+
+  it('stores nothing when an attachment link fails: the insert and the links are one transaction', async () => {
+    seedAttachment('att-first', 'alice');
+    seedAttachment('att-fails', 'alice');
+    // Make linking the second attachment fail inside the write.
+    sqlite.exec(`CREATE TRIGGER fail_link BEFORE UPDATE OF dm_message_id ON attachments
+      WHEN NEW.id = 'att-fails' BEGIN SELECT RAISE(ABORT, 'link failed'); END`);
+
+    await expect(send({
+      type: 'dm_message_create', dmChannelId: LIVE, content: 'two files', attachments: ['att-first', 'att-fails'],
+    })).rejects.toThrow('link failed');
+
+    expect(messagesIn(LIVE)).toHaveLength(0);
+    const first = testDb.select().from(schema.attachments).where(eq(schema.attachments.id, 'att-first')).get();
+    expect(first?.dmMessageId).toBeNull();
+    expect(sent()).toHaveLength(0);
+    expect(queueDmRelay).not.toHaveBeenCalled();
+  });
+});
+
+describe('WS DM message edits and deletes by someone no longer in the conversation', () => {
+  it.each([
+    ['a user of this instance who left a group', 'alice'],
+    ['a federated account acting here that left a group', 'fed-carol'],
+  ])('refuses dm_message_edit from %s and keeps the text', async (_label, userId) => {
+    const id = seedMessage(LEFT_GROUP, userId, 'before');
+
+    await send({ type: 'dm_message_edit', messageId: id, content: 'after' }, userId);
+
+    expectOnlyRefusal('not_dm_member');
+    expect(messageRow(id)?.content).toBe('before');
+    expect(messageRow(id)?.editedAt).toBeNull();
+    expect(queueDmRelay).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a user of this instance who left a group', 'alice'],
+    ['a federated account acting here that left a group', 'fed-carol'],
+  ])('refuses dm_message_delete from %s and keeps the message', async (_label, userId) => {
+    const id = seedMessage(LEFT_GROUP, userId, 'keep me');
+
+    await send({ type: 'dm_message_delete', messageId: id }, userId);
+
+    expectOnlyRefusal('not_dm_member');
+    expect(messageRow(id)).toBeDefined();
+    expect(queueDmMessageDeleteRelay).not.toHaveBeenCalled();
+  });
+
+  it('refuses an edit and a delete in a 1-on-1 the user is not in', async () => {
+    const id = seedMessage(LIVE, 'bob', 'his');
+
+    await send({ type: 'dm_message_edit', messageId: id, content: 'x' }, 'fed-carol');
+    expectOnlyRefusal('not_dm_member');
+
+    sendToWs.mockClear();
+    await send({ type: 'dm_message_delete', messageId: id }, 'fed-carol');
+    expectOnlyRefusal('not_dm_member');
+    expect(messageRow(id)?.content).toBe('his');
+  });
+});
+
+describe('every other refusal on the WS DM message paths carries a code', () => {
+  it.each<[string, Record<string, unknown>, string, Record<string, unknown>?]>([
+    ['create without dmChannelId', { type: 'dm_message_create', content: 'x' }, 'validation_failed'],
+    ['create in a DM the user is not in', { type: 'dm_message_create', dmChannelId: DEAD_FOR_FEDERATED, content: 'x' }, 'not_dm_member'],
+    ['create with nothing in it', { type: 'dm_message_create', dmChannelId: LIVE, content: '   ' }, 'content_required'],
+    ['create with text that is too long', { type: 'dm_message_create', dmChannelId: LIVE, content: 'x'.repeat(MAX_MESSAGE_LENGTH + 1) }, 'content_too_long', { max: MAX_MESSAGE_LENGTH }],
+    ['create with content that is not text', { type: 'dm_message_create', dmChannelId: LIVE, content: 42 }, 'validation_failed'],
+    ['create with attachments that are not a list', { type: 'dm_message_create', dmChannelId: LIVE, content: 'x', attachments: 'att' }, 'validation_failed'],
+    ['create replying to a message elsewhere', { type: 'dm_message_create', dmChannelId: LIVE, content: 'x', replyToId: 'no-such-message' }, 'reply_target_invalid'],
+    ['create with an unknown attachment', { type: 'dm_message_create', dmChannelId: LIVE, attachments: ['no-such-att'] }, 'attachment_invalid'],
+  ])('%s', async (_label, event, code, details) => {
+    await send(event);
+    expectOnlyRefusal(code, details);
+    expect(messagesIn(LIVE)).toHaveLength(0);
+  });
+
+  it('create with an attachment another user uploaded', async () => {
+    seedAttachment('att-bob', 'bob');
+    await send({ type: 'dm_message_create', dmChannelId: LIVE, attachments: ['att-bob'] });
+    expectOnlyRefusal('attachment_not_owned');
+    expect(messagesIn(LIVE)).toHaveLength(0);
+  });
+
+  it.each<[string, (ids: { own: string; bobs: string; system: string }) => Record<string, unknown>, string, Record<string, unknown>?]>([
+    ['edit without messageId', () => ({ type: 'dm_message_edit', content: 'x' }), 'validation_failed'],
+    ['edit to empty text', ({ own }) => ({ type: 'dm_message_edit', messageId: own, content: ' ' }), 'content_required'],
+    ['edit to text that is too long', ({ own }) => ({ type: 'dm_message_edit', messageId: own, content: 'x'.repeat(MAX_MESSAGE_LENGTH + 1) }), 'content_too_long', { max: MAX_MESSAGE_LENGTH }],
+    ['edit of an unknown message', () => ({ type: 'dm_message_edit', messageId: 'no-such-message', content: 'x' }), 'message_not_found'],
+    ['edit of another user\'s message', ({ bobs }) => ({ type: 'dm_message_edit', messageId: bobs, content: 'x' }), 'not_message_author'],
+    ['edit of a system message', ({ system }) => ({ type: 'dm_message_edit', messageId: system, content: 'x' }), 'system_message_immutable'],
+    ['delete without messageId', () => ({ type: 'dm_message_delete' }), 'validation_failed'],
+    ['delete of an unknown message', () => ({ type: 'dm_message_delete', messageId: 'no-such-message' }), 'message_not_found'],
+    ['delete of another user\'s message', ({ bobs }) => ({ type: 'dm_message_delete', messageId: bobs }), 'not_message_author'],
+  ])('%s', async (_label, build, code, details) => {
+    const ids = {
+      own: seedMessage(LIVE, 'alice', 'mine'),
+      bobs: seedMessage(LIVE, 'bob', 'his'),
+      system: seedMessage(LIVE, 'alice', '{"type":"member_added"}', 'system'),
+    };
+
+    await send(build(ids));
+
+    expectOnlyRefusal(code, details);
+    expect(messagesIn(LIVE).map((m) => [m.id, m.content, m.editedAt])).toEqual(expect.arrayContaining([
+      [ids.own, 'mine', null],
+      [ids.bobs, 'his', null],
+    ]));
+    expect(messagesIn(LIVE)).toHaveLength(3);
+    expect(queueDmRelay).not.toHaveBeenCalled();
+    expect(queueDmMessageDeleteRelay).not.toHaveBeenCalled();
+  });
+});
+
+describe('the WS dm_message_create rate limit', () => {
+  const { max } = DM_MESSAGE_CREATE_RATE_LIMIT;
+
+  async function createFrom(address: string, userId = 'alice', dmChannelId = LIVE): Promise<void> {
+    sendToWs.mockClear();
+    await send({ type: 'dm_message_create', dmChannelId, content: 'hi' }, userId, address);
+  }
+
+  it('admits the limit of creates from one address, then refuses with rate_limited and stores nothing', async () => {
+    for (let i = 0; i < max; i += 1) await createFrom('198.51.100.7');
+    expect(messagesIn(LIVE)).toHaveLength(max);
+    expect(sendToWs).not.toHaveBeenCalled();
+
+    sendToUser.mockClear();
+    queueDmRelay.mockClear();
+    await createFrom('198.51.100.7');
+
+    expectOnlyRefusal('rate_limited');
+    expect(messagesIn(LIVE)).toHaveLength(max);
+    expect(queueDmRelay).not.toHaveBeenCalled();
+  });
+
+  it('counts by address, not by user or socket, and counts before the checks', async () => {
+    // Two users on one address share the budget, as on the REST route.
+    for (let i = 0; i < max; i += 1) await createFrom('198.51.100.7', i % 2 === 0 ? 'alice' : 'bob');
+
+    sendToUser.mockClear();
+    sendToWs.mockClear();
+    // A create the checks would refuse is still answered by the limit first.
+    await send({ type: 'dm_message_create', dmChannelId: DEAD_LOCAL, content: 'x' }, 'alice', '198.51.100.7');
+    expectOnlyRefusal('rate_limited');
+
+    // Another address has its own budget.
+    await createFrom('203.0.113.9', 'bob');
+    expect(sendToWs).not.toHaveBeenCalled();
+    expect(messagesIn(LIVE)).toHaveLength(max + 1);
+  });
+
+  it('does not count edits or deletes', async () => {
+    const id = seedMessage(LIVE, 'alice', 'mine');
+    for (let i = 0; i < max + 2; i += 1) {
+      await send({ type: 'dm_message_edit', messageId: id, content: `edit ${i}` }, 'alice', '198.51.100.7');
+    }
+    sendToWs.mockClear();
+    await createFrom('198.51.100.7');
+    expect(sendToWs).not.toHaveBeenCalled();
+  });
+});
+
+describe('the WS DM create limiter', () => {
+  const { max, windowMs } = DM_MESSAGE_CREATE_RATE_LIMIT;
+
+  it('is 5 per 5 seconds, as POST /api/dm/:id/messages', () => {
+    expect(DM_MESSAGE_CREATE_RATE_LIMIT).toEqual({ max: 5, windowMs: 5_000 });
+  });
+
+  it('opens again when the window that started at the first create ends', () => {
+    const start = 1_000_000;
+    for (let i = 0; i < max; i += 1) expect(consumeWsDmMessageCreate('a', start + i)).toBe(true);
+    expect(consumeWsDmMessageCreate('a', start + windowMs - 1)).toBe(false);
+    expect(consumeWsDmMessageCreate('a', start + windowMs)).toBe(true);
+  });
+
+  it('admits everything when DISABLE_RATE_LIMITS is set', () => {
+    vi.stubEnv('DISABLE_RATE_LIMITS', '1');
+    try {
+      for (let i = 0; i < max * 3; i += 1) expect(consumeWsDmMessageCreate('a', 1)).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+describe('the REST create rate limit', () => {
+  it('refuses the create after the limit with 429 rate_limited', async () => {
+    const app = Fastify({ logger: false });
+    // The limiter as index.ts registers it, with its error shape.
+    await app.register(rateLimit, {
+      max: 200,
+      timeWindow: '1 minute',
+      keyGenerator: (request) => request.ip,
+      errorResponseBuilder: (_request, context) => ({
+        ...errorBody(429, 'rate_limited'),
+        retryAfter: Math.ceil(context.ttl / 1000),
+      }),
+    });
+    const { dmRoutes } = await import('../routes/dm.js');
+    await app.register(dmRoutes);
+    await app.ready();
+
+    const post = () => app.inject({ method: 'POST', url: `/api/dm/${LIVE}/messages`, payload: { content: 'hi' } });
+    for (let i = 0; i < DM_MESSAGE_CREATE_RATE_LIMIT.max; i += 1) expect((await post()).statusCode).toBe(201);
+    const refused = await post();
+
+    expect(refused.statusCode).toBe(429);
+    expect(JSON.parse(refused.body).code).toBe('rate_limited');
+    expect(messagesIn(LIVE)).toHaveLength(DM_MESSAGE_CREATE_RATE_LIMIT.max);
+    await app.close();
+  });
+});
+
+describe('the REST routes answer from the same checks', () => {
+  let app: FastifyInstance;
+
+  beforeEach(async () => {
+    app = Fastify({ logger: false });
+    const { dmRoutes } = await import('../routes/dm.js');
+    await app.register(dmRoutes);
+    await app.ready();
+  });
+
+  it('refuses create, edit and delete in a 1-on-1 whose partner was deleted', async () => {
+    const id = seedMessage(DEAD_REMOTE, 'alice', 'before');
+
+    const create = await app.inject({ method: 'POST', url: `/api/dm/${DEAD_REMOTE}/messages`, payload: { content: 'hi' } });
+    const edit = await app.inject({ method: 'PATCH', url: `/api/dm/messages/${id}`, payload: { content: 'after' } });
+    const del = await app.inject({ method: 'DELETE', url: `/api/dm/messages/${id}` });
+
+    for (const res of [create, edit, del]) {
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.body).code).toBe('recipient_deleted');
+    }
+    expect(messagesIn(DEAD_REMOTE)).toHaveLength(1);
+    expect(messageRow(id)?.content).toBe('before');
+  });
+
+  it('refuses an edit and a delete by a member who left the group', async () => {
+    const id = seedMessage(LEFT_GROUP, 'alice', 'before');
+
+    const edit = await app.inject({ method: 'PATCH', url: `/api/dm/messages/${id}`, payload: { content: 'after' } });
+    const del = await app.inject({ method: 'DELETE', url: `/api/dm/messages/${id}` });
+
+    for (const res of [edit, del]) {
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.body).code).toBe('not_dm_member');
+    }
+    expect(messageRow(id)?.content).toBe('before');
+    expect(queueDmRelay).not.toHaveBeenCalled();
+    expect(queueDmMessageDeleteRelay).not.toHaveBeenCalled();
+  });
+
+  it('sends the length limit with content_too_long', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/dm/${LIVE}/messages`,
+      payload: { content: 'x'.repeat(MAX_MESSAGE_LENGTH + 1) },
+    });
+    expect(res.statusCode).toBe(400);
+    const body = JSON.parse(res.body) as { code: string; details?: Record<string, unknown> };
+    expect(body.code).toBe('content_too_long');
+    expect(body.details).toEqual({ max: MAX_MESSAGE_LENGTH });
+  });
+
+  it.each<[string, (att: string) => Record<string, unknown>]>([
+    ['content that is not text', () => ({ content: 42 })],
+    ['content that is not text, with an attachment', (att) => ({ content: 42, attachments: [att] })],
+    ['attachments that are not a list of ids', () => ({ content: 'x', attachments: [7] })],
+    ['a reply target that is not an id', () => ({ content: 'x', replyToId: 7 })],
+  ])('answers 400 validation_failed to a create with %s', async (_label, build) => {
+    seedAttachment('att-own', 'alice');
+
+    const res = await app.inject({ method: 'POST', url: `/api/dm/${LIVE}/messages`, payload: build('att-own') });
+
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body).code).toBe('validation_failed');
+    expect(messagesIn(LIVE)).toHaveLength(0);
+    const att = testDb.select().from(schema.attachments).where(eq(schema.attachments.id, 'att-own')).get();
+    expect(att?.dmMessageId).toBeNull();
+  });
+
+  it('answers 400 content_required to a create or an edit whose body is null', async () => {
+    const id = seedMessage(LIVE, 'alice', 'before');
+    const headers = { 'content-type': 'application/json' };
+
+    const create = await app.inject({ method: 'POST', url: `/api/dm/${LIVE}/messages`, headers, payload: 'null' });
+    const edit = await app.inject({ method: 'PATCH', url: `/api/dm/messages/${id}`, headers, payload: 'null' });
+
+    for (const res of [create, edit]) {
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body).code).toBe('content_required');
+    }
+    expect(messagesIn(LIVE).map((m) => m.content)).toEqual(['before']);
+  });
+
+  it('creates in a live 1-on-1', async () => {
+    const res = await app.inject({ method: 'POST', url: `/api/dm/${LIVE}/messages`, payload: { content: ' hi ' } });
+    expect(res.statusCode).toBe(201);
+    expect(messagesIn(LIVE).map((m) => m.content)).toEqual(['hi']);
+  });
+});

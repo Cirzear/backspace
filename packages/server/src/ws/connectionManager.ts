@@ -1,3 +1,4 @@
+import { endRingingCallsPlacedBy, leavePeerParticipants, dropRemoteCallParticipants } from './dmCallRoomCleanup.js';
 import { ownsChosenStatus, type Activity, type ChosenUserStatus, type ServerEvent } from '@backspace/shared';
 import { eq } from 'drizzle-orm';
 import type { WebSocket } from 'ws';
@@ -8,11 +9,10 @@ import { attachReplicaSessionHost, showReplicaStatusOnConnect, showReplicaStatus
 import { presenceUpdateFor } from './presenceEvent.js';
 import { pushReadyPayloadToConnections } from './readyPayload.js';
 import { buildSpaceVoiceState, type SpaceVoiceStateResult } from './spaceVoiceState.js';
-import { getVoiceRoomElapsedSeconds, MAX_PENDING_VOICE_RECONNECTS, VOICE_RECONNECT_GRACE_MS, type DmRoomMeta, type FederatedCallEntry, type PendingVoiceReconnect, type SpaceRoomMeta, type VoiceRoom } from './voiceRoomTypes.js';
+import { MAX_PENDING_VOICE_RECONNECTS, VOICE_RECONNECT_GRACE_MS, type DmRoomMeta, type FederatedCallEntry, type PendingVoiceReconnect, type SpaceRoomMeta, type VoiceRoom } from './voiceRoomTypes.js';
 import { WsRateLimiter } from './wsRateLimiter.js';
-import { hasNativeVoiceSocket, removeNativeVoiceSocket, revokeNativeVoiceSessions, syncNativeVoicePermissions } from './nativeVoiceSessions.js';
+import { hasNativeVoiceSocket, removeNativeVoiceSocket, revokeNativeVoiceSessions} from './nativeVoiceSessions.js';
 import { isGroupConversation } from '../utils/dmConversation.js';
-import { normalizeOriginForCompare } from '../utils/federationAuth.js';
 import { FederatedCallRegistry } from './federatedCallRegistry.js';
 import { SpaceVoiceModeration } from './spaceVoiceModeration.js';
 import { UserActivityTracker } from './userActivityTracker.js';
@@ -454,6 +454,10 @@ class ConnectionManager {
     return this.federatedCalls.getJoinedFederatedCall(userId);
   }
 
+  endRingingCallsPlacedBy(userId: string, exceptRoomId?: string): void {
+    return endRingingCallsPlacedBy(this, userId, exceptRoomId);
+  }
+
   /** Create a DM room in ringing state with 60s auto-cleanup. */
   createDmRoom(dmChannelId: string, callerId: string): boolean {
     const row = getDb().select({ ownerId: schema.dmChannels.ownerId, federatedId: schema.dmChannels.federatedId })
@@ -582,43 +586,12 @@ class ConnectionManager {
     return 'ended';
   }
 
-  /**
-   * Take every participant that `peerOrigin` relayed into the DM call
-   * `dmChannelId` (`remoteParticipants`) out of it, as when that peer can no
-   * longer tell us they left. Returns how many left and whether the call
-   * ended because nobody is left. Local only: the caller relays the end.
-   */
   leavePeerParticipants(dmChannelId: string, peerOrigin: string): { removed: number; ended: boolean } {
-    const peerKey = normalizeOriginForCompare(peerOrigin);
-    const room = this.voiceRooms.get(dmChannelId);
-    if (peerKey === null || !room || room.roomType !== 'dm') return { removed: 0, ended: false };
-    const meta = room.metadata as DmRoomMeta;
-    let removed = 0;
-    for (const [userId, origin] of Array.from(meta.remoteParticipants)) {
-      if (normalizeOriginForCompare(origin) !== peerKey) continue;
-      this.leaveRoom(dmChannelId, userId);
-      removed += 1;
-      if (this.afterDmCallLeave(dmChannelId, userId) === 'ended') return { removed, ended: true };
-    }
-    return { removed, ended: false };
+    return leavePeerParticipants(this, dmChannelId, peerOrigin);
   }
 
-  /**
-   * A peer stopped being active: the participants it relayed into calls
-   * hosted here can no longer tell us they left, so they leave now. A call
-   * left empty ends, and the end is relayed to the remaining peers in the
-   * caller's name. Returns how many participants were removed.
-   */
   dropRemoteCallParticipants(peerOrigin: string): number {
-    let removed = 0;
-    for (const [roomId, room] of Array.from(this.voiceRooms)) {
-      if (room.roomType !== 'dm') continue;
-      const callerId = (room.metadata as DmRoomMeta).callerId;
-      const result = this.leavePeerParticipants(roomId, peerOrigin);
-      removed += result.removed;
-      if (result.ended) this.fanOutCallEnd(roomId, callerId);
-    }
-    return removed;
+    return dropRemoteCallParticipants(this, peerOrigin);
   }
 
   /** Transition a DM room from ringing → active. Returns false if not found or not ringing. */
@@ -660,6 +633,16 @@ class ConnectionManager {
   /** Transition a federated call from ringing → active. */
   activateFederatedCall(federatedId: string): boolean {
     return this.federatedCalls.activateFederatedCall(federatedId);
+  }
+
+  /** A peer-hosted call no longer needs to retain this local member. */
+  leaveFederatedCallEntry(federatedId: string, userId: string): void {
+    this.federatedCalls.leaveFederatedCallEntry(federatedId, userId);
+  }
+
+  /** Drop an answered remote call once its final local member and ring window are gone. */
+  dropFederatedCallIfIdle(federatedId: string): void {
+    this.federatedCalls.dropFederatedCallIfIdle(federatedId);
   }
 
   /** Remove a federated call entry and clear its timeout. */

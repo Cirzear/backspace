@@ -1,4 +1,4 @@
-import { getHomeHost } from '../platform/instanceRuntime';
+import { dmCallCredentialsFrom, dmCallOrigin, dmCallRefFrom } from '../utils/dmCall';
 import type { Activity, ActiveCallInfo, ServerEvent } from '@backspace/shared';
 import { ConnectionState as LiveKitConnectionState } from 'livekit-client';
 import { useActivityStore } from '../stores/activityStore';
@@ -31,7 +31,7 @@ export function handleReady(origin: string, event: ReadyEvent, readyAlreadyDeliv
   syncReadyIdentity(origin, event);
   reloadReadySpace(origin, event, currentSpaceId);
   if (!readyAlreadyDelivered) {
-    resetReadyMessages(origin, event);
+    resetReadyMessages(origin);
   }
   hydrateReadyReadStates(origin, event);
   hydrateReadyVoicePresence(origin, event);
@@ -120,13 +120,13 @@ function reloadReadySpace(origin: string, event: ReadyEvent, currentSpaceId: str
   // (fixes race condition on page reload — route params effect fires before remote WS connects)
   if (!isHome) {
     const { currentSpaceId: curSpaceId, loadSpaceDetail: loadDetail } = useSpaceStore.getState();
-    if (curSpaceId && event.spaces.some((s: any) => s.id === curSpaceId)) {
+    if (curSpaceId && event.spaces.some((s) => s.id === curSpaceId)) {
       loadDetail(curSpaceId);
     }
   }
 }
 
-function resetReadyMessages(origin: string, event: ReadyEvent): void {
+function resetReadyMessages(origin: string): void {
   const isHome = origin === '';
   const chatState = useChatStore.getState();
   const { channelOriginMap } = useSpaceStore.getState();
@@ -276,32 +276,34 @@ function reconcileReadyVoiceSession(origin: string, event: ReadyEvent): void {
   reassertReadySpaceVoice(origin, event);
   // Active DM calls use voice_status, not voice_join, to bind a replacement socket.
   const state = useVoiceStore.getState();
-  if (state.activeDmCall && (state.callOrigin || getChannelOrigin(state.activeDmCall.dmChannelId)) === origin) {
+  if (state.activeDmCall && dmCallOrigin(state.activeDmCall) === origin) {
     broadcastVoiceStatus(origin);
   }
 }
 
-function restoreRingingCall(call: ActiveCallInfo, event: ReadyEvent): void {
+function restoreRingingCall(origin: string, call: ActiveCallInfo, event: ReadyEvent): void {
   if (call.state !== 'ringing' || call.callerId === event.user.id) return;
-  const { setIncomingCall, setFederatedCallData, setFederatedCallId } = useVoiceStore.getState();
+  // Keep the recovered ring isolated from any active call on another origin.
+  const ref = dmCallRefFrom(call, origin);
+  if (!ref) return;
+  const { setIncomingCall } = useVoiceStore.getState();
   const dmChannel = event.dmChannels?.find(d => d.id === call.dmChannelId);
   const caller = dmChannel?.members?.find(m => m.id === call.callerId);
   setIncomingCall({
-    dmChannelId: call.dmChannelId, callerId: call.callerId,
-    callerName: caller?.displayName || caller?.username || call.callerId
+    ...ref, callerId: call.callerId,
+    callerName: caller?.displayName || caller?.username || call.callerId,
+    livekit: dmCallCredentialsFrom(call.livekitUrl, call.livekitToken),
   });
-  if (call.livekitUrl && call.livekitToken) setFederatedCallData(call.livekitToken, call.livekitUrl);
-  if (call.federatedCallId) setFederatedCallId(call.federatedCallId);
 }
 
 function restoreReadyCalls(origin: string, event: ReadyEvent): void {
   const { activeDmCall, incomingCall, setActiveDmCall, setIncomingCall, disconnectFn } = useVoiceStore.getState();
   if (!event.activeCalls?.length) {
-    if (activeDmCall) {
+    if (activeDmCall && dmCallOrigin(activeDmCall) === origin) {
       setActiveDmCall(null);
       disconnectFn?.();
     }
-    if (incomingCall) setIncomingCall(null);
+    if (incomingCall && dmCallOrigin(incomingCall) === origin) setIncomingCall(null);
     return;
   }
   for (const call of event.activeCalls) {
@@ -312,7 +314,7 @@ function restoreReadyCalls(origin: string, event: ReadyEvent): void {
       setIncomingCall(null);
       return;
     }
-    restoreRingingCall(call, event);
+    restoreRingingCall(origin, call, event);
   }
 }
 

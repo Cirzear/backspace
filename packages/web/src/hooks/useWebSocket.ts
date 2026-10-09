@@ -245,5 +245,5 @@ export function useWebSocket() {
   return { send: wsSend, isConnected };
 }
 
-export { teardownDmCall, dmCallEventIsOurs } from './webSocketCallEvents';
+export { teardownDmCall, dmCallEventIsOurs, acceptStopsRing } from './webSocketCallEvents';
 export { getActivePeerOrigins, getAwaitingApprovalPeerOrigins, getRejectedPeerOrigins, onFederationPeerResetDetected, onFederationPeersChanged } from './webSocketFederationEvents';

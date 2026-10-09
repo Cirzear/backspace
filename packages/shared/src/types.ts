@@ -1,6 +1,6 @@
 export * from './federationTypes.js';
 export * from './instanceTypes.js';
-import type { ErrorCode } from './errors.js';
+import type { ErrorCode, ErrorDetails } from './errors.js';
 import type { PeeringNotificationKind } from './federationTypes.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -150,6 +150,13 @@ export interface InvitePreview {
   avatarColor: AvatarColor | null;
   memberCount: number;
   instanceName: string;
+  /**
+   * The space's visibility when the preview was read. The invite page offers
+   * a join request for `request` and a join otherwise. Absent from an
+   * instance older than this field, where the page offers a join and switches
+   * to a request when the join answers `join_request_required`.
+   */
+  visibility?: SpaceVisibility;
 }
 
 export interface ExploreSpace {
@@ -647,7 +654,22 @@ export type DmCallUndeliverableReason =
   | 'peer_awaiting_approval'
   | 'peer_transient_failure'
   | 'livekit_unavailable'
-  | 'no_recipient';
+  | 'no_recipient'
+  // The peer accepts no name this instance could give the call's caller (a
+  // federated account here whose home is a third instance), so its members
+  // cannot be rung through this instance (federation.md, "Who a call relay
+  // names").
+  | 'identity_not_accepted';
+
+/**
+ * A person's federated identity on the wire: their home user id and the
+ * instance that homes them. Compared by home user id and instance host,
+ * never by a local row id.
+ */
+export interface FederatedIdentity {
+  homeUserId: string;
+  homeInstance: string;
+}
 
 export type DmCallPhase = 'start' | 'accept' | 'reject' | 'end' | 'host_unreachable';
 
@@ -729,7 +751,10 @@ export type ServerEvent =
   | { type: 'friend_request_received'; request: FriendRequest }
   | { type: 'friend_request_accepted'; friend: Friend; requestId: string }
   | { type: 'dm_call_incoming'; dmChannelId: string | null; federatedCallId?: string; callerId: string; callerName: string; livekitUrl?: string; livekitToken?: string; callOrigin?: string }
-  | { type: 'dm_call_accepted'; dmChannelId: string | null; federatedCallId?: string }
+  // `answeredBy` names the member whose answer this is, by federated
+  // identity, so only that person's other sessions stop ringing. Absent from
+  // servers up to 1.9.0.
+  | { type: 'dm_call_accepted'; dmChannelId: string | null; federatedCallId?: string; answeredBy?: FederatedIdentity }
   // `dmChannelId` is null and `federatedCallId` set when the instance holds a
   // federated call with no local copy of the DM (Path B, voice.md).
   | { type: 'dm_call_rejected'; dmChannelId: string | null; federatedCallId?: string }
@@ -799,10 +824,11 @@ export type ServerEvent =
   | { type: 'pong' }
   // `code` is set where the refusal has a stable ErrorCode (e.g. a voice
   // moderation action refused by the role hierarchy); older senders omit it.
-  // `dmChannelId` names the call of a refused `dm_call_start` or
+  // `details` fills the code's placeholders (`content_too_long` carries
+  // `max`), as in an HTTP error body. `dmChannelId` names the call of a refused `dm_call_start` or
   // `dm_call_accept`; a client calling or in that call drops it (voice.md,
   // "DM Call State Machine").
-  | { type: 'error'; message: string; code?: ErrorCode; dmChannelId?: string }
+  | { type: 'error'; message: string; code?: ErrorCode; details?: ErrorDetails; dmChannelId?: string }
   // The space's roles or a member's roles changed: what the receiver may see
   // or do there, and how its roles and members look, may be different now.
   // The client refetches that space's detail (docs/systems/websocket.md).
@@ -1487,6 +1513,15 @@ export interface FederationCallPayload {
    * the call for all of the sender's members.
    */
   perMember?: boolean;
+  /**
+   * On `dm_call_accept`: the member who answered. `acceptor` names a user the
+   * receiving peer accepts from the sender, which is the caller when the
+   * member who answered is homed on a third instance; this names the member
+   * themselves. It authorizes nothing: it only tells the receiver whose other
+   * sessions stop ringing. Senders up to 1.9.0 omit it, and `acceptor` is
+   * then the best answer there is.
+   */
+  answeredBy?: FederatedIdentity;
 }
 
 export interface FederationMembershipPayload {

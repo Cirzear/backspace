@@ -31,10 +31,12 @@ Source: `packages/server/src/ws/handler.ts` (transport/auth), `packages/server/s
 ### DM Messages
 | type | fields | notes |
 |------|--------|-------|
-| `dm_message_create` | dmChannelId, content?, attachments?, replyToId? | member; `replyToId` must name a message in the same DM channel |
-| `dm_message_edit` | messageId, content | author only; a system message cannot be edited (`error` with `code: 'system_message_immutable'`) |
-| `dm_message_delete` | messageId | author only |
+| `dm_message_create` | dmChannelId, content?, attachments?, replyToId? | member; `replyToId` must name a message in the same DM channel; 5 per 5 seconds per client address, as `POST /api/dm/:id/messages` (`rate_limited`) |
+| `dm_message_edit` | messageId, content | member, author only; a system message cannot be edited |
+| `dm_message_delete` | messageId | member, author only |
 | `dm_typing_start` | dmChannelId | 5s auto-expire |
+
+`dm_message_create` first counts against its rate limit: the REST route's numbers (`utils/dmMessageRateLimit.ts`), keyed on the address the socket connected from (`request.ip` of the upgrade, recorded in `ws/socketAddress.ts`, so it follows `TRUSTED_PROXY_HOPS` as the HTTP limiter does), in a counter of its own. `DISABLE_RATE_LIMITS` switches it off. The three DM message events run the REST routes' checks (`utils/dmMessageRules.ts`), so they refuse what the routes refuse, in the same order and with the same codes (dm-system.md, "Message Operations"), `recipient_deleted` in a 1-on-1 whose partner was deleted included. A missing `dmChannelId` or `messageId` is `validation_failed`. Each refusal is an `error` with its code, and `details` where the code has placeholders, sent to the socket that sent the event and not to the user's other sessions (they did not act, and the client shows a coded error as a toast); nothing is stored, broadcast or relayed. The web client sends these actions over REST, not over these events.
 
 ### Reactions (space + DM, auto-detected)
 | type | fields | notes |
@@ -70,7 +72,7 @@ federation coordinates.
 | type | fields | notes |
 |------|--------|-------|
 | `voice_join` | channelId | one room per user enforced |
-| `voice_leave` | — | |
+| `voice_leave` | (none) | leaves the voice the user holds on this instance: a voice channel or DM call hosted here, or a call hosted on a peer that they joined through here (relayed to the host as their leave in a group call). A client joining voice on another instance sends it to the instance its DM call goes through (voice.md, "Client-Side Call Routing") |
 | `voice_status` | isMuted, isDeafened, isCameraOn, isScreenSharing | server enforces space/permission mute |
 
 ### Native Voice Companion
@@ -125,7 +127,7 @@ All four also need the actor to outrank the target (permissions.md, "Role hierar
 |------|--------|-------|
 | `ready` | (see Ready Payload below) | user |
 | `pong` | — | user |
-| `error` | message, code?, dmChannelId? | user; a refused `dm_call_start` or `dm_call_accept` goes to the sending socket only and names its `dmChannelId` |
+| `error` | message, code?, details?, dmChannelId? | user; `details` fills the code's placeholders, as in an HTTP error body (`content_too_long` carries `max`); a refused `dm_call_start` or `dm_call_accept` goes to the sending socket only and names its `dmChannelId`; a refused `dm_message_create`, `dm_message_edit` or `dm_message_delete` goes to the sending socket only |
 
 ### Messages
 | type | fields | scope |
@@ -232,8 +234,9 @@ connected to an old server still gets the old `ready` push.
 An `error` that carries a `code` is the refusal of something the user just
 did (`role_hierarchy` from the voice moderation events, `dm_call_in_progress`,
 `not_dm_member` and `validation_failed` from `dm_call_start`, `dm_call_not_found`,
-`not_dm_member` and `validation_failed` from `dm_call_accept`); the client shows it as a warning
-toast in the user's language (`describeErrorCode`). An `error` without a code
+`not_dm_member` and `validation_failed` from `dm_call_accept`, and the DM
+message events (see "DM Messages")); the client shows it as a warning
+toast in the user's language (`describeErrorCode`, with the event's `details`). An `error` without a code
 is only logged. An `error` with a `dmChannelId` equal to the DM the client is
 calling, from the instance that serves that DM, also clears the calling state
 (`outgoingCall`), which stops the outgoing ring. A `dm_call_not_found` or
@@ -266,10 +269,10 @@ reason: `'displaced'` (new tab) | `'session_closed'`
 | type | fields | scope |
 |------|--------|-------|
 | `dm_call_incoming` | dmChannelId?, federatedCallId, callerId, callerName, callOrigin?, livekitUrl?, livekitToken? | DM members (excludes caller). `dmChannelId` can be null for Path B federated calls (no local DM channel). `callOrigin` identifies the hosting instance for cross-instance calls. |
-| `dm_call_accepted` | dmChannelId?, federatedCallId? | DM members, on every accept including late joins. A client acts on it only when it names the call it holds (`dmCallEventIsOurs`) |
+| `dm_call_accepted` | dmChannelId?, federatedCallId?, answeredBy? | DM members, on every accept including late joins. A client acts on it only when it names the call it holds (`dmCallEventIsOurs`). `answeredBy` (`{ homeUserId, homeInstance }`, absent from servers up to 1.9.0) is the member who answered: the client stops ringing only when that is the signed-in user, compared by federated identity (`acceptStopsRing`), so in a group call another member's answer leaves the ring on. Without it the ring stops as before |
 | `dm_call_rejected` | dmChannelId?, federatedCallId? | DM members when the call ends as rejected; only the decliner (all sessions) for a group decline that leaves the call running |
 | `dm_call_ended` | dmChannelId?, federatedCallId? | DM members. Preceded by a `voice_state_update` leave for each participant still in the call. A client tears down its call state only when the event names the call it holds (`dmCallEventIsOurs`) |
-| `dm_call_undeliverable` | Sent to the originator when a call relay (start / accept / reject / end) to one or more peers fails. Includes `phase: 'start' \| 'accept' \| 'reject' \| 'end' \| 'host_unreachable'` identifying the action; `failures[]` enumerates failed peers with a `reason` (`peer_rejected` / `peer_awaiting_approval` / `peer_transient_failure` / `livekit_unavailable` / `no_recipient`). `terminal: true` means local call state should be (or has been) torn down; `terminal: false` is informational. See `docs/systems/voice.md` for the full phase × terminal matrix. | originator (caller / acceptor / rejector / ender) |
+| `dm_call_undeliverable` | Sent to the originator when a call relay (start / accept / reject / end) to one or more peers fails. Includes `phase: 'start' \| 'accept' \| 'reject' \| 'end' \| 'host_unreachable'` identifying the action; `failures[]` enumerates failed peers with a `reason` (`peer_rejected` / `peer_awaiting_approval` / `peer_transient_failure` / `livekit_unavailable` / `no_recipient` / `identity_not_accepted`, the last when the peer accepts no name this instance could give the acting user, so nothing was sent; see federation.md "Who a call relay names"). `terminal: true` means local call state should be (or has been) torn down; `terminal: false` is informational. See `docs/systems/voice.md` for the full phase × terminal matrix. | originator (caller / acceptor / rejector / ender) |
 
 ### Social
 | type | fields | scope |

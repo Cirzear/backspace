@@ -284,5 +284,14 @@
       "connection": "The native call connection ended or was rejected. Screen sharing has stopped.",
       "serverUnavailable": "This server does not provide native screen sharing. Update the server before sharing from Android."
     }
+  },
+  "micPrearm": {
+    "denied": "Acesso ao microfone negado. Você entrou como ouvinte. Toque em \"Permitir microfone\" para conceder acesso.",
+    "notFound": "Nenhum microfone encontrado. Você entrou como ouvinte."
+  },
+  "micRetry": {
+    "stillDenied": "O acesso ao microfone continua negado. Permita-o para este site nas configurações do navegador ou do dispositivo.",
+    "notFound": "Nenhum microfone encontrado.",
+    "failed": "Não foi possível acessar o microfone."
   }
 }

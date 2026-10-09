@@ -9,6 +9,7 @@ const mock = vi.hoisted(() => ({
 }));
 vi.mock('./nativeScreenSharePlugin', () => ({ BackspaceScreenShare: mock }));
 vi.mock('../api/client', () => ({ createApiClient: mock.createClient, HttpError: class HttpError extends Error {} }));
+vi.mock('../hooks/useWebSocket', () => ({ wsSend: vi.fn() }));
 vi.mock('../hooks/useLiveKit', () => ({ suspendWebMicrophoneForNative: mock.suspend }));
 vi.mock('../utils/crossStoreResolvers', () => ({
   getTokenForOrigin: mock.token,
@@ -32,7 +33,7 @@ vi.mock('../stores/authStore', async () => {
 vi.mock('../stores/voiceStore', async () => {
   const { create } = await import('zustand');
   return { useVoiceStore: create(() => ({
-    currentVoiceChannelId: 'remote-channel', activeDmCall: null, callOrigin: null, federatedCallId: null,
+    currentVoiceChannelId: 'remote-channel', activeDmCall: null, incomingCall: null,
     voiceConnectionStatus: 'connected', nativeVoiceActive: false, isScreenSharing: false, screenShareAudio: null,
     isMuted: false, isDeafened: false, micPermissionDenied: false,
     spaceMutedUserIds: new Set(), spaceDeafenedUserIds: new Set(), permissionMutedUserIds: new Set(),
@@ -73,7 +74,7 @@ beforeEach(async () => {
     return { remove: mock.remove };
   });
   useVoiceStore.setState({
-    currentVoiceChannelId: 'remote-channel', activeDmCall: null, callOrigin: null, federatedCallId: null,
+    currentVoiceChannelId: 'remote-channel', activeDmCall: null, incomingCall: null,
     voiceConnectionStatus: 'connected', nativeVoiceActive: false, isScreenSharing: false,
     isMuted: false, isDeafened: false, micPermissionDenied: false,
     spaceMutedUserIds: new Set(), spaceDeafenedUserIds: new Set(), permissionMutedUserIds: new Set(),
@@ -105,8 +106,22 @@ describe('Android native screen sharing transaction', () => {
   });
 
   it('routes incoming federated DMs through callOrigin with only federatedCallId', () => {
-    useVoiceStore.setState({ currentVoiceChannelId: null, activeDmCall: { dmChannelId: 'local-dm' }, callOrigin: 'https://relay.test', federatedCallId: 'federated-call' });
+    useVoiceStore.setState({ currentVoiceChannelId: null, activeDmCall: { dmChannelId: 'local-dm', callOrigin: 'https://relay.test', federatedCallId: 'federated-call', livekit: null } });
     expect(nativeScreenShareTarget()).toEqual({ origin: 'https://relay.test', locator: { federatedCallId: 'federated-call' }, key: 'dm:local-dm' });
+  });
+
+  it('keeps the active native share on its host when another instance rings', () => {
+    useVoiceStore.setState({
+      currentVoiceChannelId: null,
+      activeDmCall: { dmChannelId: null, federatedCallId: 'active-call', callOrigin: 'https://active.test', livekit: null },
+      incomingCall: {
+        dmChannelId: null, federatedCallId: 'new-call', callOrigin: 'https://incoming.test',
+        callerId: 'caller', callerName: 'Caller', livekit: { token: 'new-jwt', url: 'wss://new.test' },
+      },
+    });
+    expect(nativeScreenShareTarget()).toEqual({
+      origin: 'https://active.test', locator: { federatedCallId: 'active-call' }, key: 'dm:active-call',
+    });
   });
 
   it('never reports cancelled system consent as success and releases both helpers', async () => {

@@ -6,7 +6,7 @@ import { getDb, schema } from '../db/index.js';
 import { generateSnowflake } from '../utils/snowflake.js';
 import { connectionManager } from './handler.js';
 import { isMember, getChannelSpaceId, isDmMember, hasPermission, PermissionBits } from '../utils/permissions.js';
-import { broadcastDmMessage, getDmMessageWithUser, isDmReplyTargetInChannel } from '../routes/dm.js';
+import { broadcastDmMessage, getDmMessageWithUser } from '../routes/dm.js';
 import { fetchReplyToMessages, isReplyTargetInChannel } from '../routes/messages.js';
 import { MAX_MESSAGE_LENGTH, isChosenUserStatus, type MessageWithUser, type Attachment } from '@backspace/shared';
 import { sanitizeUser } from '../utils/sanitize.js';
@@ -19,9 +19,11 @@ import { dmMessageMutationTarget, queueDmRelay, queueDmMessageDeleteRelay, sendT
 import { handleReactionAdd, handleReactionRemove } from './reactionEvents.js';
 import { handleVoiceJoin, handleVoiceLeave, handleVoiceStatus, handleVoiceSpaceMute, handleVoiceSpaceDeafen, handleVoiceMove, handleVoiceDisconnect } from './voiceEvents.js';
 import { handleDmCallStart, handleDmCallAccept, handleDmCallReject, handleDmCallEnd } from './dmCallEvents.js';
-import { ERROR_MESSAGES } from '../utils/httpErrors.js';
-import type { ErrorCode } from '@backspace/shared/src/errors';
-import { dmMessageEditRefusal } from '../utils/dmSystemMessages.js';
+import { errorText } from '../utils/httpErrors.js';
+import type { ErrorCode, ErrorDetails } from '@backspace/shared/src/errors';
+import { checkDmMessageCreate, checkDmMessageDelete, checkDmMessageEdit } from '../utils/dmMessageRules.js';
+import { consumeWsDmMessageCreate } from '../utils/dmMessageRateLimit.js';
+import { socketAddressOf } from './socketAddress.js';
 
 // Keep the established public entry points while implementations stay domain-scoped.
 export { checkVoicePermissions } from './voiceEvents.js';
@@ -143,16 +145,16 @@ export function handleClientEvent(
       handleVoiceLeave(userId);
       break;
     case 'dm_message_create':
-      handleDmMessageCreate(event, userId);
+      handleDmMessageCreate(event, userId, ws);
       break;
     case 'dm_typing_start':
       handleDmTypingStart(event, userId, username);
       break;
     case 'dm_message_edit':
-      handleDmMessageEdit(event, userId);
+      handleDmMessageEdit(event, userId, ws);
       break;
     case 'dm_message_delete':
-      handleDmMessageDelete(event, userId);
+      handleDmMessageDelete(event, userId, ws);
       break;
     case 'reaction_add':
       handleReactionAdd(event, userId);
@@ -465,82 +467,79 @@ function handleActivityUpdate(event: Record<string, unknown>, userId: string): v
 
 // ─── DM Message Handlers ───────────────────────────────────────────────────
 
-function handleDmMessageCreate(event: Record<string, unknown>, userId: string): void {
-  const dmChannelId = event.dmChannelId as string;
-  const content = event.content as string | undefined;
-  const attachmentIds = event.attachments as string[] | undefined;
-  const replyToId = event.replyToId as string | undefined;
+/**
+ * Refuse a DM message event with a coded `error` on the socket that sent it.
+ * The client shows a coded error as a toast, and the user's other sessions
+ * did not take the action, so they are not told about it (as `refuseDmCall`).
+ * The English text is the code's, with `details` filled in; the client shows
+ * the code's text in the user's language (websocket.md, "error").
+ */
+function refuseDmMessage(ws: WebSocket, code: ErrorCode, details?: ErrorDetails): void {
+  connectionManager.sendToWs(ws, details
+    ? { type: 'error', message: errorText(code, details), code, details }
+    : { type: 'error', message: errorText(code), code });
+}
 
+/**
+ * `dm_message_create`. The limit and the checks are the REST route's: 5
+ * creates per 5 seconds per client address (`rate_limited`), counted before
+ * anything else as the route's limiter is, then `checkDmMessageCreate`, so a
+ * 1-on-1 whose partner was deleted refuses with `recipient_deleted` here too.
+ */
+function handleDmMessageCreate(event: Record<string, unknown>, userId: string, ws: WebSocket): void {
+  // A socket accepted on /ws always has an address; a stand-in without one
+  // counts under the user's row id rather than going uncounted.
+  if (!consumeWsDmMessageCreate(socketAddressOf(ws) ?? `user:${userId}`)) {
+    refuseDmMessage(ws, 'rate_limited');
+    return;
+  }
+
+  const dmChannelId = event.dmChannelId;
   if (!dmChannelId || typeof dmChannelId !== 'string') {
-    connectionManager.sendToUser(userId, { type: 'error', message: 'dmChannelId is required' });
+    refuseDmMessage(ws, 'validation_failed');
     return;
   }
 
-  const hasContent = content && typeof content === 'string' && content.trim().length > 0;
-  const hasAttachments = attachmentIds && Array.isArray(attachmentIds) && attachmentIds.length > 0;
-
-  if (!hasContent && !hasAttachments) {
-    connectionManager.sendToUser(userId, { type: 'error', message: 'Message must have content or attachments' });
+  const check = checkDmMessageCreate(dmChannelId, userId, {
+    content: event.content,
+    attachments: event.attachments,
+    replyToId: event.replyToId,
+  });
+  if (!check.ok) {
+    refuseDmMessage(ws, check.refusal.code, check.refusal.details);
     return;
   }
-
-  if (hasContent && content!.length > MAX_MESSAGE_LENGTH) {
-    connectionManager.sendToUser(userId, { type: 'error', message: `Message content must be ${MAX_MESSAGE_LENGTH} characters or less` });
-    return;
-  }
-
-  if (!isDmMember(dmChannelId, userId)) {
-    connectionManager.sendToUser(userId, { type: 'error', message: 'Not a member of this DM channel' });
-    return;
-  }
-
-  // A reply may only target a message in the channel it is posted into.
-  if (replyToId && !isDmReplyTargetInChannel(dmChannelId, replyToId)) {
-    connectionManager.sendToUser(userId, { type: 'error', message: 'Invalid reply target' });
-    return;
-  }
+  const { content, attachmentIds, replyToId } = check.value;
 
   const db = getDb();
-
-  // Verify attachment ownership before linking
-  if (hasAttachments) {
-    for (const attId of attachmentIds) {
-      const att = db.select().from(schema.attachments).where(eq(schema.attachments.id, attId)).get();
-      if (!att || att.messageId || att.dmMessageId) {
-        connectionManager.sendToUser(userId, { type: 'error', message: 'Invalid or already-used attachment' });
-        return;
-      }
-      if (att.uploaderId && att.uploaderId !== userId) {
-        connectionManager.sendToUser(userId, { type: 'error', message: 'You do not own this attachment' });
-        return;
-      }
-    }
-  }
-
   const messageId = generateSnowflake();
   const now = Date.now();
 
-  db.insert(schema.dmMessages).values({
-    id: messageId,
-    dmChannelId,
-    userId,
-    replyToId: replyToId || null,
-    content: hasContent ? content.trim() : null,
-    createdAt: now,
-  }).run();
+  // Insert the message and link its attachments atomically, as the REST
+  // route does.
+  db.transaction((tx) => {
+    tx.insert(schema.dmMessages).values({
+      id: messageId,
+      dmChannelId,
+      userId,
+      replyToId,
+      content,
+      createdAt: now,
+    }).run();
 
-  // Link attachments to this DM message
-  if (hasAttachments) {
     for (const attId of attachmentIds) {
-      db.update(schema.attachments)
+      tx.update(schema.attachments)
         .set({ dmMessageId: messageId })
         .where(eq(schema.attachments.id, attId))
         .run();
     }
-  }
+  });
 
   const dmMessage = getDmMessageWithUser(messageId);
-  if (!dmMessage) return;
+  if (!dmMessage) {
+    refuseDmMessage(ws, 'message_create_failed');
+    return;
+  }
 
   // Broadcast to all DM members (including those who closed the channel)
   broadcastDmMessage(dmChannelId, dmMessage);
@@ -558,7 +557,7 @@ function handleDmMessageCreate(event: Record<string, unknown>, userId: string): 
 
   // Resolve embeds asynchronously
   setImmediate(() => {
-    resolveEmbeds(messageId, hasContent ? content!.trim() : null, dmChannelId, true, null).catch(() => {});
+    resolveEmbeds(messageId, content, dmChannelId, true, null).catch(() => {});
   });
 }
 
@@ -602,41 +601,25 @@ function handleDmTypingStart(event: Record<string, unknown>, userId: string, use
   typingTimeouts.set(key, timeout);
 }
 
-function handleDmMessageEdit(event: Record<string, unknown>, userId: string): void {
-  const messageId = event.messageId as string;
-  const content = event.content as string;
-
+/** `dm_message_edit`, on the REST route's checks (`checkDmMessageEdit`). */
+function handleDmMessageEdit(event: Record<string, unknown>, userId: string, ws: WebSocket): void {
+  const messageId = event.messageId;
   if (!messageId || typeof messageId !== 'string') {
-    connectionManager.sendToUser(userId, { type: 'error', message: 'messageId is required' });
+    refuseDmMessage(ws, 'validation_failed');
     return;
   }
 
-  if (!content || typeof content !== 'string' || content.trim().length === 0) {
-    connectionManager.sendToUser(userId, { type: 'error', message: 'content is required' });
+  const check = checkDmMessageEdit(messageId, userId, event.content);
+  if (!check.ok) {
+    refuseDmMessage(ws, check.refusal.code, check.refusal.details);
     return;
   }
-
-  if (content.length > MAX_MESSAGE_LENGTH) {
-    connectionManager.sendToUser(userId, { type: 'error', message: `Message content must be ${MAX_MESSAGE_LENGTH} characters or less` });
-    return;
-  }
+  const { message: msg, content } = check.value;
 
   const db = getDb();
-  const msg = db.select().from(schema.dmMessages).where(eq(schema.dmMessages.id, messageId)).get();
-  if (!msg) {
-    connectionManager.sendToUser(userId, { type: 'error', message: 'Message not found' });
-    return;
-  }
-
-  const editRefusal = dmMessageEditRefusal(msg, userId);
-  if (editRefusal) {
-    connectionManager.sendToUser(userId, { type: 'error', message: ERROR_MESSAGES[editRefusal], code: editRefusal });
-    return;
-  }
-
   const now = Date.now();
   db.update(schema.dmMessages)
-    .set({ content: content.trim(), editedAt: now })
+    .set({ content, editedAt: now })
     .where(eq(schema.dmMessages.id, messageId))
     .run();
 
@@ -644,7 +627,10 @@ function handleDmMessageEdit(event: Record<string, unknown>, userId: string): vo
   db.delete(schema.embeds).where(eq(schema.embeds.dmMessageId, messageId)).run();
 
   const updated = getDmMessageWithUser(messageId);
-  if (!updated) return;
+  if (!updated) {
+    refuseDmMessage(ws, 'message_update_failed');
+    return;
+  }
 
   const dmMembers = db.select()
     .from(schema.dmMembers)
@@ -663,29 +649,25 @@ function handleDmMessageEdit(event: Record<string, unknown>, userId: string): vo
 
   // Resolve new embeds asynchronously (old ones already deleted above)
   setImmediate(() => {
-    resolveEmbeds(messageId, content.trim(), msg.dmChannelId, true, null).catch(() => {});
+    resolveEmbeds(messageId, content, msg.dmChannelId, true, null).catch(() => {});
   });
 }
 
-function handleDmMessageDelete(event: Record<string, unknown>, userId: string): void {
-  const messageId = event.messageId as string;
-
+/** `dm_message_delete`, on the REST route's checks (`checkDmMessageDelete`). */
+function handleDmMessageDelete(event: Record<string, unknown>, userId: string, ws: WebSocket): void {
+  const messageId = event.messageId;
   if (!messageId || typeof messageId !== 'string') {
-    connectionManager.sendToUser(userId, { type: 'error', message: 'messageId is required' });
+    refuseDmMessage(ws, 'validation_failed');
     return;
   }
 
+  const check = checkDmMessageDelete(messageId, userId);
+  if (!check.ok) {
+    refuseDmMessage(ws, check.refusal.code, check.refusal.details);
+    return;
+  }
+  const msg = check.value;
   const db = getDb();
-  const msg = db.select().from(schema.dmMessages).where(eq(schema.dmMessages.id, messageId)).get();
-  if (!msg) {
-    connectionManager.sendToUser(userId, { type: 'error', message: 'Message not found' });
-    return;
-  }
-
-  if (msg.userId !== userId) {
-    connectionManager.sendToUser(userId, { type: 'error', message: 'You can only delete your own messages' });
-    return;
-  }
 
   // The relay names the message by its shared coordinates, read from the row
   // before it is gone.

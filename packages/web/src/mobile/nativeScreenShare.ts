@@ -1,3 +1,4 @@
+import { dmCallOrigin, dmCallRoomKey } from '../utils/dmCall';
 import { RoomEvent, type Room } from 'livekit-client';
 import type { PluginListenerHandle } from '@capacitor/core';
 import { createApiClient, type BackspaceApiClient } from '../api/client';
@@ -38,10 +39,13 @@ export function nativeScreenShareTarget(): { origin: string; locator: NativeScre
     return { origin: getChannelOrigin(channelId), locator: { channelId }, key: `space:${channelId}` };
   }
   if (!state.activeDmCall) throw new Error('Screen sharing requires an active call');
-  const dmChannelId = state.activeDmCall.dmChannelId;
-  const origin = state.callOrigin ?? getChannelOrigin(dmChannelId);
-  const locator = state.federatedCallId ? { federatedCallId: state.federatedCallId } : { dmChannelId };
-  return { origin, locator, key: `dm:${dmChannelId}` };
+  // Native helpers must use the active slot, never a newer incoming ring's credentials.
+  const call = state.activeDmCall;
+  const origin = dmCallOrigin(call);
+  const locator: NativeScreenRoomLocator = call.federatedCallId
+    ? { federatedCallId: call.federatedCallId }
+    : { dmChannelId: dmCallRoomKey(call) };
+  return { origin, locator, key: `dm:${dmCallRoomKey(call)}` };
 }
 
 export function nativeAudioState(): NativeAudioState {

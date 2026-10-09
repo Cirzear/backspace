@@ -1,4 +1,3 @@
-import { getHomeOrigin } from '../../platform/instanceRuntime';
 import { getUploadUrl } from '../../utils/assetUrls';
 import { DmUnreadBadge } from './DmUnreadBadge';
 import { SpaceUnreadBadge } from './SpaceUnreadBadge';
@@ -25,6 +24,7 @@ import type { SpaceLayoutItem, SpaceFolder } from '@backspace/shared';
 import { getSpaceGradient } from '../../utils/gradients';
 import { isElectron } from '../../platform/platform';
 import { useFloatingPosition } from '../../hooks/useFloatingPosition';
+import { describeCodedError } from '../../i18n/errors';
 
 // ─── Resolved layout types ─────────────────────────────────────────────────
 
@@ -614,7 +614,6 @@ export function SpaceSidebar() {
   const folders = useSpaceStore((s) => s.folders);
   const spaceLayout = useSpaceStore((s) => s.spaceLayout);
   const updateSpaceLayout = useSpaceStore((s) => s.updateSpaceLayout);
-  const generateInvite = useSpaceStore((s) => s.generateInvite);
   const leaveSpace = useSpaceStore((s) => s.leaveSpace);
   const showDms = useUIStore((s) => s.showDms);
   const setShowDms = useUIStore((s) => s.setShowDms);
@@ -665,9 +664,13 @@ export function SpaceSidebar() {
           try {
             const code = await useSpaceStore.getState().generateInvite(spaceId);
             await navigator.clipboard.writeText(spaceInviteUrl((space as TaggedSpace)._instanceOrigin, code));
-            useUIStore.getState().addToast(t('spaces:sidebar.space.inviteCopied'), 'success', 3000);
-          } catch {
-            useUIStore.getState().addToast(t('spaces:sidebar.space.inviteFailed'), 'warning', 3000);
+            useUIStore.getState().addToast(
+              t(space.visibility === 'request' ? 'spaces:sidebar.space.inviteCopiedRequest' : 'spaces:sidebar.space.inviteCopied'),
+              'success',
+              3000,
+            );
+          } catch (err) {
+            useUIStore.getState().addToast(describeCodedError(err, t('spaces:sidebar.space.inviteFailed')), 'warning', 3000);
           }
         },
       },

@@ -1,7 +1,8 @@
+import { dmCallChannelId, dmCallOrigin, voiceSessionOrigin } from '../utils/dmCall';
 import { Track, type Participant, type Room } from 'livekit-client';
 import type { User } from '@backspace/shared';
 import { useVoiceStore } from '../stores/voiceStore';
-import { myRowForOrigin, useAuthStore } from '../stores/authStore';
+import { myRowForOrigin} from '../stores/authStore';
 import { getChannelOrigin, getMyUserIdForOrigin, useSpaceStore } from '../stores/spaceStore';
 import { homeIdentityOf } from '../utils/identity';
 import type { StreamRepublishTracker } from '../utils/streamRepublish';
@@ -105,8 +106,9 @@ export function resolveParticipantUserId(identity: string): string {
   const rawId = parseIdentity(identity).userId;
   const activeDmCall = useVoiceStore.getState().activeDmCall;
   if (!activeDmCall) return rawId;
-  const dmChannel = useSpaceStore.getState().dmChannels.find(d => d.id === activeDmCall.dmChannelId);
-  const origin = getChannelOrigin(activeDmCall.dmChannelId);
+  const dmId = dmCallChannelId(activeDmCall);
+  const dmChannel = dmId ? useSpaceStore.getState().dmChannels.find(d => d.id === dmId) : undefined;
+  const origin = dmId ? getChannelOrigin(dmId) : dmCallOrigin(activeDmCall);
   const match = dmChannel?.members.find(m => m.id === rawId || homeIdentityOf(m, origin)?.userId === rawId || (m as { homeUserId?: string }).homeUserId === rawId);
   return match?.id ?? rawId;
 }
@@ -163,8 +165,8 @@ export function collectParticipants(room: Room, republish: StreamRepublishTracke
     const voice = group?.['native-voice'] ?? owner;
     const userId = resolveParticipantUserId(owner.identity);
     const member = useSpaceStore.getState().members.find(m => m.userId === userId);
-    const callChannelId = vs.currentVoiceChannelId ?? vs.activeDmCall?.dmChannelId ?? null;
-    const localUser = myRowForOrigin(callChannelId ? getChannelOrigin(callChannelId) : '');
+    // Federated calls may have no local channel; use the active call's own origin.
+    const localUser = myRowForOrigin(voiceSessionOrigin(vs));
     const cachedUser = member?.user as User | undefined
       ?? (isLocal ? localUser : previous.get(owner.identity)) ?? null;
     const state = participantState(voice, userId, isLocal);

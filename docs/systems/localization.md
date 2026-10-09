@@ -327,6 +327,12 @@ no code or the catalog has no entry. A `code` that is missing from the
 `errors` namespace is a check-script failure, so every code shipped by the
 server has words in every language.
 
+A surface whose own failure text says more than an uncoded failure would (a
+browser exception from a clipboard write, a server's bare English `error`)
+uses `describeCodedError(err, fallback)` from the same file: the code's text
+when the error is an `HttpError` with a code, else `fallback`. The space
+menu's Invite People toasts and the notification settings save use it.
+
 Federation: error bodies relayed from a peer instance follow the same
 contract, so a code from a newer peer is localized and a bare `error` from
 an older peer is shown as is.
@@ -337,6 +343,8 @@ The space directory ([directory.md](directory.md)) added four codes:
 section shows this text as its unreachable state), `directory_private_space`
 (`directoryListed: true` on a private space) and
 `directory_requires_discovery` (`directoryEnabled: true` with discovery off).
+
+Two codes are no longer sent by a current server but stay in the list, because an older instance still sends them and a code never changes meaning: `space_uses_join_requests` (an invite link refused for a space joined by request) and `space_requires_approval` (a DM invite to one refused). Both stopped after 1.9.0, when a request space got an invite link that leads to a join request; `join_request_required` now carries `details.spaceId` for that request ([spaces.md](spaces.md), "Join by Invite Code").
 
 Concurrent permission edits ([permissions.md](permissions.md), "Concurrent
 edits") added two `409` codes: `overrides_conflict` (a channel or category
@@ -407,9 +415,13 @@ English text. Two responses carry extra fields next to the shared shape: the
 username availability check (`available`, `reason`) and the owned-spaces
 rejection (`ownedSpaces`). The only sites left without codes are the
 test-only peer seeding route and most of the WebSocket handler's error
-messages, which are a separate protocol. The WebSocket refusals that carry a
-code are `role_hierarchy` (voice moderation), `system_message_immutable` and
-`not_message_author` (`dm_message_edit`), `dm_call_in_progress`,
+messages, which are a separate protocol. A WebSocket `error` carries
+`details` next to `code` where the code's text has placeholders, and the
+client passes them to `describeErrorCode`. The WebSocket refusals that carry a
+code are `role_hierarchy` (voice moderation), every refusal of
+`dm_message_create`, `dm_message_edit` and `dm_message_delete` (the REST
+routes' codes, from `utils/dmMessageRules.ts`; see
+[websocket.md](websocket.md#dm-messages)), `dm_call_in_progress`,
 `not_dm_member` and `validation_failed` (`dm_call_start`), and
 `dm_call_not_found`, `not_dm_member` and `validation_failed`
 (`dm_call_accept`; see [voice.md](voice.md#dm-call-state-machine)).

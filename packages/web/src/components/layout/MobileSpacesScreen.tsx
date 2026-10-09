@@ -1,4 +1,3 @@
-import { getHomeOrigin } from '../../platform/instanceRuntime';
 import { getUploadUrl } from '../../utils/assetUrls';
 import { notificationMenuItems } from '../notifications/notificationMenuItems';
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
@@ -29,6 +28,7 @@ import { useDelayedLoading } from '../../hooks/useDelayedLoading';
 import { getSpaceChannelLocation } from '../../hooks/useNotificationSettings';
 import { ChannelMutedIndicator } from '../notifications/ChannelMutedIndicator';
 import { NotificationSettingsModal, type NotificationSettingsModalTarget } from '../notifications/NotificationSettingsModal';
+import { describeCodedError } from '../../i18n/errors';
 
 export function MobileSpacesScreen() {
   const { t } = useTranslation(['spaces', 'common']);
@@ -354,9 +354,13 @@ export function MobileSpacesScreen() {
           try {
             const code = await useSpaceStore.getState().generateInvite(spaceId);
             await navigator.clipboard.writeText(spaceInviteUrl((space as TaggedSpace)._instanceOrigin, code));
-            addToast(t('spaces:sidebar.space.inviteCopied'), 'success', 3000);
-          } catch {
-            addToast(t('spaces:sidebar.space.inviteFailed'), 'warning', 3000);
+            addToast(
+              t(space.visibility === 'request' ? 'spaces:sidebar.space.inviteCopiedRequest' : 'spaces:sidebar.space.inviteCopied'),
+              'success',
+              3000,
+            );
+          } catch (err) {
+            addToast(describeCodedError(err, t('spaces:sidebar.space.inviteFailed')), 'warning', 3000);
           }
         },
       },

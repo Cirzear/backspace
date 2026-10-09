@@ -8,18 +8,26 @@ afterEach(() => {
 });
 
 describe('native voice session routing', () => {
-  it('retains the federation locator when consuming the initial LiveKit token', () => {
-    useVoiceStore.setState({ activeDmCall: { dmChannelId: 'dm' }, callOrigin: 'https://relay.test', federatedCallId: 'call', federatedCallToken: 'jwt', federatedCallUrl: 'wss://media.test' });
-    useVoiceStore.getState().clearFederatedCallData();
-    expect(useVoiceStore.getState()).toMatchObject({ callOrigin: 'https://relay.test', federatedCallId: 'call', federatedCallToken: null, federatedCallUrl: null });
+  it('keeps native call routing in the active slot when another call rings', () => {
+    const activeCall = { dmChannelId: 'dm', callOrigin: 'https://relay.test', federatedCallId: 'call', livekit: null };
+    useVoiceStore.getState().setActiveDmCall(activeCall);
+    useVoiceStore.getState().setIncomingCall({
+      dmChannelId: null, callOrigin: 'https://other.test', federatedCallId: 'other-call',
+      callerId: 'other', callerName: 'Other', livekit: { token: 'jwt', url: 'wss://media.test' },
+    });
+    expect(useVoiceStore.getState().activeDmCall).toEqual(activeCall);
+    useVoiceStore.getState().setIncomingCall(null);
+    expect(useVoiceStore.getState().activeDmCall).toEqual(activeCall);
     useVoiceStore.getState().setActiveDmCall(null);
-    expect(useVoiceStore.getState()).toMatchObject({ callOrigin: null, federatedCallId: null });
+    expect(useVoiceStore.getState().activeDmCall).toBeNull();
   });
 
   it('clears federation routing when moving into space voice', () => {
-    useVoiceStore.setState({ callOrigin: 'https://relay.test', federatedCallId: 'call' });
+    useVoiceStore.getState().setActiveDmCall({
+      dmChannelId: null, callOrigin: 'https://relay.test', federatedCallId: 'call', livekit: null,
+    });
     useVoiceStore.getState().setCurrentVoiceChannel('space-channel');
-    expect(useVoiceStore.getState()).toMatchObject({ currentVoiceChannelId: 'space-channel', callOrigin: null, federatedCallId: null });
+    expect(useVoiceStore.getState()).toMatchObject({ currentVoiceChannelId: 'space-channel', activeDmCall: null });
   });
 
   it('never persists native capture ownership or clears it ahead of native teardown', () => {

@@ -34,6 +34,10 @@ export class FederatedCallRegistry {
     const timeout = setTimeout(() => {
       this.federatedCallTimeouts.delete(entry.federatedId);
       const call = this.federatedCalls.get(entry.federatedId);
+      if (call?.state === 'active') {
+        this.dropFederatedCallIfIdle(entry.federatedId);
+        return;
+      }
       if (call && call.state === 'ringing') {
         this.federatedCalls.delete(entry.federatedId);
         const endEvent: ServerEvent = {
@@ -63,13 +67,38 @@ export class FederatedCallRegistry {
   activateFederatedCall(federatedId: string): boolean {
     const call = this.federatedCalls.get(federatedId);
     if (!call || call.state !== 'ringing') return false;
+    // Keep the ring window open so other local members may still answer.
     call.state = 'active';
-    const timeout = this.federatedCallTimeouts.get(federatedId);
-    if (timeout) {
-      clearTimeout(timeout);
-      this.federatedCallTimeouts.delete(federatedId);
-    }
     return true;
+  }
+
+  /**
+   * `userId` is no longer in the call hosted on a peer (`joinedUserIds`): they
+   * hung up, or left it without hanging up. The record goes once it can no
+   * longer matter (`dropFederatedCallIfIdle`).
+   */
+  leaveFederatedCallEntry(federatedId: string, userId: string): void {
+    const entry = this.federatedCalls.get(federatedId);
+    if (!entry) return;
+    entry.joinedUserIds = entry.joinedUserIds.filter(id => id !== userId);
+    this.dropFederatedCallIfIdle(federatedId);
+  }
+
+  /**
+   * Drop the record of a call hosted on a peer that can no longer matter: it
+   * was answered, nobody here is in it, and its ring window has closed, so no
+   * member here can still answer it. Without this, a record whose final end
+   * from the host never came (a lost relay, or a host up to 1.8.0 that ends
+   * some calls without telling its peers) stayed until a restart. Silent:
+   * nobody here holds the call, and a member in it through another instance
+   * must not be told it ended.
+   */
+  dropFederatedCallIfIdle(federatedId: string): void {
+    const entry = this.federatedCalls.get(federatedId);
+    if (!entry || entry.state !== 'active' || entry.joinedUserIds.length > 0) return;
+    if (this.federatedCallTimeouts.has(federatedId)) return;
+    // An idle entry has no joined sessions to clear or notify.
+    this.federatedCalls.delete(federatedId);
   }
 
   clearFederatedCall(

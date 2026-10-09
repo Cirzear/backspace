@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import type { WebSocket } from 'ws';
 import { getDb, schema } from '../db/index.js';
+import { recordSocketAddress } from './socketAddress.js';
 import { parseClientKind, touchUserActivity } from '../telemetry/activity.js';
 import { utcDay } from '../telemetry/day.js';
 import { verifyJwt } from '../utils/auth.js';
@@ -95,6 +96,8 @@ export function recordConnectionActivity(
 export async function registerWebSocket(app: FastifyInstance): Promise<void> {
   app.get('/ws', { websocket: true }, (socket, request) => {
     const ws = socket as unknown as WebSocket;
+    // Per-address limits on events key on this, as the HTTP limiter does.
+    recordSocketAddress(ws, request.ip);
     let authenticated = false;
     let userId: string | undefined;
     let username: string | undefined;

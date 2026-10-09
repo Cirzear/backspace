@@ -54,7 +54,10 @@ vi.mock('../../audio/AudioManager', () => ({
 
 vi.mock('../../utils/voiceActions', async () => ({
   handleCameraAction: vi.fn(),
+  handleDisconnectAction: vi.fn(),
   handleScreenShareAction: vi.fn(),
+  toggleMuteFromControl: vi.fn(),
+  toggleDeafenFromControl: vi.fn(),
 }));
 
 function makeFakeMediaStreamTrack(
@@ -325,11 +328,28 @@ describe('MobileVoiceFullScreen', () => {
   });
 });
 
+describe('MobileVoiceFullScreen mute and deafen', () => {
+  // The same path as the desktop controls, which broadcasts the change
+  // (voiceActions.toggleMuteFromControl and its tests in MobileVoiceMiniBar).
+  it('mutes and deafens through the shared voice actions', async () => {
+    const { toggleMuteFromControl, toggleDeafenFromControl } = await import('../../utils/voiceActions');
+    renderScreen();
+    screen.getByRole('button', { name: 'Mute' }).click();
+    screen.getByRole('button', { name: 'Deafen' }).click();
+    expect(toggleMuteFromControl).toHaveBeenCalledTimes(1);
+    expect(toggleDeafenFromControl).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('MobileVoiceFullScreen DM call title', () => {
   const ORBIT = 'https://orbit.example';
 
   function inDmCall(members: { id: string; username: string; displayName: string; homeInstance?: string; homeUserId?: string }[], origin: string) {
-    useVoiceStore.setState({ currentVoiceChannelId: 'dm-dm-1' });
+    // A DM call has no voice channel: the call is the client's activeDmCall.
+    useVoiceStore.setState({
+      currentVoiceChannelId: null,
+      activeDmCall: { dmChannelId: 'dm-1', federatedCallId: null, callOrigin: null, livekit: null },
+    });
     useSpaceStore.setState({
       dmChannels: [{ id: 'dm-1', ownerId: null, members } as unknown as DmChannel],
       channelOriginMap: new Map([['dm-1', origin]]),
@@ -346,6 +366,22 @@ describe('MobileVoiceFullScreen DM call title', () => {
     renderScreen();
     expect(screen.getByText('Bob')).toBeInTheDocument();
     expect(screen.queryByText('Alice')).not.toBeInTheDocument();
+  });
+
+  it('names a call by its conversation when the instance that rang it has no copy', () => {
+    useVoiceStore.setState({
+      currentVoiceChannelId: null,
+      activeDmCall: { dmChannelId: null, federatedCallId: 'key-1', callOrigin: ORBIT, livekit: null },
+    });
+    useSpaceStore.setState({
+      dmChannels: [{ id: 'dm-copy', federatedId: 'key-1', ownerId: null, members: [
+        { id: '1', username: 'alice', displayName: 'Alice' },
+        { id: '2', username: 'bob', displayName: 'Bob' },
+      ] } as unknown as DmChannel],
+      channelOriginMap: new Map([['dm-copy', '']]),
+    });
+    renderScreen();
+    expect(screen.getByText('Bob')).toBeInTheDocument();
   });
 
   it('names the other member of a DM on the page instance', () => {

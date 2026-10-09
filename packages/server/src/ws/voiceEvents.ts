@@ -2,12 +2,12 @@ import type { WebSocket } from 'ws';
 import { eq, and } from 'drizzle-orm';
 import { getDb, schema } from '../db/index.js';
 import { connectionManager } from './handler.js';
-import { getVoiceRoomElapsedSeconds, type VoiceRoom, type DmRoomMeta, type SpaceRoomMeta } from './voiceRoomTypes.js';
+import { getVoiceRoomElapsedSeconds, type SpaceRoomMeta } from './voiceRoomTypes.js';
 import { getChannelSpaceId, hasPermission, computePermissions, PermissionBits } from '../utils/permissions.js';
 import { canActOnMemberInSpace } from '../utils/roleHierarchy.js';
 import { ERROR_MESSAGES } from '../utils/httpErrors.js';
 import { syncNativeVoicePermissions } from './nativeVoiceSessions.js';
-import { broadcastRoomLeave } from './dmCallEvents.js';
+import { broadcastRoomLeave, leaveJoinedFederatedCall } from './dmCallEvents.js';
 
 /**
  * Re-evaluate SPEAK permission for all participants in voice channels
@@ -182,26 +182,17 @@ export function handleVoiceJoin(event: Record<string, unknown>, userId: string, 
     connectionManager.leaveFederatedCall(userId);
   }
 
-  // Cancel any ringing DM rooms where this user is the caller
-  // (edge case: user starts DM call then joins server voice before anyone accepts)
-  for (const [roomId, room] of connectionManager.getAllRooms()) {
-    if (room.roomType === 'dm') {
-      const meta = room.metadata as DmRoomMeta;
-      if (meta.state === 'ringing' && meta.callerId === userId) {
-        connectionManager.destroyRoom(roomId);
-        connectionManager.sendToDmMembers(roomId, {
-          type: 'dm_call_ended',
-          dmChannelId: roomId,
-        });
-      }
-    }
-  }
-
   // Lazy-create space room
   connectionManager.createRoom(channelId, 'space', { type: 'space', spaceId });
 
   // Join room
   connectionManager.joinRoom(channelId, userId);
+
+  // A call the user started that still rings ends, and the peers hear it
+  // (the user started a call, then joined voice before anyone answered).
+  // After the join, so ending it leaves the voice session bound to this
+  // socket alone.
+  connectionManager.endRingingCallsPlacedBy(userId);
 
   // Broadcast join
   const joinedRoom = connectionManager.getRoom(channelId);
@@ -276,6 +267,10 @@ export function handleVoiceJoin(event: Record<string, unknown>, userId: string, 
 }
 
 export function handleVoiceLeave(userId: string): void {
+  // A call hosted on a peer, joined through this instance, is voice the user
+  // holds here too: the client leaves it this way when it joins voice on
+  // another instance, which tells this one nothing else.
+  leaveJoinedFederatedCall(userId);
   connectionManager.clearVoiceWs(userId);
   const left = connectionManager.leaveCurrentRoom(userId);
   if (left) {

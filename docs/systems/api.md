@@ -39,7 +39,9 @@ Routes may tighten the limit for themselves with `config.rateLimit`; those
 overrides sit with their routes (`routes/auth.ts`, `routes/directory.ts`,
 `routes/explore.ts`, `routes/messages.ts`, `routes/dm.ts`, `routes/gif.ts`,
 `routes/users.ts`, `routes/social.ts`), and they are keyed the same way, per
-address, for the same reason. `DISABLE_RATE_LIMITS=1` or `=true`
+address, for the same reason. The WebSocket `dm_message_create` event applies
+the DM create route's limit to the socket's address in a counter of its own
+(websocket.md, "DM Messages"). `DISABLE_RATE_LIMITS=1` or `=true`
 switches every limit off and exists for test harnesses that share the loopback
 address; it is never set in production.
 
@@ -119,9 +121,10 @@ DELETE /spaces/:id                                                             �
 POST   /spaces/:id/invite                                                      → { inviteCode }  [CREATE_INVITE]
 POST   /spaces/:id/join       { inviteCode }                                   → { space }
 POST   /spaces/join           { inviteCode }                                   → { space }
-GET    /spaces/invite/:code/preview                                            → invite preview
+GET    /spaces/invite/:code/preview                                            → InvitePreview (no auth)
 PATCH  /spaces/:id/transfer-ownership  { newOwnerId }                          → { space }  [owner]
 ```
+`POST /spaces/:id/invite` answers every visibility, `request` included (up to 1.9.0 it refused a request space with `403 space_uses_join_requests`). The two join routes never admit anyone to a `request` space: after the code matches they answer `403 user_banned`, `409 already_member`, then, for a request space, `409 join_request_pending` when the caller's request is waiting and otherwise `403 join_request_required` with `details: { spaceId }`, the id for `POST /spaces/:id/request-join`. They read the space's visibility on each call, so a code follows the space when its visibility changes. `InvitePreview` carries `visibility` (absent from an instance up to 1.9.0). See [spaces.md](spaces.md), "Join by Invite Code".
 `directoryListed` must be a boolean (`400 field_not_boolean`), is refused with `400 directory_private_space` when the resulting visibility is `private`, and is cleared in the same write when a listed space is switched to `private`. `Space.directoryListed` is carried on every space response and in the WebSocket ready payload. A change to the flag, to a served field (`name`, `description`, `icon`, `banner`, `avatarColor`, `visibility`) of a listed space, or a `DELETE` of a listed space marks the directory dirty so the pinger tells the hub. See [directory.md](directory.md).
 
 ### Members
@@ -220,11 +223,11 @@ POST   /dm/:id/members         { userId } | { homeUserId, homeInstance } → DmC
 DELETE /dm/:id/members                                              → { success } (leave) [group only]
 DELETE /dm/:id/members/:targetUserId  ?homeInstance=                → { success } [owner kick; cannot self-kick; group only; segment is homeUserId when ?homeInstance is set]
 POST   /dm/:id/transfer        { newOwnerId? | (homeUserId+homeInstance) } → { success } [owner; group only; resolved member must be in channel; not self]
-POST   /dm/space-invite        { target: { userId } | { homeUserId, homeInstance }, spaceId, spaceInstanceOrigin, inviteCode } → SpaceInviteResponse { dmChannelId, messageId, message } [target must be a friend; 400 invite_invalid when the snapshot would not make a well-formed invite (dm-system.md, "System messages")]
+POST   /dm/space-invite        { target: { userId } | { homeUserId, homeInstance }, spaceId, spaceInstanceOrigin, inviteCode } → SpaceInviteResponse { dmChannelId, messageId, message } [target must be a friend; 400 invite_invalid when the snapshot would not make a well-formed invite (dm-system.md, "System messages"); a space of any visibility, `request` included (refused up to 1.9.0 with 403 space_requires_approval)]
 GET    /dm/:id/messages        ?before=|after=&limit=50 (1-100)     → DmMessageWithUser[] [member]
 POST   /dm/:id/messages        { content?, attachments?, replyToId? } → 201 DmMessageWithUser [member; content or attachments required]
-PATCH  /dm/messages/:id        { content }                          → DmMessageWithUser [author; 403 system_message_immutable for a system message]
-DELETE /dm/messages/:id                                             → { success } [author]
+PATCH  /dm/messages/:id        { content }                          → DmMessageWithUser [member and author; 403 not_dm_member after leaving the group; 403 system_message_immutable for a system message]
+DELETE /dm/messages/:id                                             → { success } [member and author; 403 not_dm_member after leaving the group]
 ```
 
 **Naming a remote user (federated identity in a DM route).** `POST /dm`, `POST /dm/group`, `POST /dm/:id/members`, `DELETE /dm/:id/members/:targetUserId?homeInstance=`, `POST /dm/:id/transfer` and `POST /dm/space-invite` accept a remote user as the pair `homeUserId` + `homeInstance` and resolve it through `resolveRemoteIdentityForClient` (`utils/federationClientIdentity.ts`). The body never carries a username: the name comes from the identity's home. A known row with its real name is used as is, whatever the state of its home. A new row is created only when the `homeUserId` is a snowflake (decimal digits). For an unknown identity, or a known row that still carries a placeholder name (`<homeUserId>@<domain>`, or a display name; see federation.md "Stub Username Backfill"), whose domain is an active peer, the server asks the home over the signed `POST /api/federation/users/by-home-id` and creates or renames the row as `<username>@<domain>` with the reported profile hydrated, so the first DM already shows the person's name; when the home answers that there is no such user, nothing is created. The route waits at most 2 s for the home (`CLIENT_HOME_LOOKUP_TIMEOUT_MS`); `POST /dm/group` asks the homes of all its members at once. When the home cannot be asked or does not answer (no active peer yet, unreachable, rate limited, too slow) the row is created under `<homeUserId>@<domain>`, as before, and renamed by the first username that arrives later, including the backfill when the peering becomes active (see federation.md "Stub Username Backfill"); that home is not asked about that id again for 60 s (in memory). The DM's first message starts the peering as it always has. Every refusal answers with the route's existing not-found code (`404 user_not_found`, `404 users_not_found` for the group route).
@@ -290,7 +293,7 @@ has: `file`|`image`|`link`
 ```
 GET    /spaces/explore                   ?q=&limit=&offset=  → { spaces[], total, totalAll, discoveryEnabled }
 POST   /spaces/:id/public-join                               → { space }
-POST   /spaces/:id/request-join          { message? }        → { request }
+POST   /spaces/:id/request-join          { message? }        → { request }  [5/min; also where an invite to a request space leads]
 GET    /spaces/:id/join-requests         ?status=            → { requests[] }  [MANAGE_SPACE]
 PATCH  /spaces/:id/join-requests/:rid    { action }          → { request }  [MANAGE_SPACE]
 GET    /users/@me/join-requests          ?status=            → { requests[] }
