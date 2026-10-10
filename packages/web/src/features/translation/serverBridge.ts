@@ -1,6 +1,4 @@
 import type { TranslationBridge, TranslationReply } from '@backspace/shared/translation';
-import { getHomeOrigin, getApiBaseUrl } from '../../platform/instanceRuntime';
-import { getSessionItem } from '../../platform/sessionStorage';
 import { readServerReply } from './serverReply';
 
 async function readHttpReply(response: Response): Promise<TranslationReply> {
@@ -15,18 +13,18 @@ async function readHttpReply(response: Response): Promise<TranslationReply> {
   }
 }
 
-/** Web deliberately uses the home instance; never forward credentials to a viewed federated space. */
+/** Match the existing /api login session: never use the currently viewed federated space origin. */
 export const serverTranslationBridge: TranslationBridge = {
   async command(command) {
-    const origin = new URL(getHomeOrigin());
+    const origin = new URL(window.location.href);
     const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname);
     if (origin.protocol !== 'https:' && !(origin.protocol === 'http:' && loopback)) {
       return { ok: false, code: 'insecure-transport' };
     }
-    const token = getSessionItem('backspace_token');
+    const token = localStorage.getItem('backspace_token');
     if (!token) return { ok: false, code: 'untrusted-sender' };
     try {
-      const response = await fetch(getApiBaseUrl() + '/translation/command', {
+      const response = await fetch(origin.origin + '/api/translation/command', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
         body: JSON.stringify(command),

@@ -21,7 +21,7 @@ export function TranslationPreferenceControls({ preferences, settings, busy, onC
     <fieldset disabled={busy} className="space-y-5 min-w-0">
       <legend className="text-[11px] font-semibold text-txt-tertiary uppercase tracking-wider mb-1.5">{t('translationPreferences')}</legend>
       <div className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3.5 space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 desktop:grid-cols-2 gap-3">
           <label className="block text-xs font-medium text-txt-secondary">
             {t('globalConnection')}
             <select className="input-standard mt-1.5 w-full" value={preferences.defaultConnection ?? ''}

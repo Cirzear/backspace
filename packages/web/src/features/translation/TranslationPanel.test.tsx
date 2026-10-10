@@ -7,12 +7,12 @@ vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => k
 vi.mock('../../stores/authStore', () => ({ useAuthStore: Object.assign(
   (selector: (state: { user: { id: string } }) => unknown) => selector({ user: { id: 'alice' } }), { subscribe: vi.fn() },
 ) }));
-vi.mock('../../platform/instanceRuntime', () => ({ getHomeOrigin: () => 'https://home.example', getApiBaseUrl: () => 'https://home.example/api' }));
-vi.mock('../../platform/sessionStorage', () => ({ getSessionItem: () => 'test-session' }));
 let settings: TranslationSettings;
 const fetcher = vi.fn<typeof fetch>();
 beforeEach(() => {
   delete window.backspace;
+  vi.stubGlobal('location', new URL('https://home.example'));
+  localStorage.setItem('backspace_token', 'test-session');
   resetTranslationScope('');
   settings = { revision: 0, connections: [], preferences: { defaultConnection: null, engine: null,
     targetLanguage: 'en', consent: false, automatic: false, showOriginal: true } };
@@ -27,7 +27,7 @@ beforeEach(() => {
   });
   vi.stubGlobal('fetch', fetcher);
 });
-afterEach(() => { cleanup(); resetTranslationScope(''); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); localStorage.removeItem('backspace_token'); resetTranslationScope(''); vi.unstubAllGlobals(); });
 
 it('shows server privacy and saves a credential without a desktop client', async () => {
   render(<TranslationPanel />);

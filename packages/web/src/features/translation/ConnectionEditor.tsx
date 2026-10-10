@@ -65,7 +65,7 @@ export function ConnectionEditor({ connection, busy, onSave, onDiagnose, onCance
     <form onSubmit={event => void submit(event)} className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3.5">
       <fieldset disabled={locked} className="space-y-4 min-w-0">
         <legend className="text-sm font-semibold text-txt-primary mb-4">{t(connection ? 'editConnection' : 'addConnection')}</legend>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 desktop:grid-cols-2 gap-3">
           <label className="block text-xs font-medium text-txt-secondary">
             {t('connectionName')}
             <input required maxLength={80} className="input-standard mt-1.5 w-full" value={name}

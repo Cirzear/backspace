@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuthStore } from '../../stores/authStore';
 import { useUIStore } from '../../stores/uiStore';
-import { getHomeOrigin } from '../../platform/instanceRuntime';
 import {
   enqueueTranslation,
   loadTranslationSettings,
@@ -12,7 +11,7 @@ import {
 
 export function useTranslationSettings() {
   const accountId = useAuthStore((s) => s.user?.id ?? '');
-  const origin = getHomeOrigin();
+  const origin = window.location.origin;
   const scope = accountId ? `${origin}\n${accountId}` : '';
   const storedScope = useTranslationStore((s) => s.scope);
   const storedSettings = useTranslationStore((s) => s.settings);

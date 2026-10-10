@@ -9,9 +9,6 @@ vi.mock('../../stores/authStore', async () => {
   const { create } = await import('zustand');
   return { useAuthStore: create(() => ({ user: { id: 'alice' } })) };
 });
-vi.mock('../../platform/instanceRuntime', () => ({
-  getHomeOrigin: () => 'https://chat.example',
-}));
 const openModal = vi.hoisted(() => vi.fn());
 vi.mock('../../stores/uiStore', () => ({
   useUIStore: { getState: () => ({ openModal }) },
@@ -51,6 +48,7 @@ function Row({ text = 'Hello', enabled = true }: { text?: string; enabled?: bool
   );
 }
 beforeEach(() => {
+  vi.stubGlobal('location', new URL('https://chat.example'));
   command.mockReset().mockResolvedValue({
     ok: true,
     result: { kind: 'translated', text: '你好' },

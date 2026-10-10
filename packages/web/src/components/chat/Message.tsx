@@ -1,6 +1,5 @@
 import { useMessageTranslation } from '../../features/translation/useMessageTranslation';
 import { TranslationText } from '../../features/translation/TranslationText';
-import { getHomeOrigin } from '../../platform/instanceRuntime';
 import { layoutRect, layoutPixels } from '../../platform/interfaceScale';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
@@ -215,7 +214,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
   const translation = useMessageTranslation({
     identity: `${messageOrigin}/${channelKey}/${message.id}`,
     text: message.content ?? '',
-    enabled: !pending && !isEditing && !stickerUrl(message.content ?? ''),
+    enabled: !pending && !isEditing,
   });
   const self = useSelfIdentity();
   const isAuthor = isMine(message.user, messageOrigin, self);

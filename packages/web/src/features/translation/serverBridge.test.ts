@@ -2,9 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TranslationSettings } from '@backspace/shared/translation';
 import { serverTranslationBridge } from './serverBridge';
 import { sendTranslationCommand } from './translationStore';
-const runtime = vi.hoisted(() => ({ origin: 'https://home.example', token: 'session-token' as string | null }));
-vi.mock('../../platform/instanceRuntime', () => ({ getHomeOrigin: () => runtime.origin, getApiBaseUrl: () => runtime.origin + '/api' }));
-vi.mock('../../platform/sessionStorage', () => ({ getSessionItem: () => runtime.token }));
+const runtime = vi.hoisted(() => ({ origin: 'https://home.example' }));
 vi.mock('../../stores/authStore', () => ({ useAuthStore: { subscribe: vi.fn() } }));
 const fetcher = vi.fn<typeof fetch>();
 const settings: TranslationSettings = { revision: 0, connections: [], preferences: {
@@ -14,11 +12,12 @@ const load = { action: 'load' as const, accountId: 'alice' };
 beforeEach(() => {
   delete window.backspace;
   runtime.origin = 'https://home.example';
-  runtime.token = 'session-token';
+  localStorage.setItem('backspace_token', 'session-token');
+  vi.stubGlobal('location', { get href() { return runtime.origin; } });
   fetcher.mockReset().mockResolvedValue(Response.json({ ok: true, settings }));
   vi.stubGlobal('fetch', fetcher);
 });
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); delete window.backspace; });
+afterEach(() => { localStorage.removeItem('backspace_token'); vi.unstubAllGlobals(); vi.restoreAllMocks(); delete window.backspace; });
 
 describe('browser server translation transport', () => {
   it('works without the desktop bridge and sends only to the home API', async () => {
@@ -51,7 +50,7 @@ describe('browser server translation transport', () => {
     expect((await serverTranslationBridge.command(load)).ok).toBe(true);
   });
   it('rejects missing sessions without making a request', async () => {
-    runtime.token = null;
+    localStorage.removeItem('backspace_token');
     expect(await serverTranslationBridge.command(load)).toEqual({ ok: false, code: 'untrusted-sender' });
     expect(fetcher).not.toHaveBeenCalled();
   });
