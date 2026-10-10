@@ -104,8 +104,9 @@ export async function stickerRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(404).send({ error: 'Sticker not found' });
     }
     const asset = getDb().select().from(schema.stickerAssets).where(eq(schema.stickerAssets.id, id)).get();
-    if (!asset) return reply.code(404).send({ error: 'Sticker not found' });
+    // Resolve from the canonical stored key, never from the request path parameter.
+    if (!asset || !STICKER_ID_PATTERN.test(asset.id)) return reply.code(404).send({ error: 'Sticker not found' });
     return reply.type('image/webp').header('X-Content-Type-Options', 'nosniff')
-      .header('Cache-Control', 'public, max-age=31536000, immutable').send(await readFile(assetPath(id)));
+      .header('Cache-Control', 'public, max-age=31536000, immutable').send(await readFile(assetPath(asset.id)));
   });
 }
