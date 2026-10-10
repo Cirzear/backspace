@@ -1,3 +1,5 @@
+import { useMessageTranslation } from '../../features/translation/useMessageTranslation';
+import { TranslationText } from '../../features/translation/TranslationText';
 import { getHomeOrigin } from '../../platform/instanceRuntime';
 import { stickerUrl } from '@backspace/shared/src/stickers';
 import { StickerMessage } from './StickerMessage';
@@ -216,6 +218,11 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     : message.channelId || (message as MessageWithUser & { dmChannelId?: string }).dmChannelId || '';
   // The instance that issued this message and its rows.
   const messageOrigin = useSpaceStore((s) => s.channelOriginMap.get(channelKey) ?? '');
+  const translation = useMessageTranslation({
+    identity: `${messageOrigin}/${channelKey}/${message.id}`,
+    text: message.content ?? '',
+    enabled: !pending && !isEditing && !stickerUrl(message.content ?? ''),
+  });
   const self = useSelfIdentity();
   const isAuthor = isMine(message.user, messageOrigin, self);
   // The channel whose origin issued this message's ids; mentions resolve there.
@@ -383,6 +390,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     const audioAtt = audioEl?.currentSrc ? matchAttByUrl(audioEl.currentSrc, 'audio') : null;
 
     const items = buildMessageMenuItems({
+      onTranslate: translation.translate,
       message,
       selectedText,
       previousMessageId,
@@ -655,7 +663,11 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
                   <div className="text-txt-message text-[15px] leading-[1.5] break-words whitespace-pre-wrap selection:bg-accent-primary/30">
                     {stickerUrl(message.content)
                       ? <StickerMessage token={message.content} />
-                      : <MarkdownRenderer content={message.content} channelId={mentionChannelId} />}
+                      : (
+                        <TranslationText translation={translation}>
+                          <MarkdownRenderer content={message.content} channelId={mentionChannelId} />
+                        </TranslationText>
+                      )}
                     {message.editedAt && (
                       <span className="text-[10px] text-txt-tertiary ml-1 select-none font-medium">{t('chat:message.edited')}</span>
                     )}

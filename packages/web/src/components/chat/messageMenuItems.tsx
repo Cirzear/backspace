@@ -9,6 +9,7 @@ import i18n from '../../i18n';
 const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮'];
 
 interface MessageMenuParams {
+  onTranslate?: () => void;
   message: MessageWithUser;
   selectedText: string;
   previousMessageId: string | null;
@@ -62,6 +63,9 @@ export function buildMessageMenuItems(params: MessageMenuParams): ContextMenuIte
   } = params;
 
   const items: ContextMenuItem[] = [];
+  if (params.onTranslate) {
+    items.push({ key: 'translate', type: 'action', label: i18n.t('translation:translate'), onClick: params.onTranslate });
+  }
 
   items.push(...buildImageMenuItems({ imageUrl, sourceUrl, stickerSource: params.stickerSource, stickerName: params.stickerName }));
 

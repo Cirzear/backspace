@@ -22,7 +22,10 @@
     "./src/stickers": "./src/stickers.ts",
     "./src/stickers.js": "./src/stickers.ts",
     "./src/dmSystemEvents": "./src/dmSystemEvents.ts",
-    "./src/dmSystemEvents.js": "./src/dmSystemEvents.ts"
+    "./src/dmSystemEvents.js": "./src/dmSystemEvents.ts",
+    "./translation": {
+      "types": "./src/translation.d.ts"
+    }
   },
   "scripts": {
     "build": "tsc",
