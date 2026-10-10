@@ -4,8 +4,9 @@ import type { TranslationLanguage, TranslationResult } from '../../shared/src/tr
 import { MAX_TEXT_LENGTH, TranslationError } from './validation';
 
 // Keep code, URLs, emails and chat tokens out of model input, not just out of its instructions.
+// Bound email components and reject nested sticker brackets so scans stay linear on hostile text.
 const PROTECTED =
-  /```[\s\S]*?(?:```|$)|`[^`\n]+`|sticker:https?:\/\/[^\s<>]+|https?:\/\/[^\s<>]+|[\w.+-]+@[\w.-]+\.[a-z]{2,}|<[@#][!&]?[\w:-]+>|<a?:[\w-]+:[\w-]+>|\[sticker:[^\]]+\]/gi;
+  /```[\s\S]*?(?:```|$)|`[^`\n]+`|sticker:https?:\/\/[^\s<>]+|https?:\/\/[^\s<>]+|[\w.+-]{1,64}@[\w.-]{1,253}\.[a-z]{2,63}|<[@#][!&]?[\w:-]+>|<a?:[\w-]+:[\w-]+>|\[sticker:[^\[\]]+\]/gi;
 const SHORT_ENGLISH = /^(hello|thanks|thank you|goodbye|good morning|good night|please|yes|no)[.!?\s]*$/i;
 export interface PreparedText {
   text: string;
