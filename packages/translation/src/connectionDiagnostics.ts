@@ -15,7 +15,8 @@ function modelPage(connection: StoredConnection, raw: unknown) {
   const models = rows.map(record).filter(row => !gemini ||
     (Array.isArray(row.supportedGenerationMethods) && row.supportedGenerationMethods.includes('generateContent'))
   ).map(row => {
-    const id = string(gemini ? row.name : row.id, 167).replace(gemini ? /^models\// : /^$/, '');
+    const rawId = string(gemini ? row.name : row.id, 167);
+    const id = gemini ? rawId.replace(/^models\//, '') : rawId;
     if (id.length > 160 || /[\u0000-\u001f\u007f]/.test(id)) throw new TranslationError('invalid-response');
     return id;
   });
