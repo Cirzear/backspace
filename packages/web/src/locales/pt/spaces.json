@@ -531,7 +531,9 @@
       },
       "left": "Você saiu do espaço",
       "leaveFailed": "Falha ao sair do espaço",
-      "unreadMessages": "Mensagens não lidas: {{quantity}}"
+      "unreadMessages_one": "{{count}} mensagem não lida",
+      "unreadMessages_many": "{{count}} mensagens não lidas",
+      "unreadMessages_other": "{{count}} mensagens não lidas"
     },
     "dmList": {
       "explore": "Explorar",
@@ -563,7 +565,9 @@
       "spaceDeafened": "Ensurdecido no espaço",
       "permissionMuted": "Silenciado (sem permissão para falar)"
     },
-    "dmUnreadMessages": "{{quantity}} mensagens diretas não lidas"
+    "dmUnreadMessages_one": "{{count}} mensagem direta não lida",
+    "dmUnreadMessages_many": "{{count}} mensagens diretas não lidas",
+    "dmUnreadMessages_other": "{{count}} mensagens diretas não lidas"
   },
   "channels": {
     "loading": "Carregando canais",

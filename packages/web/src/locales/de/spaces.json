@@ -524,7 +524,8 @@
       },
       "left": "Du hast den Space verlassen",
       "leaveFailed": "Space konnte nicht verlassen werden",
-      "unreadMessages": "Ungelesene Nachrichten: {{quantity}}"
+      "unreadMessages_one": "{{count}} ungelesene Nachricht",
+      "unreadMessages_other": "{{count}} ungelesene Nachrichten"
     },
     "dmList": {
       "explore": "Entdecken",
@@ -556,7 +557,8 @@
       "spaceDeafened": "Ton im Space ausgeschaltet",
       "permissionMuted": "Stummgeschaltet (keine Sprechberechtigung)"
     },
-    "dmUnreadMessages": "{{quantity}} ungelesene Direktnachrichten"
+    "dmUnreadMessages_one": "{{count}} ungelesene Direktnachricht",
+    "dmUnreadMessages_other": "{{count}} ungelesene Direktnachrichten"
   },
   "channels": {
     "loading": "Kanäle werden geladen",

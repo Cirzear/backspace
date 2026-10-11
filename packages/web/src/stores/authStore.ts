@@ -1,4 +1,4 @@
-import { useChannelActivityStore } from './channelActivityStore';
+import { useUnreadCountStore } from './unreadCountStore';
 import { useMemo } from 'react';
 import { create } from 'zustand';
 import { isChosenUserStatus, type ChosenUserStatus, type FederatedIdentity, type User } from '@backspace/shared';
@@ -77,7 +77,7 @@ interface AuthState {
 function resetUserStores() {
   useChatStore.getState().clearAllMessages();
   useSpaceStore.getState().reset();
-  useChannelActivityStore.getState().reset();
+  useUnreadCountStore.getState().reset();
   useSocialStore.getState().reset();
   useVoiceStore.getState().resetSession();
   useInstanceStore.getState().reset();

@@ -524,7 +524,8 @@
       },
       "left": "Left space",
       "leaveFailed": "Failed to leave space",
-      "unreadMessages": "Unread messages: {{quantity}}"
+      "unreadMessages_one": "{{count}} unread message",
+      "unreadMessages_other": "{{count}} unread messages"
     },
     "dmList": {
       "explore": "Explore",
@@ -556,7 +557,8 @@
       "spaceDeafened": "Space Deafened",
       "permissionMuted": "Muted (No Speak Permission)"
     },
-    "dmUnreadMessages": "{{quantity}} unread direct messages"
+    "dmUnreadMessages_one": "{{count}} unread direct message",
+    "dmUnreadMessages_other": "{{count}} unread direct messages"
   },
   "channels": {
     "loading": "Loading channels",

@@ -538,7 +538,10 @@
       },
       "left": "Вы покинули пространство",
       "leaveFailed": "Не удалось покинуть пространство",
-      "unreadMessages": "Непрочитанных сообщений: {{quantity}}"
+      "unreadMessages_one": "{{count}} непрочитанное сообщение",
+      "unreadMessages_few": "{{count}} непрочитанных сообщения",
+      "unreadMessages_many": "{{count}} непрочитанных сообщений",
+      "unreadMessages_other": "{{count}} непрочитанного сообщения"
     },
     "dmList": {
       "explore": "Обзор",
@@ -570,7 +573,10 @@
       "spaceDeafened": "Звук отключён в пространстве",
       "permissionMuted": "Микрофон отключён (нет права говорить)"
     },
-    "dmUnreadMessages": "Непрочитанные личные сообщения: {{quantity}}"
+    "dmUnreadMessages_one": "{{count}} непрочитанное личное сообщение",
+    "dmUnreadMessages_few": "{{count}} непрочитанных личных сообщения",
+    "dmUnreadMessages_many": "{{count}} непрочитанных личных сообщений",
+    "dmUnreadMessages_other": "{{count}} непрочитанного личного сообщения"
   },
   "channels": {
     "loading": "Загрузка каналов",
