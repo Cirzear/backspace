@@ -1,29 +1,50 @@
 import { useCallback, useMemo, useState, type RefObject, type ChangeEvent, type KeyboardEvent } from 'react';
-import { useSpaceStore } from '../../stores/spaceStore';
 import { useComposerStore } from '../../stores/composerStore';
-import { filterMentionCandidates, useChannelMentionCandidates, useSelfIdInChannel, useChannelUser, type ChannelUser } from '../../utils/channelUser';
-import { getCanonicalUserView } from '../../utils/userViewLookup';
-import { composerMentions } from './composerMentions';
+import {
+  filterMentionCandidates,
+  useChannelMentionCandidates,
+  useChannelUserResolver,
+  type ChannelUser,
+} from '../../utils/channelUser';
+import { userDisplayName } from '../../utils/identity';
+import { composerMentions, type ComposerMentions } from './composerMentions';
 
-interface MentionState { query: string; startIndex: number; selectedIndex: number }
-interface Options { channelId: string; draftText: string; textareaRef: RefObject<HTMLTextAreaElement> }
+interface MentionState {
+  query: string;
+  /** Draft offset of the typed `@`. */
+  startIndex: number;
+  selectedIndex: number;
+}
 
-/** Keep display offsets and wire IDs together; other composer features operate on wire drafts. */
+interface Options {
+  channelId: string;
+  draftText: string;
+  textareaRef: RefObject<HTMLTextAreaElement>;
+}
+
+/**
+ * The composer's mention handling: the picker's state and keys, and the map
+ * between the stored draft (wire `<@id>` tokens) and the text the textarea
+ * shows (`@name`). The draft stays in wire form; every other composer feature
+ * works on it and converts textarea offsets with `mentionModel`.
+ */
 export function useMentionComposer({ channelId, draftText, textareaRef }: Options) {
   const [mentionState, setMentionState] = useState<MentionState | null>(null);
-  const setDraft = useComposerStore(s => s.setDraft);
+  const setDraft = useComposerStore((s) => s.setDraft);
   const mentionCandidates = useChannelMentionCandidates(channelId);
-  const selfId = useSelfIdInChannel(channelId);
-  const self = useChannelUser(channelId, selfId ?? null);
-  // Display resolution includes self even though DM autocomplete excludes self.
-  useSpaceStore(state => state.userViews);
-  const allRoles = useSpaceStore((state) => state.roles);
-  const channelSpaceId = useSpaceStore((state) => state.channelToSpaceMap.get(channelId));
-  // Use the channel roster so a DM never borrows labels from the last loaded space.
-  const members = useMemo(() => mentionCandidates.flatMap((candidate) => candidate.member ? [candidate.member] : []), [mentionCandidates]);
-  const mentionUsers = [...mentionCandidates, ...(self ? [self] : [])].map(candidate => getCanonicalUserView(candidate.user, candidate.origin));
-  const roles = useMemo(() => allRoles.filter((role) => role.spaceId === channelSpaceId), [allRoles, channelSpaceId]);
-  const mentionModel = useMemo(() => composerMentions({ value: draftText, members, roles, users: mentionUsers }), [draftText, members, roles, mentionUsers]);
+  // Labels come from the channel's people, as the sent message's badges do,
+  // so a DM shows its own members (the signed-in user included) and never the
+  // roster of the space loaded last.
+  const resolveUser = useChannelUserResolver(channelId);
+  const modelFor = useCallback(
+    (value: string): ComposerMentions =>
+      composerMentions(value, (userId) => {
+        const found = resolveUser(userId);
+        return found ? userDisplayName(found.user) : null;
+      }),
+    [resolveUser],
+  );
+  const mentionModel = useMemo(() => modelFor(draftText), [modelFor, draftText]);
   // The popover's rows; keyboard navigation indexes the same list.
   const mentionMatches = useMemo(
     () => (mentionState ? filterMentionCandidates(mentionCandidates, mentionState.query) : []),
@@ -43,7 +64,7 @@ export function useMentionComposer({ channelId, draftText, textareaRef }: Option
       setMentionState(null);
 
       // Restore cursor position after React re-renders
-      const newCursorPos = composerMentions({ value: newContent, members, roles, users: mentionUsers }).toDisplay(before.length + insertion.length);
+      const newCursorPos = modelFor(newContent).toDisplay(before.length + insertion.length);
       requestAnimationFrame(() => {
         if (textarea) {
           textarea.focus();
@@ -52,7 +73,7 @@ export function useMentionComposer({ channelId, draftText, textareaRef }: Option
         }
       });
     },
-    [mentionState, draftText, setDraft, channelId, mentionModel, members, roles, mentionUsers, textareaRef],
+    [mentionState, draftText, setDraft, channelId, mentionModel, modelFor, textareaRef],
   );
 
   const handleMentionKey = (e: KeyboardEvent): boolean => {
@@ -87,23 +108,28 @@ export function useMentionComposer({ channelId, draftText, textareaRef }: Option
 
     return false;
   };
+
+  /** The textarea changed: store the draft it now means and open or close the picker. */
   const updateMention = (e: ChangeEvent<HTMLTextAreaElement>): void => {
-    const change = mentionModel.update(e.target.value, e.target.selectionStart);
-    const value = change.value;
-    const nextModel = composerMentions({ value, members, roles, users: mentionUsers });
-    const cursorPos = nextModel.toWire(change.cursor, true);
-    // Atomic token deletion can shorten the visible value; keep the caret at the edit.
-    if (!(e.nativeEvent as InputEvent).isComposing) {
-      requestAnimationFrame(() => textareaRef.current?.setSelectionRange(change.cursor, change.cursor));
+    const { value, wireCursor } = mentionModel.update(e.target.value, e.target.selectionStart);
+    const shown = modelFor(value);
+    // When the edit touched a mention, the whole token went and the shown text
+    // is not what the textarea holds. React then writes the new text and the
+    // browser puts the caret at the end; put it back at the edit. An ordinary
+    // edit leaves the caret alone, so the keyboard's own state is not reset,
+    // and a running IME composition is never interrupted.
+    if (shown.text !== e.target.value && !(e.nativeEvent as InputEvent).isComposing) {
+      const caret = shown.toDisplay(wireCursor);
+      requestAnimationFrame(() => textareaRef.current?.setSelectionRange(caret, caret));
     }
     setDraft(channelId, value);
 
     // Detect @mention trigger
-    const textBeforeCursor = value.slice(0, cursorPos);
+    const textBeforeCursor = value.slice(0, wireCursor);
     const mentionMatch = textBeforeCursor.match(/@([^\s<]*)$/);
 
     if (mentionMatch) {
-      const atIndex = cursorPos - mentionMatch[0].length;
+      const atIndex = wireCursor - mentionMatch[0].length;
       // Only trigger at word boundary: start of input, after space, or after newline
       const charBefore = atIndex > 0 ? value[atIndex - 1] : undefined;
       if (charBefore === undefined || charBefore === ' ' || charBefore === '\n') {
@@ -118,7 +144,7 @@ export function useMentionComposer({ channelId, draftText, textareaRef }: Option
     } else {
       setMentionState(null);
     }
-
   };
-  return { mentionState, setMentionState, mentionMatches, mentionModel, members, roles, mentionUsers, selectMention, handleMentionKey, updateMention };
+
+  return { mentionState, setMentionState, mentionMatches, mentionModel, modelFor, selectMention, handleMentionKey, updateMention };
 }

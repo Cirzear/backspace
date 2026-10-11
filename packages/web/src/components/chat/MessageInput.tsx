@@ -1,6 +1,5 @@
 import { useMentionComposer } from './useMentionComposer';
 import { MentionTextarea } from './MentionTextarea';
-import { composerMentions } from './composerMentions';
 import { layoutRect } from '../../platform/interfaceScale';
 import React, { useState, useRef, useCallback, useMemo, useEffect, useLayoutEffect } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -121,7 +120,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   }, [composerState.stagedTransferIds, transfers]);
 
   const draftText = composerState.draftText;
-  const { mentionState, setMentionState, mentionMatches, mentionModel, members, roles, mentionUsers,
+  const { mentionState, setMentionState, mentionMatches, mentionModel, modelFor,
     selectMention, handleMentionKey, updateMention } = useMentionComposer({ channelId, draftText, textareaRef });
 
   const remaining = MAX_MESSAGE_LENGTH - draftText.length;
@@ -497,22 +496,23 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
         setDraft(channelId, draftText + emoji.native);
         return;
       }
-      const start = mentionModel.toWire(textarea.selectionStart);
-      const end = mentionModel.toWire(textarea.selectionEnd, true);
-      const before = draftText.slice(0, start);
-      const after = draftText.slice(end);
-      const newContent = before + emoji.native + after;
+      // A selection that touches a mention replaces its whole token.
+      const { value: newContent, wireCursor } = mentionModel.replace({
+        start: textarea.selectionStart,
+        end: textarea.selectionEnd,
+        text: emoji.native,
+      });
       setDraft(channelId, newContent);
 
       // Restore cursor position after the emoji
-      const newCursorPos = composerMentions({ value: newContent, members, roles, users: mentionUsers }).toDisplay(start + emoji.native.length);
+      const newCursorPos = modelFor(newContent).toDisplay(wireCursor);
       requestAnimationFrame(() => {
         textarea.focus();
         textarea.selectionStart = newCursorPos;
         textarea.selectionEnd = newCursorPos;
       });
     },
-    [draftText, setDraft, channelId, mentionModel, members, roles, mentionUsers],
+    [draftText, setDraft, channelId, mentionModel, modelFor],
   );
 
   const handleGifSelect = useCallback(

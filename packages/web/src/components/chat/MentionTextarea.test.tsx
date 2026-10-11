@@ -1,7 +1,6 @@
 import { createRef } from 'react';
 import { fireEvent, render } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
-import type { MemberWithUser } from '@backspace/shared';
 import { MentionTextarea } from './MentionTextarea';
 import { composerMentions } from './composerMentions';
 
@@ -9,8 +8,7 @@ it('anchors the popup at the typed @ after a displayed mention and mirrors nativ
   const textareaRef = createRef<HTMLTextAreaElement>();
   const mentionAnchorRef = createRef<HTMLSpanElement>();
   const value = '<@long-user-id> hello\n@al';
-  const members = [{ userId: 'long-user-id', user: { username: 'alice' } }] as MemberWithUser[];
-  const model = composerMentions({ value, members, roles: [] });
+  const model = composerMentions(value, (userId) => (userId === 'long-user-id' ? 'alice' : null));
   const { container } = render(<MentionTextarea model={model} textareaRef={textareaRef}
     mentionAnchorRef={mentionAnchorRef} mentionStart={value.lastIndexOf('@')} onChange={vi.fn()} />);
   const anchor = mentionAnchorRef.current!;

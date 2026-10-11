@@ -153,7 +153,6 @@ describe('MessageInput slow sends', () => {
   });
 });
 
-
 describe('MessageInput mention display', () => {
   it('renders a readable label but submits the stored wire ID', async () => {
     const send = vi.spyOn(useChatStore.getState(), 'sendMessage').mockResolvedValue(undefined);
