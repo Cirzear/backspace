@@ -35,7 +35,7 @@ export function MentionTextarea({ model, textareaRef, mentionAnchorRef, mentionS
   }, [textareaRef, model.text]);
   return <div className="relative flex-1 min-w-0">
     <div aria-hidden="true" className="absolute inset-0 overflow-hidden pointer-events-none">
-      <div ref={mirrorRef} className="py-[10px] px-1 text-[15px] leading-[1.375rem] whitespace-pre-wrap break-words" style={{ overflowWrap: 'break-word' }}>
+      <div ref={mirrorRef} className="py-[10px] px-1 text-[15px] leading-[1.375rem] text-txt-primary whitespace-pre-wrap break-words">
         {model.parts.map((part, index) => {
           const offset = anchor - part.start;
           const content = offset >= 0 && offset < part.text.length
@@ -45,8 +45,10 @@ export function MentionTextarea({ model, textareaRef, mentionAnchorRef, mentionS
         {'\u200b'}
       </div>
     </div>
+    {/* The mirror paints the text; the textarea keeps only its caret,
+        selection and placeholder. */}
     <textarea {...props} ref={textareaRef} value={model.text}
-      style={{ ...props.style, color: 'transparent', caretColor: 'var(--color-txt-primary, #fff)', background: 'transparent' }}
+      className={`${props.className ?? ''} text-transparent caret-txt-primary`}
       onScroll={event => {
         if (mirrorRef.current) mirrorRef.current.style.transform = 'translateY(-' + event.currentTarget.scrollTop + 'px)';
         props.onScroll?.(event);
