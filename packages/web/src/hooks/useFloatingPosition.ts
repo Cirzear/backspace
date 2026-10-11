@@ -25,6 +25,12 @@ interface UseFloatingPositionOptions {
   align?: Alignment;
   offset?: number;
   enabled?: boolean;
+  /**
+   * Measure the anchor again after every render. For an anchor that moves
+   * without resizing and without a scroll, such as a marker inside text that
+   * the text around it pushes along (the mention picker's typed `@`).
+   */
+  followAnchor?: boolean;
 }
 
 interface UseFloatingPositionResult {
@@ -136,7 +142,7 @@ export function useFloatingPosition(
   floatingRef: RefObject<HTMLElement | null>,
   options: UseFloatingPositionOptions,
 ): UseFloatingPositionResult {
-  const { placement, align = 'center', offset = 8, enabled = true } = options;
+  const { placement, align = 'center', offset = 8, enabled = true, followAnchor = false } = options;
 
   const [result, setResult] = useState<{ top: number; left: number; actualPlacement: Placement }>({
     top: -9999,
@@ -193,6 +199,12 @@ export function useFloatingPosition(
       window.removeEventListener('resize', update);
     };
   }, [enabled, update, anchorRef, floatingRef]);
+
+  // No dependency list on purpose: the anchor can move on any render. `update`
+  // keeps the previous result when nothing moved, so this settles at once.
+  useLayoutEffect(() => {
+    if (enabled && followAnchor) update();
+  });
 
   return {
     style: {

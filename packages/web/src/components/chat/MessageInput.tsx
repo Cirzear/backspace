@@ -72,12 +72,11 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mentionAnchorRef = useRef<HTMLSpanElement>(null);
-  const inputContainerRef = useRef<HTMLDivElement>(null);
   // Note: this ref is intentionally typed `HTMLDivElement | null` (mutable
   // ref shape) rather than the more restrictive `RefObject<HTMLDivElement>`
   // because we assign to `.current` from a callback ref below — the
   // callback ref bridges the imperative `popoverAnchorRef` consumers
-  // (InputPopover / mention-popover anchoring) and the state-backed
+  // (InputPopover anchoring) and the state-backed
   // `composerEl` slot used by the clearance-measuring effect.
   const popoverAnchorRef = useRef<HTMLDivElement | null>(null);
 
@@ -716,8 +715,8 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     if (composerEl) syncClearance(composerEl);
   }, [composerEl, syncClearance, isMobile, keyboardOpen, textInputFocused, chatReplyTo, stagedTransfers.length]);
 
-  // Combined ref: keep `popoverAnchorRef` populated (InputPopover / mention
-  // popover anchor + scroll-into-view targets) AND notify the
+  // Combined ref: keep `popoverAnchorRef` populated (InputPopover anchor +
+  // scroll-into-view targets) AND notify the
   // `composerEl` state slot so the clearance-measuring effect can re-run
   // when the element materializes / changes between conditional render
   // branches.
@@ -782,7 +781,6 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
         </div>
       )}
       <div
-        ref={inputContainerRef}
         className={`relative ${chatReplyTo ? 'rounded-b-lg' : ''} overflow-visible`}
         onDrop={canAttachFiles ? handleDrop : undefined}
         onDragOver={canAttachFiles ? handleDragOver : undefined}
@@ -793,7 +791,6 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
             candidates={mentionMatches}
             selectedIndex={mentionState.selectedIndex}
             onSelect={selectMention}
-            key={draftText}
             anchorRef={mentionAnchorRef}
           />
         )}

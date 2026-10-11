@@ -147,10 +147,14 @@ describe('MessageInput mention labels', () => {
     });
   });
 
-  it("shows a picked member by name and stores the id on the DM's origin", async () => {
+  it("shows a picked member by name and stores the id on the DM's origin, keeping the picker open while the query is typed", async () => {
     render(<MessageInput channelId={dm.id} channelName="@Kai" />);
 
-    const textbox = typeInComposer('hey @k');
+    typeInComposer('hey @k');
+    const row = screen.getByText('Kai');
+    const textbox = typeInComposer('hey @ka');
+    // The same row: the picker is not mounted again for every keystroke.
+    expect(screen.getByText('Kai')).toBe(row);
     await act(async () => { fireEvent.keyDown(textbox, { key: 'Enter' }); });
 
     expect(useComposerStore.getState().get(dm.id).draftText).toBe('hey <@kai-orbit> ');

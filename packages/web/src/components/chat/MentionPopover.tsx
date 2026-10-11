@@ -131,6 +131,8 @@ function DesktopMention({
     align: 'start',
     offset: 4,
     enabled: candidates.length > 0,
+    // The anchor is the marker at the typed `@`; text before it can move it.
+    followAnchor: true,
   });
 
   // Scroll selected item into view
