@@ -1,4 +1,4 @@
-import { getHomeOrigin } from '../platform/instanceRuntime';
+import { getHomeOrigin, getHomeMediaOrigin } from '../platform/instanceRuntime';
 /**
  * Resolve the `Location` a tus create returned into the absolute upload URL.
  *
@@ -13,7 +13,9 @@ import { getHomeOrigin } from '../platform/instanceRuntime';
  * returned unchanged.
  */
 export function resolveTusUrl(location: string, origin: string | undefined): string {
-  const base = origin && origin.trim() ? origin.trim() : getHomeOrigin();
+  const isHome = !origin || !origin.trim();
+  const mediaOrigin = isHome ? getHomeMediaOrigin() : null;
+  const base = mediaOrigin ?? (origin && origin.trim() ? origin.trim() : getHomeOrigin());
   return new URL(location, base).toString();
 }
 
@@ -24,5 +26,8 @@ export function resolveTusUrl(location: string, origin: string | undefined): str
  * from, including a shell whose page origin is not the instance.
  */
 export function tusEndpoint(origin: string | undefined): string {
-  return new URL('/api/files/', origin && origin.trim() ? origin.trim() : getHomeOrigin()).toString();
+  const isHome = !origin || !origin.trim();
+  const mediaOrigin = isHome ? getHomeMediaOrigin() : null;
+  const base = mediaOrigin ?? (origin && origin.trim() ? origin.trim() : getHomeOrigin());
+  return new URL('/api/files/', base).toString();
 }

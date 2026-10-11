@@ -1,4 +1,4 @@
-import { getApiBaseUrl } from '../platform/instanceRuntime';
+import { getApiBaseUrl, getHomeMediaOrigin } from '../platform/instanceRuntime';
 
 /** Resolve upload assets without routing bundled /icons, /sounds or Vite assets remotely. */
 export function getUploadUrl(asset: string, origin = ''): string {
@@ -12,11 +12,13 @@ export function getUploadUrl(asset: string, origin = ''): string {
   }
   if (value.startsWith('//')) throw new Error('Asset URLs must specify a protocol');
   if (!value) return value;
+  const mediaOrigin = !origin ? getHomeMediaOrigin() : null;
+  const baseUrl = mediaOrigin ? `${mediaOrigin}/api` : getApiBaseUrl(origin);
   if (value.startsWith('/api/uploads/')) {
-    return `${getApiBaseUrl(origin)}/uploads/${stripUploadPrefix(value)}`;
+    return `${baseUrl}/uploads/${stripUploadPrefix(value)}`;
   }
   if (value.startsWith('/')) return value;
-  return `${getApiBaseUrl(origin)}/uploads/${value}`;
+  return `${baseUrl}/uploads/${value}`;
 }
 
 /** Strip /api/uploads/ prefix to get bare filename. No-op for bare filenames and absolute URLs. */

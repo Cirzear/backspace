@@ -117,6 +117,7 @@ describe('GET /api/instance/info', () => {
     // Persistent per-instance epoch (incarnation UUID) is always advertised.
     expect(typeof body.instanceId).toBe('string');
     expect(body.instanceId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(body.mediaUrl === null || typeof body.mediaUrl === 'string').toBe(true);
   });
 
   it('reports directoryEnabled=false by default', async () => {

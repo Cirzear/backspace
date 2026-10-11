@@ -1,18 +1,31 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getUploadUrl, normalizeUserAssets, resolveAssetUrl } from './assetUrls';
 
-const runtime = vi.hoisted(() => ({ native: false }));
+const runtime = vi.hoisted(() => ({ native: false, mediaOrigin: null as string | null }));
 vi.mock('../platform/instanceRuntime', () => ({
   getApiBaseUrl: (origin = '') => `${origin || (runtime.native ? 'https://home.test' : '')}/api`,
+  getHomeMediaOrigin: () => runtime.mediaOrigin,
 }));
 
-beforeEach(() => { runtime.native = false; });
+beforeEach(() => {
+  runtime.native = false;
+  runtime.mediaOrigin = null;
+});
 
 describe('getUploadUrl', () => {
   it('preserves web home filenames in normalization and resolves them for rendering', () => {
     expect(resolveAssetUrl('avatar.png', '')).toBe('avatar.png');
     expect(getUploadUrl('avatar.png')).toBe('/api/uploads/avatar.png');
     expect(getUploadUrl('/api/uploads/avatar.png')).toBe('/api/uploads/avatar.png');
+  });
+
+  it('resolves home bare names and upload paths against dedicated media origin when configured', () => {
+    runtime.mediaOrigin = 'https://media.cirzear.cn';
+    expect(getUploadUrl('avatar.png')).toBe('https://media.cirzear.cn/api/uploads/avatar.png');
+    expect(getUploadUrl('/api/uploads/video.mp4')).toBe('https://media.cirzear.cn/api/uploads/video.mp4');
+    expect(resolveAssetUrl('avatar.png', '')).toBe('avatar.png');
+    // Remote origins still respect their own origin, not home media origin
+    expect(getUploadUrl('video.mp4', 'https://remote.test')).toBe('https://remote.test/api/uploads/video.mp4');
   });
 
   it('resolves native home bare names and upload paths against the selected server', () => {

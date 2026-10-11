@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { resolveTusUrl, tusEndpoint } from './tusUrl';
+import { setHomeMediaOrigin, clearHomeMediaOrigin } from '../platform/instanceRuntime';
 
 describe('resolveTusUrl', () => {
   it('resolves a relative Location against the home origin when no origin is given', () => {
@@ -11,6 +12,15 @@ describe('resolveTusUrl', () => {
   it('resolves a relative Location against a remote origin', () => {
     expect(resolveTusUrl('/api/files/abc', 'https://orbit.example')).toBe('https://orbit.example/api/files/abc');
     expect(resolveTusUrl('/api/files/abc', 'https://orbit.example/')).toBe('https://orbit.example/api/files/abc');
+  });
+
+  it('resolves against dedicated media origin when configured', () => {
+    setHomeMediaOrigin('https://media.cirzear.cn');
+    expect(resolveTusUrl('/api/files/abc', undefined)).toBe('https://media.cirzear.cn/api/files/abc');
+    expect(resolveTusUrl('/api/files/abc', '')).toBe('https://media.cirzear.cn/api/files/abc');
+    // Remote origin still respected
+    expect(resolveTusUrl('/api/files/abc', 'https://orbit.example')).toBe('https://orbit.example/api/files/abc');
+    clearHomeMediaOrigin();
   });
 
   it('keeps the port the client actually used', () => {
@@ -29,9 +39,12 @@ describe('tusEndpoint', () => {
     expect(tusEndpoint('')).toBe('http://localhost:3000/api/files/');
   });
 
-  it('targets the remote origin, with or without a trailing slash', () => {
+  it('targets dedicated media origin when configured', () => {
+    setHomeMediaOrigin('https://media.cirzear.cn');
+    expect(tusEndpoint(undefined)).toBe('https://media.cirzear.cn/api/files/');
+    expect(tusEndpoint('')).toBe('https://media.cirzear.cn/api/files/');
+    // Remote origin still respected
     expect(tusEndpoint('https://orbit.example')).toBe('https://orbit.example/api/files/');
-    expect(tusEndpoint('https://orbit.example/')).toBe('https://orbit.example/api/files/');
-    expect(tusEndpoint('https://chat.example.com:1443')).toBe('https://chat.example.com:1443/api/files/');
+    clearHomeMediaOrigin();
   });
 });

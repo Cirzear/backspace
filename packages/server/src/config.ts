@@ -85,6 +85,21 @@ if (publicOrigin !== undefined) {
   }
 }
 
+// Dedicated media domain or origin for uploads and media assets (images, videos, files).
+// Useful when DOMAIN is proxied behind Cloudflare (orange cloud) and media streaming /
+// large uploads must bypass Cloudflare proxy via a direct DNS record (grey cloud).
+// Accepts either a full URL (https://media.example.com) or a hostname (media.example.com).
+function parseMediaUrl(): string | undefined {
+  const raw = envOptional('MEDIA_URL') || envOptional('MEDIA_DOMAIN');
+  if (!raw || !raw.trim()) return undefined;
+  const trimmed = raw.trim().replace(/\/+$/, '');
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+  return `https://${trimmed}`;
+}
+const mediaUrl = parseMediaUrl();
+
 // AGPL-3.0 § 13 "network-use source offer": users interacting over the network
 // must be able to obtain the Corresponding Source of the *running* version.
 // Operators who modify Backspace and self-host MUST point this at their own
@@ -248,6 +263,7 @@ export const config = {
   passwordHashCost,
   domain: envOptional('DOMAIN'),
   publicOrigin,
+  mediaUrl,
   version,
   sourceCodeUrl,
   commit,

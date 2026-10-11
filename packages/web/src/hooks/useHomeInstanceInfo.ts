@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import type { InstanceInfoResponse } from '@backspace/shared';
 import { api } from '../api/client';
+import { setHomeMediaOrigin, __resetHomeMediaOriginForTests } from '../platform/instanceRuntime';
 
 /**
  * The home instance's public info (`GET /api/instance/info`), shared by every
@@ -50,6 +51,7 @@ function fetchIfNeeded(): void {
     (info) => {
       if (startedIn !== generation) return;
       cached = info;
+      setHomeMediaOrigin(info.mediaUrl);
       stale = false;
       inFlight = false;
       emit();
@@ -101,4 +103,5 @@ export function __resetHomeInstanceInfoForTests(): void {
   stale = false;
   inFlight = false;
   listeners.clear();
+  __resetHomeMediaOriginForTests();
 }

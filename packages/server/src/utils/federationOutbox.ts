@@ -4,6 +4,7 @@ import { eq, and, inArray } from 'drizzle-orm';
 import { generateSnowflake } from './snowflake.js';
 import type { FederationRelayEvent, FederationRelayParticipant, FederationRelayAttachment, DmMessageWithUser, FederationRelayRequest, DmCallUndeliverableReason, FederationMessageRef, FederationMessageTarget } from '@backspace/shared';
 import { getOurOrigin, buildFederationHeaders } from './federationAuth.js';
+import { config } from '../config.js';
 import { extractDomain, relayActorOfUser } from '../routes/federation.js';
 import { racePeering, ensurePeered, createAutoPlaceholderPeer } from './federationPeering.js';
 import { relayMentionsOf } from './federationMentions.js';
@@ -408,7 +409,7 @@ export function queueDmRelay(
   dmChannelId: string,
   eventType: 'create' | 'update',
 ): void {
-  const domainOrigin = getOurOrigin();
+  const mediaOrigin = config.mediaUrl ?? getOurOrigin();
 
   const attachments: FederationRelayAttachment[] = (message.attachments ?? []).map(a => ({
     id: a.id,
@@ -421,7 +422,7 @@ export function queueDmRelay(
     duration: a.duration ?? undefined,
     playable: a.playable ?? null,
     thumbnailFilename: a.thumbnailFilename ?? undefined,
-    sourceUrl: `${domainOrigin}/api/uploads/${a.filename}`,
+    sourceUrl: `${mediaOrigin}/api/uploads/${a.filename}`,
   }));
 
   const participants = getDmParticipants(dmChannelId);

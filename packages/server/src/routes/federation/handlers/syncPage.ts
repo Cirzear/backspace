@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import type { FederationMessageTarget, FederationRelayAttachment, FederationRelayEvent, FederationSyncResponse } from '@backspace/shared';
 import { getDb, getRawDb, schema } from '../../../db/index.js';
 import { getOurOrigin, normalizeOriginForCompare } from '../../../utils/federationAuth.js';
+import { config } from '../../../config.js';
 import { buildRelayPayload, dmMessageFederationRef, dmMessageMutationTarget, dmReplyRefForRelay, getDmParticipants } from '../../../utils/federationOutbox.js';
 
 /**
@@ -474,7 +475,7 @@ function serializeMessageRow(row: MutationLogRow, type: 'create' | 'update'): Fe
   const author = db.select().from(schema.users).where(eq(schema.users.id, message.userId)).get();
   if (!author) return null;
 
-  const localOrigin = getOurOrigin();
+  const localMediaOrigin = config.mediaUrl ?? getOurOrigin();
   const attachments: FederationRelayAttachment[] = db
     .select()
     .from(schema.attachments)
@@ -491,7 +492,7 @@ function serializeMessageRow(row: MutationLogRow, type: 'create' | 'update'): Fe
       duration: a.duration ?? undefined,
       playable: a.playable ?? null,
       thumbnailFilename: a.thumbnailFilename ?? undefined,
-      sourceUrl: `${localOrigin}/api/uploads/${a.filename}`,
+      sourceUrl: `${localMediaOrigin}/api/uploads/${a.filename}`,
     }));
 
   // A group carries its federatedId so the peer finds the conversation by it

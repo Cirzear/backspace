@@ -105,6 +105,12 @@ export interface InstanceInfoResponse {
   // page. It only hides that card in the web client and changes nothing the
   // server does.
   supportCardEnabled: boolean;
+  /**
+   * Dedicated media/upload origin (e.g. "https://media.example.com").
+   * When set, web clients and peers route uploads and attachment media
+   * through this origin rather than DOMAIN.
+   */
+  mediaUrl?: string | null;
 }
 
 /**

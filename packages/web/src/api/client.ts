@@ -1,5 +1,6 @@
 import type { NativeScreenRoomLocator, NativeScreenTokenResponse } from '../mobile/nativeScreenShareTypes';
 import { getApiBaseUrl } from '../platform/instanceRuntime';
+import { getUploadUrl } from '../utils/assetUrls';
 import { getSessionItem, removeSessionItem, flushSessionStorage } from '../platform/sessionStorage';
 import type { PersonalSticker } from '@backspace/shared/src/stickers';
 import { isErrorCode, type ErrorCode, type ErrorDetails } from '@backspace/shared/src/errors';
@@ -451,7 +452,7 @@ export class BackspaceApiClient {
     remove: (id: string) => Promise<{ success: boolean }>;
   };
 
-  constructor(baseUrl: string, getToken: () => string | null, onUnauthorized?: () => void) {
+  constructor(baseUrl: string, getToken: () => string | null, onUnauthorized?: () => void, origin = '') {
     /** Send a request and return the successful response; a failure throws. */
     async function send(
       method: string,
@@ -688,7 +689,7 @@ export class BackspaceApiClient {
     };
 
     this.uploads = {
-      url: (filename: string) => `${baseUrl}/uploads/${filename}`,
+      url: (filename: string) => getUploadUrl(filename, origin),
     };
 
     this.dm = {
@@ -1020,6 +1021,6 @@ export const api = new BackspaceApiClient(
 
 export function createApiClient(origin: string, getToken: () => string | null, onUnauthorized?: () => void): BackspaceApiClient {
   const baseUrl = getApiBaseUrl(origin);
-  return new BackspaceApiClient(baseUrl, getToken, onUnauthorized);
+  return new BackspaceApiClient(baseUrl, getToken, onUnauthorized, origin);
 }
 

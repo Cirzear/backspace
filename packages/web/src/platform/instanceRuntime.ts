@@ -60,3 +60,60 @@ export function getWebSocketUrl(origin = ''): string {
   const url = new URL(origin || getHomeOrigin());
   return `${url.protocol === 'https:' ? 'wss:' : 'ws:'}//${url.host}/ws`;
 }
+
+const MEDIA_ORIGIN_KEY = 'backspace_media_origin';
+let inMemoryMediaOrigin: string | null | undefined = undefined;
+
+/**
+ * The dedicated origin for home media/uploads (images, videos, files), if configured.
+ * Cached in memory and persisted in localStorage so reloads apply immediately.
+ */
+export function getHomeMediaOrigin(): string | null {
+  if (inMemoryMediaOrigin !== undefined) {
+    return inMemoryMediaOrigin;
+  }
+  try {
+    const stored = localStorage.getItem(MEDIA_ORIGIN_KEY);
+    if (stored) {
+      inMemoryMediaOrigin = stored;
+      return stored;
+    }
+  } catch {}
+
+  const buildEnv = (import.meta as unknown as { env?: { VITE_MEDIA_URL?: string } }).env?.VITE_MEDIA_URL;
+  if (buildEnv && buildEnv.trim()) {
+    const trimmed = buildEnv.trim().replace(/\/+$/, '');
+    inMemoryMediaOrigin = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    return inMemoryMediaOrigin;
+  }
+
+  inMemoryMediaOrigin = null;
+  return null;
+}
+
+export function setHomeMediaOrigin(origin: string | null | undefined): void {
+  const normalized = origin && origin.trim() ? origin.trim().replace(/\/+$/, '') : null;
+  const value = normalized
+    ? (/^https?:\/\//i.test(normalized) ? normalized : `https://${normalized}`)
+    : null;
+  inMemoryMediaOrigin = value;
+  try {
+    if (value) {
+      localStorage.setItem(MEDIA_ORIGIN_KEY, value);
+    } else {
+      localStorage.removeItem(MEDIA_ORIGIN_KEY);
+    }
+  } catch {}
+}
+
+export function clearHomeMediaOrigin(): void {
+  setHomeMediaOrigin(null);
+}
+
+/** Test-only helper to reset media origin memory and storage cache. */
+export function __resetHomeMediaOriginForTests(): void {
+  inMemoryMediaOrigin = undefined;
+  try {
+    localStorage.removeItem(MEDIA_ORIGIN_KEY);
+  } catch {}
+}

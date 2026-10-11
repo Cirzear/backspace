@@ -44,6 +44,7 @@ export async function instanceRoutes(app: FastifyInstance): Promise<void> {
       // Read by the web client alone, to hide the Support card. A missing row
       // falls back to the column default.
       supportCardEnabled: settings?.supportCardEnabled ?? true,
+      mediaUrl: config.mediaUrl ?? null,
     };
 
     return reply.code(200).send(response);
