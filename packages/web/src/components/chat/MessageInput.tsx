@@ -65,11 +65,13 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   const setDraft = useComposerStore((s) => s.setDraft);
   const composerSetReplyTo = useComposerStore((s) => s.setReplyTo);
   const attachToComposer = useComposerStore((s) => s.attach);
+  const removeStaged = useComposerStore((s) => s.removeStaged);
   const clearComposer = useComposerStore((s) => s.clear);
 
   // Transfer state — subscribe to the whole map so progress/state updates re-render
   const transfers = useTransferStore((s) => s.transfers);
   const startUpload = useTransferStore((s) => s.startUpload);
+  const abortUpload = useTransferStore((s) => s.abortUpload);
 
   // UI-only state stays local
   const [mentionState, setMentionState] = useState<MentionState | null>(null);
@@ -268,6 +270,35 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
       }
     },
     [channelId, startUpload, attachToComposer, addToast, t],
+  );
+
+  const removeStagedTransfer = useCallback(
+    (transferId: string) => {
+      // Revoke any in-session image preview URL.
+      const previewUrl = previewUrlsRef.current.get(transferId);
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+        previewUrlsRef.current.delete(transferId);
+      }
+
+      const t = useTransferStore.getState().transfers.get(transferId);
+      if (t?.state === 'completed') {
+        // Fully-uploaded attachment with a finalized DB row. Server-side bytes
+        // get cleaned by the unlinked-attachment janitor (1h grace).
+        useTransferStore.getState().remove(transferId);
+      } else if (t && t.state !== 'aborted') {
+        // active/paused/queued/failed: abortUpload tears down any live tus
+        // instance AND sends DELETE for orphaned server-side .tus sessions.
+        // Then drop the transfer + free the retained File reference.
+        abortUpload(transferId);
+        useTransferStore.getState().remove(transferId);
+      } else {
+        // Already 'aborted' (server already cleaned); just drop the record.
+        useTransferStore.getState().remove(transferId);
+      }
+      removeStaged(channelId, transferId);
+    },
+    [abortUpload, removeStaged, channelId],
   );
 
   // Revoke all preview object URLs on unmount.
@@ -851,9 +882,9 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
         )}
 
         <StagedTransferTiles
-          channelId={channelId}
           stagedTransfers={stagedTransfers}
           previewUrls={previewUrlsRef.current}
+          onRemove={removeStagedTransfer}
         />
 
         <div className="flex items-center gap-1 desktop:gap-0 pl-2 desktop:pl-[10px] pr-2 desktop:pr-1">

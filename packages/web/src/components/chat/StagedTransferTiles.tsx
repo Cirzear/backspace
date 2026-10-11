@@ -1,50 +1,19 @@
-import React, { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useComposerStore } from '../../stores/composerStore';
 import { useTransferStore, type Transfer } from '../../stores/transferStore';
 import { AttachmentProgress } from './AttachmentProgress';
 
 interface StagedTransferTilesProps {
-  channelId: string;
   stagedTransfers: Transfer[];
-  previewUrls: Map<string, string>;
+  /** In-session image previews. MessageInput creates and revokes these URLs. */
+  previewUrls: ReadonlyMap<string, string>;
+  /** Unstages the transfer, cancelling its upload when it has not finished. */
+  onRemove: (transferId: string) => void;
 }
 
-export function StagedTransferTiles({ channelId, stagedTransfers, previewUrls }: StagedTransferTilesProps) {
+export function StagedTransferTiles({ stagedTransfers, previewUrls, onRemove }: StagedTransferTilesProps) {
   const { t } = useTranslation('chat');
-  const removeStaged = useComposerStore((s) => s.removeStaged);
   const pauseUpload = useTransferStore((s) => s.pauseUpload);
   const resumeUpload = useTransferStore((s) => s.resumeUpload);
-  const abortUpload = useTransferStore((s) => s.abortUpload);
-
-  const removeStagedTransfer = useCallback(
-    (transferId: string) => {
-      // Revoke any in-session image preview URL.
-      const previewUrl = previewUrls.get(transferId);
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl);
-        previewUrls.delete(transferId);
-      }
-
-      const t = useTransferStore.getState().transfers.get(transferId);
-      if (t?.state === 'completed') {
-        // Fully-uploaded attachment with a finalized DB row. Server-side bytes
-        // get cleaned by the unlinked-attachment janitor (1h grace).
-        useTransferStore.getState().remove(transferId);
-      } else if (t && t.state !== 'aborted') {
-        // active/paused/queued/failed: abortUpload tears down any live tus
-        // instance AND sends DELETE for orphaned server-side .tus sessions.
-        // Then drop the transfer + free the retained File reference.
-        abortUpload(transferId);
-        useTransferStore.getState().remove(transferId);
-      } else {
-        // Already 'aborted' (server already cleaned); just drop the record.
-        useTransferStore.getState().remove(transferId);
-      }
-      removeStaged(channelId, transferId);
-    },
-    [abortUpload, removeStaged, channelId, previewUrls],
-  );
 
   if (stagedTransfers.length === 0) return null;
 
@@ -99,15 +68,15 @@ export function StagedTransferTiles({ channelId, stagedTransfers, previewUrls }:
                   size="tile"
                   onPause={transfer.state === 'active' ? () => pauseUpload(transfer.id) : undefined}
                   onResume={transfer.state === 'paused' ? () => void resumeUpload(transfer.id) : undefined}
-                  onAbort={() => removeStagedTransfer(transfer.id)}
+                  onAbort={() => onRemove(transfer.id)}
                 />
               </div>
             )}
 
-            {/* Final-state remove button (top-right rose chip) — only when completed */}
+            {/* Remove chip, shown once the upload has completed. */}
             {isFinal && (
               <button
-                onClick={() => removeStagedTransfer(transfer.id)}
+                onClick={() => onRemove(transfer.id)}
                 className="absolute -top-2 -right-2 w-7 h-7 bg-accent-rose hover:bg-accent-rose/80 shadow-elevation-high rounded-lg flex items-center justify-center text-white transition-colors z-10"
                 aria-label={t('composer.removeAttachment')}
               >
