@@ -118,6 +118,7 @@ describe('GET /api/instance/info', () => {
     expect(typeof body.instanceId).toBe('string');
     expect(body.instanceId).toMatch(/^[0-9a-f-]{36}$/);
     expect(body.mediaUrl === null || typeof body.mediaUrl === 'string').toBe(true);
+    expect(body.maxMessageLength).toBe(config.maxMessageLength);
   });
 
   it('reports directoryEnabled=false by default', async () => {

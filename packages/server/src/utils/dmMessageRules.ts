@@ -1,5 +1,5 @@
 import { and, eq } from 'drizzle-orm';
-import { MAX_MESSAGE_LENGTH } from '@backspace/shared';
+import { config } from '../config.js';
 import type { ErrorCode, ErrorDetails } from '@backspace/shared/src/errors';
 import { getDb, schema } from '../db/index.js';
 import { isDeadOneOnOne, isDmMember } from './permissions.js';
@@ -99,8 +99,8 @@ export function checkDmMessageCreate(
   const text = typeof content === 'string' ? content.trim() : '';
   const attachmentIds = attachments ?? [];
   if (text.length === 0 && attachmentIds.length === 0) return refuse(400, 'content_required');
-  if (typeof content === 'string' && content.length > MAX_MESSAGE_LENGTH) {
-    return refuse(400, 'content_too_long', { max: MAX_MESSAGE_LENGTH });
+  if (typeof content === 'string' && content.length > config.maxMessageLength) {
+    return refuse(400, 'content_too_long', { max: config.maxMessageLength });
   }
 
   const reply = replyToId || null;
@@ -130,7 +130,7 @@ export function checkDmMessageEdit(
   content: unknown,
 ): DmMessageCheck<{ message: DmMessageRow; content: string }> {
   if (typeof content !== 'string' || content.trim().length === 0) return refuse(400, 'content_required');
-  if (content.length > MAX_MESSAGE_LENGTH) return refuse(400, 'content_too_long', { max: MAX_MESSAGE_LENGTH });
+  if (content.length > config.maxMessageLength) return refuse(400, 'content_too_long', { max: config.maxMessageLength });
 
   const message = getDb().select().from(schema.dmMessages).where(eq(schema.dmMessages.id, messageId)).get();
   if (!message) return refuse(404, 'message_not_found');

@@ -8,7 +8,8 @@ import { connectionManager } from './handler.js';
 import { isMember, getChannelSpaceId, isDmMember, hasPermission, PermissionBits } from '../utils/permissions.js';
 import { broadcastDmMessage, getDmMessageWithUser } from '../routes/dm.js';
 import { fetchReplyToMessages, isReplyTargetInChannel } from '../routes/messages.js';
-import { MAX_MESSAGE_LENGTH, isChosenUserStatus, type MessageWithUser, type Attachment } from '@backspace/shared';
+import { isChosenUserStatus, type MessageWithUser, type Attachment } from '@backspace/shared';
+import { config } from '../config.js';
 import { sanitizeUser } from '../utils/sanitize.js';
 import { collectProfileBroadcastTargetIds } from '../utils/userDeletion.js';
 import { applyChosenStatus } from './presence.js';
@@ -229,8 +230,8 @@ function handleMessageCreate(event: Record<string, unknown>, userId: string): vo
     return;
   }
 
-  if (content.length > MAX_MESSAGE_LENGTH) {
-    connectionManager.sendToUser(userId, { type: 'error', message: `Message content must be ${MAX_MESSAGE_LENGTH} characters or less` });
+  if (content.length > config.maxMessageLength) {
+    connectionManager.sendToUser(userId, { type: 'error', message: `Message content must be ${config.maxMessageLength} characters or less` });
     return;
   }
 
@@ -298,8 +299,8 @@ function handleMessageEdit(event: Record<string, unknown>, userId: string): void
     return;
   }
 
-  if (content.length > MAX_MESSAGE_LENGTH) {
-    connectionManager.sendToUser(userId, { type: 'error', message: `Message content must be ${MAX_MESSAGE_LENGTH} characters or less` });
+  if (content.length > config.maxMessageLength) {
+    connectionManager.sendToUser(userId, { type: 'error', message: `Message content must be ${config.maxMessageLength} characters or less` });
     return;
   }
 

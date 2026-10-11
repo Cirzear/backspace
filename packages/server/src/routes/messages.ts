@@ -1,12 +1,12 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { eq, and, inArray } from 'drizzle-orm';
 import { getDb, schema } from '../db/index.js';
+import { config } from '../config.js';
 import { authenticate } from '../utils/auth.js';
 import { generateSnowflake } from '../utils/snowflake.js';
 import { hasPermission, getChannelSpaceId, PermissionBits } from '../utils/permissions.js';
 import { connectionManager } from '../ws/handler.js';
 import {
-  MAX_MESSAGE_LENGTH,
   type CreateMessageRequest,
   type UpdateMessageRequest,
   type PaginatedQuery,
@@ -334,8 +334,8 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
       return sendError(reply, 400, 'message_empty');
     }
 
-    if (content && content.length > MAX_MESSAGE_LENGTH) {
-      return sendError(reply, 400, 'content_too_long', { max: MAX_MESSAGE_LENGTH });
+    if (content && content.length > config.maxMessageLength) {
+      return sendError(reply, 400, 'content_too_long', { max: config.maxMessageLength });
     }
 
     // @everyone/@here/role mentions ping many people; only MENTION_EVERYONE may send them.
@@ -437,8 +437,8 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
       return sendError(reply, 400, 'content_required');
     }
 
-    if (content.length > MAX_MESSAGE_LENGTH) {
-      return sendError(reply, 400, 'content_too_long', { max: MAX_MESSAGE_LENGTH });
+    if (content.length > config.maxMessageLength) {
+      return sendError(reply, 400, 'content_too_long', { max: config.maxMessageLength });
     }
 
     const db = getDb();

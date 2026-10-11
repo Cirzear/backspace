@@ -111,6 +111,11 @@ export interface InstanceInfoResponse {
    * through this origin rather than DOMAIN.
    */
   mediaUrl?: string | null;
+  /**
+   * Maximum message length allowed on this instance.
+   * Defaults to MAX_MESSAGE_LENGTH (10000).
+   */
+  maxMessageLength?: number;
 }
 
 /**

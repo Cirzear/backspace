@@ -482,7 +482,7 @@ Users tombstoned **before** this fix already had their 1-on-1 `dm_members` row d
 - Rejected with `403 recipient_deleted` if `isDeadOneOnOne(id, caller)` — read-only Deleted-User thread (see "DM Tombstone Semantics")
 - `content` a string, `attachments` a list of ids, `replyToId` a string, where present (`400 validation_failed`)
 - Must have content or attachments (not both empty; `400 content_required`)
-- Content max length: 4000 chars (`MAX_MESSAGE_LENGTH`; `400 content_too_long` with `details: { max }`)
+- Content max length: 10000 chars by default, configurable via `MAX_MESSAGE_LENGTH` (`400 content_too_long` with `details: { max }`)
 - `replyToId`, when present, must name a message in this same DM channel (`isDmReplyTargetInChannel`) -- otherwise `400 reply_target_invalid` and nothing is inserted
 - Attachment ownership verified (must be unlinked, `attachment_invalid`, and uploaded by the caller, `attachment_not_owned`)
 

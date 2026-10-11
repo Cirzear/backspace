@@ -28,7 +28,7 @@ export const TARGET_LANGUAGES: readonly TranslationLanguage[] = [
   'ar',
 ];
 export const ANONYMOUS_ENGINES = ['google-free', 'microsoft-free'];
-export const MAX_TEXT_LENGTH = 6000;
+export const MAX_TEXT_LENGTH = 15000;
 export function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new TranslationError('invalid-input');

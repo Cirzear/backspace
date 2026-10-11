@@ -45,6 +45,7 @@ export async function instanceRoutes(app: FastifyInstance): Promise<void> {
       // falls back to the column default.
       supportCardEnabled: settings?.supportCardEnabled ?? true,
       mediaUrl: config.mediaUrl ?? null,
+      maxMessageLength: config.maxMessageLength,
     };
 
     return reply.code(200).send(response);

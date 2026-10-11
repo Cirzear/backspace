@@ -2,6 +2,7 @@ import { config as dotenvConfig } from 'dotenv';
 import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { MAX_MESSAGE_LENGTH } from '@backspace/shared';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -301,6 +302,7 @@ export const config = {
   tusStragglerSweepMs: envInt('TUS_STRAGGLER_SWEEP_HOURS', 48) * 60 * 60 * 1000,
   dbPath: env('DB_PATH', resolve(__dirname, '../../../data/backspace.db')),
   maxUploadSize: envInt('MAX_UPLOAD_SIZE', 104857600),
+  maxMessageLength: envCount('MAX_MESSAGE_LENGTH', MAX_MESSAGE_LENGTH),
   registrationOpen: envBool('REGISTRATION_OPEN', true),
 
   updates: {

@@ -20,6 +20,7 @@ import { useTransferStore, type Transfer } from '../../stores/transferStore';
 import { usePendingMessageStore } from '../../stores/pendingMessageStore';
 import { putHandle, supportsFsHandles, supportsDnDHandles } from '../../utils/idbHandles';
 import { useVisualViewportInset } from '../../hooks/useVisualViewportInset';
+import { useHomeInstanceInfo } from '../../hooks/useHomeInstanceInfo';
 import { useAuthStore } from '../../stores/authStore';
 import { selfIdentityOf } from '../../utils/identity';
 import { findLastOwnEditableMessage } from './messageEditing';
@@ -127,8 +128,10 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     return out;
   }, [composerState.stagedTransferIds, transfers]);
 
+  const homeInfo = useHomeInstanceInfo();
+  const maxMessageLength = homeInfo?.maxMessageLength ?? MAX_MESSAGE_LENGTH;
   const draftText = composerState.draftText;
-  const remaining = MAX_MESSAGE_LENGTH - draftText.length;
+  const remaining = maxMessageLength - draftText.length;
   const isOverLimit = remaining < 0;
 
   // Auto-focus textarea on channel navigation
@@ -331,7 +334,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     const submittedDraft = composer.draftText;
     const trimmed = submittedDraft.trim();
     if (!trimmed && composer.stagedTransferIds.length === 0) return;
-    if (submittedDraft.length > MAX_MESSAGE_LENGTH) return;
+    if (submittedDraft.length > maxMessageLength) return;
 
     // Block submission when ANY staged transfer is in a non-shippable state
     // (failed/aborted) — those would prevent the bubble from ever resolving.
@@ -885,7 +888,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
           )}
 
           {/* Character counter (shows when near or over limit) */}
-          {draftText.length > MAX_MESSAGE_LENGTH - 200 && (
+          {draftText.length > maxMessageLength - 200 && (
             <span
               className={`text-[12px] font-medium tabular-nums flex-shrink-0 px-1 ${isOverLimit ? 'text-accent-rose' : 'text-txt-tertiary'}`}
             >
