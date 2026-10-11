@@ -155,7 +155,10 @@ the same settings. Do Not Disturb then applies on top, as before.
   channel menu has the same entry for the channel.
 - A muted channel shows a crossed-out bell in the channel list
   (`ChannelMutedIndicator`), for its own mute or its space's. Unread state and
-  badges are unchanged by settings, as they are by Do Not Disturb.
+  counts are unchanged by settings, as they are by Do Not Disturb. The one
+  visible difference: a muted space draws its unread count badge in
+  `interactive-muted` instead of the notification colour (websocket.md,
+  "Unread counts").
 
 The controls live in `components/notifications/`. Voice channels have no
 bell; their text chat follows the space setting.
