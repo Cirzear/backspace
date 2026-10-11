@@ -530,7 +530,11 @@
         "description": "Tem certeza de que deseja sair deste espaço? Você precisará de um novo convite para entrar de novo."
       },
       "left": "Você saiu do espaço",
-      "leaveFailed": "Falha ao sair do espaço"
+      "leaveFailed": "Falha ao sair do espaço",
+      "unreadMessages_one": "{{count}} mensagem não lida",
+      "unreadMessages_many": "{{count}} mensagens não lidas",
+      "unreadMessages_other": "{{count}} mensagens não lidas",
+      "unreadMessagesOver99": "Mais de 99 mensagens não lidas"
     },
     "dmList": {
       "explore": "Explorar",
@@ -561,7 +565,11 @@
       "spaceMuted": "Silenciado no espaço",
       "spaceDeafened": "Ensurdecido no espaço",
       "permissionMuted": "Silenciado (sem permissão para falar)"
-    }
+    },
+    "dmUnreadMessages_one": "{{count}} mensagem direta não lida",
+    "dmUnreadMessages_many": "{{count}} mensagens diretas não lidas",
+    "dmUnreadMessages_other": "{{count}} mensagens diretas não lidas",
+    "dmUnreadMessagesOver99": "Mais de 99 mensagens diretas não lidas"
   },
   "channels": {
     "loading": "Carregando canais",
