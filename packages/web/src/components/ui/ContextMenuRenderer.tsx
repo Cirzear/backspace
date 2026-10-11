@@ -360,9 +360,16 @@ function DesktopMenu({ items, position, close, closeGuard }: DesktopMenuProps) {
     el.style.top = `${y}px`;
   }, [position]);
 
-  // Auto-focus on mount for keyboard nav
+  // Auto-focus on mount for keyboard nav. The element focused before (the row
+  // a keyboard user opened the menu from) gets focus back when the menu
+  // closes, unless an action moved focus elsewhere, such as a dialog it opened.
   useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     menuRef.current?.focus();
+    return () => {
+      const active = document.activeElement;
+      if (opener?.isConnected && (!active || active === document.body)) opener.focus();
+    };
   }, []);
 
   // Dismiss on scroll/resize

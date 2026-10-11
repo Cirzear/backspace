@@ -74,6 +74,7 @@ describe('member context menu', () => {
     expect(screen.queryByRole('button', { name: /Roles/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Kick' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Ban' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Change space nickname…' })).not.toBeInTheDocument();
   });
 
   it('opens only the menu on right click, hiding self and owner management actions', () => {
@@ -145,7 +146,7 @@ describe('member context menu', () => {
       };
     });
     openRoles();
-    expect(screen.getByRole('menu', { name: 'Roles / permission groups' })).toHaveStyle({ left: '736px' });
+    expect(screen.getByRole('menu', { name: 'Roles' })).toHaveStyle({ left: '736px' });
   });
 
   it('saves a space nickname and offers an explicit reset', async () => {
@@ -157,8 +158,47 @@ describe('member context menu', () => {
     expect(update).toHaveBeenLastCalledWith('space', 'target', { nickname: 'Pilot' });
     rightClick('Pilot'); fireEvent.click(screen.getByRole('button', { name: 'Change space nickname…' }));
     update.mockResolvedValue(member('target'));
-    fireEvent.click(screen.getByRole('button', { name: 'Reset to default' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reset to account name' }));
     await waitFor(() => expect(update).toHaveBeenLastCalledWith('space', 'target', { nickname: null }));
+  });
+
+  it('clears the nickname when the field is saved empty', async () => {
+    spaces.useSpaceStore.setState({ members: spaces.useSpaceStore.getState().members.map(m => m.userId === 'target' ? { ...m, nickname: 'Pilot' } : m) });
+    update.mockResolvedValue(member('target'));
+    mount(); rightClick('Pilot'); fireEvent.click(screen.getByRole('button', { name: 'Change space nickname…' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Space nickname' }), { target: { value: '   ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith('space', 'target', { nickname: null }));
+    await screen.findByText('target');
+  });
+
+  it.each(['\u200B\u200D', 'a\tb', 'evil\u202Eexe'])('refuses %j before sending, with the server rule', async value => {
+    mount(); rightClick(); fireEvent.click(screen.getByRole('button', { name: 'Change space nickname…' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Space nickname' }), { target: { value } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('at most 32 characters');
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('opens the menu from the keyboard and gives focus back to the row on Escape', () => {
+    mount();
+    const row = screen.getByText('target').closest('[role="button"]') as HTMLElement;
+    row.focus();
+    fireEvent.keyDown(row, { key: 'ContextMenu' });
+    expect(screen.getByRole('button', { name: 'View profile' })).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    expect(useContextMenuStore.getState().menu).toBeNull();
+    expect(row).toHaveFocus();
+    fireEvent.keyDown(row, { key: 'F10', shiftKey: true });
+    expect(useContextMenuStore.getState().menu).not.toBeNull();
+  });
+
+  it('opens the profile from the keyboard', () => {
+    mount();
+    const row = screen.getByText('target').closest('[role="button"]') as HTMLElement;
+    row.focus();
+    fireEvent.keyDown(row, { key: 'Enter' });
+    expect(useUIStore.getState().userProfilePopout.member).toEqual({ spaceId: 'space', userId: 'target' });
   });
 
   it('keeps nickname input and exposes save failures', async () => {
@@ -242,7 +282,7 @@ describe('member context menu', () => {
       anchor={{ left: 200, top: 100, right: 250, bottom: 150, width: 50, height: 50 }} /></MemoryRouter>);
     expect(screen.getByText('Original name')).toBeInTheDocument();
     expect(screen.getByText('@target')).toBeInTheDocument();
-    expect(screen.getByText(/Space nickname: Pilot/)).toBeInTheDocument();
+    expect(screen.getByText('Nickname in this space: Pilot')).toBeInTheDocument();
   });
 
   it.each(['Kick', 'Ban'])('keeps the member visible when %s fails', async label => {

@@ -220,5 +220,5 @@
   "directory_unreachable": "Outer Space is not reachable right now. Inner Space still works.",
   "directory_private_space": "Set the space to public or request to join before listing it.",
   "directory_requires_discovery": "Turn on space discovery first.",
-  "member_nickname_invalid": "Nickname must contain 1–32 characters on a single line. Use reset to restore the default."
+  "member_nickname_invalid": "Nicknames can be at most {{max}} characters on one line, with at least one visible character and no control characters."
 }

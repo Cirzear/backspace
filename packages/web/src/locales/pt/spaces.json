@@ -597,13 +597,15 @@
     "menu": {
       "profile": "Ver perfil",
       "nickname": "Alterar apelido no espaço…",
-      "roles": "Cargos / grupos de permissões"
+      "roles": "Cargos"
     },
     "nickname": {
-      "title": "Alterar apelido",
-      "label": "Apelido",
-      "description": "Este nome é usado apenas neste espaço.",
-      "reset": "Restaurar nome da conta"
+      "title": "Alterar apelido no espaço",
+      "label": "Apelido no espaço",
+      "descriptionSelf": "Vale apenas neste espaço. O nome da sua conta e seus apelidos em outros espaços não mudam. Deixe em branco para mostrar o nome da conta.",
+      "descriptionOther": "Vale apenas neste espaço. O nome da conta de {{name}} não muda. Deixe em branco para mostrar o nome da conta.",
+      "reset": "Restaurar nome da conta",
+      "shownAs": "Apelido neste espaço: {{nickname}}"
     }
   },
   "mobile": {

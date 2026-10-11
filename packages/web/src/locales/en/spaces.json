@@ -589,13 +589,15 @@
     "menu": {
       "profile": "View profile",
       "nickname": "Change space nickname…",
-      "roles": "Roles / permission groups"
+      "roles": "Roles"
     },
     "nickname": {
       "title": "Change space nickname",
       "label": "Space nickname",
-      "description": "Only applies to this space. Your account name and nicknames in other spaces stay unchanged.",
-      "reset": "Reset to default"
+      "descriptionSelf": "Only applies in this space. Your account name and your nicknames in other spaces stay the same. Leave it empty to show your account name.",
+      "descriptionOther": "Only applies in this space. The account name of {{name}} stays the same. Leave it empty to show the account name.",
+      "reset": "Reset to account name",
+      "shownAs": "Nickname in this space: {{nickname}}"
     }
   },
   "mobile": {
