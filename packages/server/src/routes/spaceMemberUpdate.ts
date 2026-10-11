@@ -1,19 +1,23 @@
 import type { MemberWithUser, UpdateMemberRequest } from '@backspace/shared';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { and, eq } from 'drizzle-orm';
-import { MAX_MEMBER_NICKNAME_LENGTH } from '@backspace/shared/src/constants.js';
+import { MAX_MEMBER_NICKNAME_LENGTH, normalizeMemberNickname } from '@backspace/shared/src/constants.js';
 import { canActOnMember, canManageRoleAt, roleBitsChangeRefusal, stringToPermissions, type HeldBitsRefusal } from '@backspace/shared/src/permissions.js';
 import { getDb, schema } from '../db/index.js';
 import { authenticate } from '../utils/auth.js';
-import { sendError } from '../utils/httpErrors';
-import { hasPermission, isMember, computePermissions, PermissionBits } from '../utils/permissions.js';
+import { sendError } from '../utils/httpErrors.js';
+import { hasPermission, computePermissions, PermissionBits } from '../utils/permissions.js';
 import { sanitizeUser } from '../utils/sanitize.js';
 import { getHierarchyStanding } from '../utils/roleHierarchy.js';
 import { memberRolesView } from '../utils/permissionDataView.js';
 import { connectionManager } from '../ws/handler.js';
 import { checkVoicePermissions } from '../ws/events.js';
 
-/** Granting a role must not give away permission bits the actor does not hold. */
+/**
+ * Held-bits rule for handing out a role (permissions.md, "Held-bits rule"):
+ * giving a member a role gives them its bits, so the actor must hold every
+ * one of them. Taking a role away is governed by the hierarchy alone.
+ */
 export function roleGrantRefusal(spaceId: string, actorId: string, rolePermissions: string | null): HeldBitsRefusal | null {
   return roleBitsChangeRefusal(computePermissions(actorId, spaceId), 0n, stringToPermissions(rolePermissions));
 }
@@ -26,7 +30,7 @@ interface MemberUpdateContext {
   reply: FastifyReply;
 }
 
-function validateRoleUpdate(context: MemberUpdateContext, roleIds: unknown): boolean {
+function validateRoleUpdate(context: MemberUpdateContext, roleIds: unknown): roleIds is string[] {
   const { spaceId, actorId, targetId, ownerId, reply } = context;
   if (!hasPermission(actorId, spaceId, PermissionBits.MANAGE_ROLES)) {
     sendError(reply, 403, 'missing_permission', { permission: 'MANAGE_ROLES' });
@@ -94,40 +98,69 @@ function validateRoleUpdate(context: MemberUpdateContext, roleIds: unknown): boo
   return true;
 }
 
-function validateNicknameUpdate(context: MemberUpdateContext, nickname: unknown): boolean {
+/**
+ * Who may set whose nickname: anyone their own; another member's needs
+ * MANAGE_SPACE, never reaches the owner, and follows the role hierarchy like
+ * every other action on a member (permissions.md, "Role hierarchy").
+ * Answers the stored form (null clears), or undefined after sending a refusal.
+ */
+function validateNicknameUpdate(context: MemberUpdateContext, nickname: unknown): string | null | undefined {
   const { spaceId, actorId, targetId, ownerId, reply } = context;
-  // Renaming oneself does not grant any role-management capability.
-  if (actorId !== targetId && !hasPermission(actorId, spaceId, PermissionBits.MANAGE_SPACE)) {
-    sendError(reply, 403, 'missing_permission', { permission: 'MANAGE_SPACE' });
-    return false;
+  if (actorId !== targetId) {
+    if (!hasPermission(actorId, spaceId, PermissionBits.MANAGE_SPACE)) {
+      sendError(reply, 403, 'missing_permission', { permission: 'MANAGE_SPACE' });
+      return undefined;
+    }
+    if (targetId === ownerId) {
+      sendError(reply, 403, 'space_owner_only');
+      return undefined;
+    }
+    if (!canActOnMember(getHierarchyStanding(spaceId, actorId), getHierarchyStanding(spaceId, targetId))) {
+      sendError(reply, 403, 'role_hierarchy');
+      return undefined;
+    }
   }
-  if (actorId !== targetId && targetId === ownerId) {
-    sendError(reply, 403, 'space_owner_only');
-    return false;
-  }
-  if (nickname !== null && (typeof nickname !== 'string' || !nickname.trim()
-    || nickname.trim().length > MAX_MEMBER_NICKNAME_LENGTH || /[\r\n]/.test(nickname))) {
+  const stored = normalizeMemberNickname(nickname);
+  if (stored === undefined) {
     sendError(reply, 400, 'member_nickname_invalid', { max: MAX_MEMBER_NICKNAME_LENGTH });
-    return false;
+    return undefined;
   }
-  return true;
+  return stored;
 }
 
-function validateMemberPatch(context: MemberUpdateContext, patch: UpdateMemberRequest): boolean {
+/** What a valid PATCH writes: the role set and the nickname in its stored form, each only when sent. */
+interface MemberWrite {
+  roleIds?: string[];
+  nickname?: string | null;
+}
+
+/**
+ * Checks every field before anything is written, so a request that changes
+ * roles and the nickname together never half succeeds. Answers the write, or
+ * null after sending a refusal.
+ */
+function validateMemberPatch(context: MemberUpdateContext, patch: UpdateMemberRequest): MemberWrite | null {
   const { roleIds, nickname } = patch;
-  // Validate all fields before writing: a mixed patch must never partially succeed.
-  if (roleIds !== undefined && !validateRoleUpdate(context, roleIds)) return false;
-  if (nickname !== undefined && !validateNicknameUpdate(context, nickname)) return false;
   if (roleIds === undefined && nickname === undefined) {
     sendError(context.reply, 400, 'validation_failed');
-    return false;
+    return null;
   }
-  return true;
+  const write: MemberWrite = {};
+  if (roleIds !== undefined) {
+    if (!validateRoleUpdate(context, roleIds)) return null;
+    write.roleIds = roleIds;
+  }
+  if (nickname !== undefined) {
+    const stored = validateNicknameUpdate(context, nickname);
+    if (stored === undefined) return null;
+    write.nickname = stored;
+  }
+  return write;
 }
 
-function persistMemberUpdate(target: { spaceId: string; userId: string }, patch: UpdateMemberRequest): void {
+function persistMemberUpdate(target: { spaceId: string; userId: string }, write: MemberWrite): void {
   const { spaceId: id, userId: uid } = target;
-  const { roleIds, nickname } = patch;
+  const { roleIds, nickname } = write;
   const db = getDb();
   db.transaction((tx) => {
     if (roleIds !== undefined) {
@@ -138,7 +171,7 @@ function persistMemberUpdate(target: { spaceId: string; userId: string }, patch:
       }
     }
     if (nickname !== undefined) {
-      tx.update(schema.spaceMembers).set({ nickname: nickname === null ? null : nickname.trim() })
+      tx.update(schema.spaceMembers).set({ nickname })
         .where(and(eq(schema.spaceMembers.spaceId, id), eq(schema.spaceMembers.userId, uid))).run();
     }
   });
@@ -152,21 +185,23 @@ export function updateSpaceMemberRoutes(app: FastifyInstance): void {
     if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body)) {
       return sendError(reply, 400, 'validation_failed');
     }
-    const { roleIds } = request.body;
     const db = getDb();
     const server = db.select().from(schema.spaces).where(eq(schema.spaces.id, id)).get();
     if (!server) return sendError(reply, 404, 'space_not_found');
-    if (!isMember(id, request.userId)) return sendError(reply, 403, 'not_space_member');
 
+    // No membership check on the actor: the permission checks decide, as
+    // before nicknames, so an instance admin keeps managing roles in a space
+    // they have not joined. A nickname of one's own needs a member row (404).
     const context = { spaceId: id, actorId: request.userId, targetId: uid, ownerId: server.ownerId, reply };
-    if (!validateMemberPatch(context, request.body)) return reply;
+    const write = validateMemberPatch(context, request.body);
+    if (!write) return reply;
     const member = db.select().from(schema.spaceMembers)
       .where(and(eq(schema.spaceMembers.spaceId, id), eq(schema.spaceMembers.userId, uid))).get();
     if (!member) return sendError(reply, 404, 'member_not_found');
 
-    persistMemberUpdate({ spaceId: id, userId: uid }, request.body);
+    persistMemberUpdate({ spaceId: id, userId: uid }, write);
 
-    if (roleIds !== undefined) {
+    if (write.roleIds !== undefined) {
       // Recompute the target's permissions in addition to refreshing everyone's member display.
       connectionManager.announceSpaceAccessChange(id, [uid]);
       checkVoicePermissions(id);
