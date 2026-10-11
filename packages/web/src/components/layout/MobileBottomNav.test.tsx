@@ -129,7 +129,7 @@ describe('MobileBottomNav: You tab dot for friend requests', () => {
 describe('MobileBottomNav localization', () => {
   it.each([
     { language: 'en', labels: ['Spaces', 'DMs', 'You'] },
-    { language: 'de', labels: ['Räume', 'Direktnachrichten', 'Du'] },
+    { language: 'de', labels: ['Spaces', 'Direktnachrichten', 'Du'] },
     { language: 'ru', labels: ['Пространства', 'Личные сообщения', 'Вы'] },
     { language: 'zh', labels: ['空间', '私信', '我'] },
     { language: 'pt', labels: ['Espaços', 'Mensagens diretas', 'Você'] },
