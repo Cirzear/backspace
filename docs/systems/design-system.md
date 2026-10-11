@@ -255,7 +255,7 @@ When introducing a new input or contenteditable surface, no extra work is needed
 
 | Colour | Meaning | Used by |
 |--------|---------|---------|
-| `accent-rose` / `bg-notification` | Someone is waiting on you: unread messages, mentions, pending friend requests | channel unread dots, mobile bottom-nav badges |
+| `accent-rose` / `bg-notification` | Someone is waiting on you: unread messages, mentions, pending friend requests | channel unread dots, mobile bottom-nav badges, the space and DM count badges in the space sidebar (`UnreadCountBadge`, dark text; a muted space's badge is `interactive-muted`) |
 | `accent-amber` | Informational, no one is blocked: an available instance update, pending federation approvals | settings tab and sidebar badges |
 
 A settings section carries a count (`SettingsSection.badgeCount`) when the number

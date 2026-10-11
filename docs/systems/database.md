@@ -105,6 +105,8 @@ PK: (spaceId, userId)
 | editedAt | integer | |
 | createdAt | integer NOT NULL | |
 
+Indexes: `idx_messages_channel_id` (channelId); `idx_messages_user_id` (userId); `idx_messages_channel_unread` (channelId, `CAST(id AS INTEGER)`, userId), migration `0027_unread_count_indexes`. The last one serves the unread counts (websocket.md, "Unread counts"): the messages of a channel after a read cursor, compared as numbers, without reading the table. SQLite uses an expression index only when the query spells the expression the same way, type name case included, so the count writes `CAST(... AS INTEGER)`; the index names the column unqualified because SQLite refuses a qualified one there.
+
 ### attachments
 | Column | Type | Default | Notes |
 |--------|------|---------|-------|
@@ -199,6 +201,8 @@ PK: (dmChannelId, userId)
 | sourceMessageId | text | | Original ID on source instance |
 | encryptionVersion | integer | 0 | |
 | createdAt | integer NOT NULL | | |
+
+Indexes: `idx_dm_messages_dm_channel_id` (dmChannelId); `idx_dm_messages_user_id` (userId); `idx_dm_messages_source_unique` UNIQUE (sourceInstance, sourceMessageId) where sourceInstance is set; `idx_dm_messages_channel_unread` (dmChannelId, `CAST(id AS INTEGER)`, userId), migration `0027_unread_count_indexes`, as `idx_messages_channel_unread` above.
 
 ### dm_reactions
 PK: id

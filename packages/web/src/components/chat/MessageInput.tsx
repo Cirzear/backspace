@@ -1,3 +1,5 @@
+import { useMentionComposer } from './useMentionComposer';
+import { MentionTextarea } from './MentionTextarea';
 import { layoutRect } from '../../platform/interfaceScale';
 import React, { useState, useRef, useCallback, useMemo, useEffect, useLayoutEffect } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -21,11 +23,6 @@ import { useAuthStore } from '../../stores/authStore';
 import { selfIdentityOf } from '../../utils/identity';
 import { findLastOwnEditableMessage } from './messageEditing';
 import { describeError } from '../../i18n/errors';
-import {
-  filterMentionCandidates,
-  useChannelMentionCandidates,
-  type ChannelUser,
-} from '../../utils/channelUser';
 
 interface MessageInputProps {
   channelId: string;
@@ -39,12 +36,6 @@ interface MessageInputProps {
    * when the group has no `dm.name` set.
    */
   placeholder?: string;
-}
-
-interface MentionState {
-  query: string;
-  startIndex: number;
-  selectedIndex: number;
 }
 
 // Default tus expiration window if a transfer doesn't yet have one (24h).
@@ -74,17 +65,16 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   const abortUpload = useTransferStore((s) => s.abortUpload);
 
   // UI-only state stays local
-  const [mentionState, setMentionState] = useState<MentionState | null>(null);
   const [activePopover, setActivePopover] = useState<InputPopoverTab | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const inputContainerRef = useRef<HTMLDivElement>(null);
+  const mentionAnchorRef = useRef<HTMLSpanElement>(null);
   // Note: this ref is intentionally typed `HTMLDivElement | null` (mutable
   // ref shape) rather than the more restrictive `RefObject<HTMLDivElement>`
   // because we assign to `.current` from a callback ref below — the
   // callback ref bridges the imperative `popoverAnchorRef` consumers
-  // (InputPopover / mention-popover anchoring) and the state-backed
+  // (InputPopover anchoring) and the state-backed
   // `composerEl` slot used by the clearance-measuring effect.
   const popoverAnchorRef = useRef<HTMLDivElement | null>(null);
 
@@ -100,8 +90,6 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   const chatSetReplyTo = useChatStore((s) => s.setReplyTo);
   const editingMessageId = useChatStore((s) => s.editingMessageId);
   const setEditingMessage = useChatStore((s) => s.setEditingMessage);
-  // Who can be mentioned here: this channel's people, with ids on its origin.
-  const mentionCandidates = useChannelMentionCandidates(channelId);
 
   const addToast = useUIStore((s) => s.addToast);
   const appendBubble = usePendingMessageStore((s) => s.append);
@@ -129,6 +117,9 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   }, [composerState.stagedTransferIds, transfers]);
 
   const draftText = composerState.draftText;
+  const { mentionState, setMentionState, mentionMatches, mentionModel, modelFor,
+    selectMention, handleMentionKey, updateMention } = useMentionComposer({ channelId, draftText, textareaRef });
+
   const remaining = MAX_MESSAGE_LENGTH - draftText.length;
   const isOverLimit = remaining < 0;
 
@@ -153,7 +144,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   useEffect(() => {
     setActivePopover(null);
     setMentionState(null);
-  }, [channelId]);
+  }, [channelId, setMentionState]);
 
   // Sync this channel's chatStore reply target into composerStore so reload restores it.
   // chatStore holds the live MessageWithUser; composerStore stores a flat snapshot.
@@ -202,12 +193,6 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
       }
     }
   }, [stagedTransfers, addToast, t]);
-
-  // The popover's rows; keyboard navigation indexes the same list.
-  const mentionMatches = useMemo(
-    () => (mentionState ? filterMentionCandidates(mentionCandidates, mentionState.query) : []),
-    [mentionCandidates, mentionState],
-  );
 
   const handleTyping = useCallback(() => {
     if (typingTimeoutRef.current) return;
@@ -394,60 +379,10 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     }
   };
 
-  const selectMention = useCallback(
-    (candidate: ChannelUser) => {
-      if (!mentionState) return;
-      const textarea = textareaRef.current;
-      const cursorPos = textarea?.selectionStart ?? draftText.length;
-      const before = draftText.slice(0, mentionState.startIndex);
-      const after = draftText.slice(cursorPos);
-      const insertion = `<@${candidate.userId}> `;
-      const newContent = before + insertion + after;
-      setDraft(channelId, newContent);
-      setMentionState(null);
-
-      // Restore cursor position after React re-renders
-      const newCursorPos = before.length + insertion.length;
-      requestAnimationFrame(() => {
-        if (textarea) {
-          textarea.focus();
-          textarea.selectionStart = newCursorPos;
-          textarea.selectionEnd = newCursorPos;
-        }
-      });
-    },
-    [mentionState, draftText, setDraft, channelId],
-  );
-
   const handleKeyDown = (e: React.KeyboardEvent): void => {
-    // Mention popover keyboard navigation
-    if (mentionState && mentionMatches.length > 0) {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        setMentionState((prev) =>
-          prev ? { ...prev, selectedIndex: Math.min(prev.selectedIndex + 1, mentionMatches.length - 1) } : null,
-        );
-        return;
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        setMentionState((prev) =>
-          prev ? { ...prev, selectedIndex: Math.max(prev.selectedIndex - 1, 0) } : null,
-        );
-        return;
-      }
-      if (e.key === 'Enter' || e.key === 'Tab') {
-        e.preventDefault();
-        const selected = mentionMatches[mentionState.selectedIndex];
-        if (selected) selectMention(selected);
-        return;
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        setMentionState(null);
-        return;
-      }
-    }
+    // IME confirmation must not select a candidate or send the message.
+    if (e.nativeEvent.isComposing) return;
+    if (handleMentionKey(e)) return;
 
     const isPlainArrowUp = e.key === 'ArrowUp'
       && !e.altKey
@@ -541,30 +476,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>): void => {
-    const value = e.target.value;
-    const cursorPos = e.target.selectionStart;
-    setDraft(channelId, value);
-
-    // Detect @mention trigger
-    const textBeforeCursor = value.slice(0, cursorPos);
-    const mentionMatch = textBeforeCursor.match(/@([^\s<]*)$/);
-
-    if (mentionMatch) {
-      const atIndex = cursorPos - mentionMatch[0].length;
-      // Only trigger at word boundary: start of input, after space, or after newline
-      const charBefore = atIndex > 0 ? value[atIndex - 1] : undefined;
-      if (charBefore === undefined || charBefore === ' ' || charBefore === '\n') {
-        setMentionState({
-          query: mentionMatch[1] ?? '',
-          startIndex: atIndex,
-          selectedIndex: 0,
-        });
-      } else {
-        setMentionState(null);
-      }
-    } else {
-      setMentionState(null);
-    }
+    updateMention(e);
 
     handleTyping();
 
@@ -581,22 +493,23 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
         setDraft(channelId, draftText + emoji.native);
         return;
       }
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
-      const before = draftText.slice(0, start);
-      const after = draftText.slice(end);
-      const newContent = before + emoji.native + after;
+      // A selection that touches a mention replaces its whole token.
+      const { value: newContent, wireCursor } = mentionModel.replace({
+        start: textarea.selectionStart,
+        end: textarea.selectionEnd,
+        text: emoji.native,
+      });
       setDraft(channelId, newContent);
 
       // Restore cursor position after the emoji
-      const newCursorPos = start + emoji.native.length;
+      const newCursorPos = modelFor(newContent).toDisplay(wireCursor);
       requestAnimationFrame(() => {
         textarea.focus();
         textarea.selectionStart = newCursorPos;
         textarea.selectionEnd = newCursorPos;
       });
     },
-    [draftText, setDraft, channelId],
+    [draftText, setDraft, channelId, mentionModel, modelFor],
   );
 
   const handleGifSelect = useCallback(
@@ -800,8 +713,8 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     if (composerEl) syncClearance(composerEl);
   }, [composerEl, syncClearance, isMobile, keyboardOpen, textInputFocused, chatReplyTo, stagedTransfers.length]);
 
-  // Combined ref: keep `popoverAnchorRef` populated (InputPopover / mention
-  // popover anchor + scroll-into-view targets) AND notify the
+  // Combined ref: keep `popoverAnchorRef` populated (InputPopover anchor +
+  // scroll-into-view targets) AND notify the
   // `composerEl` state slot so the clearance-measuring effect can re-run
   // when the element materializes / changes between conditional render
   // branches.
@@ -866,7 +779,6 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
         </div>
       )}
       <div
-        ref={inputContainerRef}
         className={`relative ${chatReplyTo ? 'rounded-b-lg' : ''} overflow-visible`}
         onDrop={canAttachFiles ? handleDrop : undefined}
         onDragOver={canAttachFiles ? handleDragOver : undefined}
@@ -877,7 +789,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
             candidates={mentionMatches}
             selectedIndex={mentionState.selectedIndex}
             onSelect={selectMention}
-            anchorRef={inputContainerRef}
+            anchorRef={mentionAnchorRef}
           />
         )}
 
@@ -916,9 +828,11 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
           />
 
           {/* Text input */}
-          <textarea
-            ref={textareaRef}
-            value={draftText}
+          <MentionTextarea
+            textareaRef={textareaRef}
+            mentionAnchorRef={mentionAnchorRef}
+            mentionStart={mentionState?.startIndex}
+            model={mentionModel}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
             onPaste={canAttachFiles ? handlePaste : undefined}
@@ -928,7 +842,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
                 ? t('chat:composer.placeholder.dm', { name: channelName.slice(1) })
                 : t('chat:composer.placeholder.channel', { name: channelName }))
             }
-            className="input-embedded flex-1 py-[10px] px-1 resize-none text-[15px] leading-[1.375rem] max-h-[calc(50*var(--app-vh))] scrollbar-thin"
+            className="input-embedded relative block w-full py-[10px] px-1 resize-none text-[15px] leading-[1.375rem] max-h-[calc(50*var(--app-vh))] scrollbar-thin"
             rows={1}
           />
 

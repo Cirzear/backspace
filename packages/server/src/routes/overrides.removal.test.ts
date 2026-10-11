@@ -130,8 +130,10 @@ describe('removing a role override', () => {
     expect(channelOverrideRows()).toHaveLength(0);
     expect(computePermissions('member', SPACE_ID, CHANNEL_ID) & PermissionBits.SEND_MESSAGES).toBe(PermissionBits.SEND_MESSAGES);
     // Every connected member is told about the channel again, with the
-    // permissions they now hold in it.
-    expect(sendToUser).toHaveBeenCalledWith('member', expect.objectContaining({ type: 'channel_updated', spaceId: SPACE_ID }));
+    // permissions they now hold in it, which the send reuses for the
+    // channel's unread count.
+    const memberPerms = computePermissions('member', SPACE_ID, CHANNEL_ID);
+    expect(sendToUser).toHaveBeenCalledWith('member', expect.objectContaining({ type: 'channel_updated', spaceId: SPACE_ID }), memberPerms);
   });
 
   it('DELETE on a category override drops the row', async () => {
