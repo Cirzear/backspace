@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MemberWithUser, Role, User } from '@backspace/shared';
@@ -181,7 +182,8 @@ describe('member context menu', () => {
   });
 
   it('opens the menu from the keyboard and gives focus back to the row on Escape', () => {
-    mount();
+    // StrictMode runs the menu's focus effect twice, as the dev build does.
+    render(<StrictMode><MemoryRouter><MemberSidebar /><ContextMenuRenderer /></MemoryRouter></StrictMode>);
     const row = screen.getByText('target').closest('[role="button"]') as HTMLElement;
     row.focus();
     fireEvent.keyDown(row, { key: 'ContextMenu' });
