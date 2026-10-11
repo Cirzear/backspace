@@ -22,7 +22,8 @@ describe('space unread message badge', () => {
     useUnreadCountStore.getState().hydrate('', { a: 80, b: 25, c: 999 });
     render(<SpaceUnreadBadge spaceId="space" />);
     expect(screen.getByText('99+')).toHaveClass('bg-notification');
-    expect(screen.getByText('105 unread messages')).toBeInTheDocument();
+    // Counts stop at 100 per channel, so above 99 the label says no more than the badge.
+    expect(screen.getByText('More than 99 unread messages')).toBeInTheDocument();
   });
 
   it('reads counts from the space\'s own instance', () => {

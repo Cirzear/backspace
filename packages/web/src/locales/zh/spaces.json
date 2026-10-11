@@ -517,7 +517,8 @@
       },
       "left": "已退出空间",
       "leaveFailed": "退出空间失败",
-      "unreadMessages_other": "{{count}} 条未读消息"
+      "unreadMessages_other": "{{count}} 条未读消息",
+      "unreadMessagesOver99": "超过 99 条未读消息"
     },
     "dmList": {
       "explore": "探索",
@@ -549,7 +550,8 @@
       "spaceDeafened": "已被空间拒听",
       "permissionMuted": "已静音（无发言权限）"
     },
-    "dmUnreadMessages_other": "{{count}} 条未读私信"
+    "dmUnreadMessages_other": "{{count}} 条未读私信",
+    "dmUnreadMessagesOver99": "超过 99 条未读私信"
   },
   "channels": {
     "loading": "正在加载频道",

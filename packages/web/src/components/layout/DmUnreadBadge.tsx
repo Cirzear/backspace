@@ -21,5 +21,6 @@ export function DmUnreadBadge() {
     if (unread.has(dm.id)) total += counts[origins.get(dm.id) ?? '']?.[dm.id] ?? 0;
   }
   if (total === 0) return null;
-  return <UnreadCountBadge count={total} label={t('sidebar.dmUnreadMessages', { count: total })} />;
+  const label = total > 99 ? t('sidebar.dmUnreadMessagesOver99') : t('sidebar.dmUnreadMessages', { count: total });
+  return <UnreadCountBadge count={total} label={label} />;
 }

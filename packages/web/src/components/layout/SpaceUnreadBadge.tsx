@@ -27,5 +27,6 @@ export function SpaceUnreadBadge({ spaceId }: { spaceId: string }) {
     if (channelSpaces.get(channelId) === spaceId && unread.has(channelId)) total += count;
   }
   if (total === 0) return null;
-  return <UnreadCountBadge count={total} muted={muted} label={t('sidebar.space.unreadMessages', { count: total })} />;
+  const label = total > 99 ? t('sidebar.space.unreadMessagesOver99') : t('sidebar.space.unreadMessages', { count: total });
+  return <UnreadCountBadge count={total} muted={muted} label={label} />;
 }

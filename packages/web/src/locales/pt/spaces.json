@@ -533,7 +533,8 @@
       "leaveFailed": "Falha ao sair do espaço",
       "unreadMessages_one": "{{count}} mensagem não lida",
       "unreadMessages_many": "{{count}} mensagens não lidas",
-      "unreadMessages_other": "{{count}} mensagens não lidas"
+      "unreadMessages_other": "{{count}} mensagens não lidas",
+      "unreadMessagesOver99": "Mais de 99 mensagens não lidas"
     },
     "dmList": {
       "explore": "Explorar",
@@ -567,7 +568,8 @@
     },
     "dmUnreadMessages_one": "{{count}} mensagem direta não lida",
     "dmUnreadMessages_many": "{{count}} mensagens diretas não lidas",
-    "dmUnreadMessages_other": "{{count}} mensagens diretas não lidas"
+    "dmUnreadMessages_other": "{{count}} mensagens diretas não lidas",
+    "dmUnreadMessagesOver99": "Mais de 99 mensagens diretas não lidas"
   },
   "channels": {
     "loading": "Carregando canais",

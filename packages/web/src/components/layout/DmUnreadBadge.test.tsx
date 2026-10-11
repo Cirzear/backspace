@@ -24,11 +24,11 @@ describe('DM unread message badge', () => {
     expect(screen.getByText('8 unread direct messages')).toBeInTheDocument();
   });
 
-  it('caps the number at 99+ and keeps the exact count in the label', () => {
+  it('caps the number at 99+ and says so in the label', () => {
     useUnreadCountStore.getState().hydrate('', { a: 100 });
     render(<DmUnreadBadge />);
     expect(screen.getByText('99+')).toHaveAttribute('aria-hidden', 'true');
-    expect(screen.getByText('100 unread direct messages')).toBeInTheDocument();
+    expect(screen.getByText('More than 99 unread direct messages')).toBeInTheDocument();
   });
 
   it('uses the singular for one message', () => {

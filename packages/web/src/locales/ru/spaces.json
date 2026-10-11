@@ -541,7 +541,8 @@
       "unreadMessages_one": "{{count}} непрочитанное сообщение",
       "unreadMessages_few": "{{count}} непрочитанных сообщения",
       "unreadMessages_many": "{{count}} непрочитанных сообщений",
-      "unreadMessages_other": "{{count}} непрочитанного сообщения"
+      "unreadMessages_other": "{{count}} непрочитанного сообщения",
+      "unreadMessagesOver99": "Более 99 непрочитанных сообщений"
     },
     "dmList": {
       "explore": "Обзор",
@@ -576,7 +577,8 @@
     "dmUnreadMessages_one": "{{count}} непрочитанное личное сообщение",
     "dmUnreadMessages_few": "{{count}} непрочитанных личных сообщения",
     "dmUnreadMessages_many": "{{count}} непрочитанных личных сообщений",
-    "dmUnreadMessages_other": "{{count}} непрочитанного личного сообщения"
+    "dmUnreadMessages_other": "{{count}} непрочитанного личного сообщения",
+    "dmUnreadMessagesOver99": "Более 99 непрочитанных личных сообщений"
   },
   "channels": {
     "loading": "Загрузка каналов",
