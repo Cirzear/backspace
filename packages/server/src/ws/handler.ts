@@ -1,4 +1,3 @@
-import { channelUnreadCounts, dmUnreadCounts, unreadCountEvent } from './channelUnreadCounts.js';
 import type { FastifyInstance } from 'fastify';
 import type { WebSocket } from 'ws';
 import { verifyJwt } from '../utils/auth.js';
@@ -37,6 +36,7 @@ import { isGroupConversation } from '../utils/dmConversation.js';
 import { normalizeOriginForCompare } from '../utils/federationAuth.js';
 import { utcDay } from '../telemetry/day.js';
 import { memberRolesView, rolesForViewer } from '../utils/permissionDataView.js';
+import { canCountUnread, readyUnreadCounts, unreadCountFollowUp } from './channelUnreadCounts.js';
 
 // ─── Heartbeat State ──────────────────────────────────────────────────────────
 const wsIsAlive: WeakMap<WebSocket, boolean> = new WeakMap();
@@ -1220,36 +1220,54 @@ class ConnectionManager implements ReplicaSessionHost {
 
   // ─── Broadcasting ─────────────────────────────────────────────────────────
 
-  /** Send to a specific user (all their connections). */
-  sendToUser(userId: string, event: ServerEvent): void {
+  /**
+   * Send to a specific user (all their connections). An event that moves one
+   * of the user's unread counts is followed on the same sockets by its
+   * `channel_unread_count` (ws/channelUnreadCounts.ts). `channelPerms` are
+   * the user's permissions in the event's space channel when the caller has
+   * already computed them, so the count does not compute them again.
+   */
+  sendToUser(userId: string, event: ServerEvent, channelPerms?: bigint): void {
+    this.deliver(userId, event, JSON.stringify(event), channelPerms);
+  }
+
+  /** `sendToUser` with the event already serialized, for fan-outs that serialize it once. */
+  private deliver(userId: string, event: ServerEvent, message: string, channelPerms?: bigint): void {
     const connections = this.getUserConnections(userId);
-    const message = JSON.stringify(event);
-    const unread = connections.size ? unreadCountEvent(userId, event) : null;
-    const unreadMessage = unread ? JSON.stringify(unread) : null;
+    if (connections.size === 0) return;
+    const followUp = unreadCountFollowUp(userId, event, channelPerms);
+    const followUpMessage = followUp ? JSON.stringify(followUp) : null;
     for (const ws of connections) {
       if (ws.readyState === 1) { // WebSocket.OPEN
         ws.send(message);
-        if (unreadMessage) ws.send(unreadMessage);
+        if (followUpMessage) ws.send(followUpMessage);
       }
     }
   }
 
   /** Send to all members of a space. */
   sendToSpace(spaceId: string, event: ServerEvent, excludeUserId?: string): void {
+    const message = JSON.stringify(event);
     for (const [userId, spaceIds] of this.userSpaces) {
       if (spaceIds.has(spaceId) && userId !== excludeUserId) {
-        this.sendToUser(userId, event);
+        const connections = this.getUserConnections(userId);
+        for (const ws of connections) {
+          if (ws.readyState === 1) {
+            ws.send(message);
+          }
+        }
       }
     }
   }
 
   /** Send to space members who have VIEW_CHANNEL on the given channel. */
   sendToChannel(spaceId: string, channelId: string, event: ServerEvent, excludeUserId?: string): void {
+    const message = JSON.stringify(event);
     for (const [userId, spaceIds] of this.userSpaces) {
       if (spaceIds.has(spaceId) && userId !== excludeUserId) {
         const perms = computePermissions(userId, spaceId, channelId);
         if ((perms & PermissionBits.VIEW_CHANNEL) !== 0n) {
-          this.sendToUser(userId, event);
+          this.deliver(userId, event, message, perms);
         }
       }
     }
@@ -1540,6 +1558,8 @@ export function buildReadyPayload(userId: string): {
   const spaceIds = memberships.map(m => m.spaceId);
 
   const visibleChannelIdSet = new Set<string>();
+  // Space channels whose unread count the user may see (`canCountUnread`).
+  const countableChannelIds: string[] = [];
   const spaces: SpaceWithChannelsAndMembers[] = [];
 
   if (spaceIds.length > 0) {
@@ -1683,6 +1703,7 @@ export function buildReadyPayload(userId: string): {
         const hasView = (chPerms & PermissionBits.VIEW_CHANNEL) !== 0n || (chPerms & PermissionBits.ADMINISTRATOR) !== 0n;
         if (hasView) {
           visibleChannelIdSet.add(ch.id);
+          if (canCountUnread(chPerms)) countableChannelIds.push(ch.id);
           visibleChannels.push({
             id: ch.id,
             spaceId: ch.spaceId,
@@ -1979,7 +2000,12 @@ export function buildReadyPayload(userId: string): {
     pendingApprovalCount = countResult?.count ?? 0;
   }
 
-  const unreadCounts = { ...channelUnreadCounts(userId, spaces.flatMap(space => space.channels.map(channel => channel.id))), ...dmUnreadCounts(userId, dmChannels.map(dm => dm.id)) };
+  const unreadCounts = readyUnreadCounts(
+    userId,
+    countableChannelIds,
+    dmChannels.map(dm => dm.id),
+    new Map(readStateRows.map(rs => [rs.channelId, rs.lastReadMessageId])),
+  );
   return { unreadCounts, user, spaces, dmChannels, folders, spaceLayout, layoutUpdatedAt, voiceStates, voiceChannelElapsedSeconds, voiceUserStates, spaceVoiceStates, readStates, activeCalls, userActivities, userActivityIdentities, rejectedPeerOrigins, awaitingApprovalPeerOrigins, activePeerOrigins, pendingApprovalCount };
 }
 
