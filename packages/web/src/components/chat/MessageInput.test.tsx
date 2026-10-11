@@ -248,6 +248,45 @@ describe('MessageInput staged attachment controls', () => {
     expect(screen.getByRole('button', { name: 'Remove attachment' }).closest('.overflow-hidden')).toBeNull();
   });
 
+  it('revokes the preview URL of a picked image when its tile is removed', async () => {
+    const created = 'blob:preview-photo';
+    const revoke = vi.fn();
+    const originalCreate = Object.getOwnPropertyDescriptor(URL, 'createObjectURL');
+    const originalRevoke = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL');
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, writable: true, value: () => created });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, writable: true, value: revoke });
+    try {
+      vi.spyOn(useTransferStore.getState(), 'startUpload').mockImplementation(async (file, opts) => {
+        const transfer: Transfer = {
+          id: 'upload-picked',
+          type: 'upload',
+          state: 'completed',
+          file: { name: 'photo.png', size: file.size, mimetype: 'image/png' },
+          progress: { loaded: file.size, total: file.size },
+          channelId: opts.channelId,
+          tray: true,
+        };
+        useTransferStore.setState({ transfers: new Map([[transfer.id, transfer]]) });
+        return transfer.id;
+      });
+      const { container } = render(<MessageInput channelId="dm-1" channelName="@Bob" />);
+      const input = container.querySelector('input[type="file"]');
+      if (!(input instanceof HTMLInputElement)) throw new Error('file input not rendered');
+
+      fireEvent.change(input, { target: { files: [new File(['png'], 'photo.png', { type: 'image/png' })] } });
+      expect(await screen.findByRole('img', { name: 'photo.png' })).toHaveAttribute('src', created);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Remove attachment' }));
+      expect(revoke).toHaveBeenCalledWith(created);
+      expect(useComposerStore.getState().get('dm-1').stagedTransferIds).toEqual([]);
+    } finally {
+      if (originalCreate) Object.defineProperty(URL, 'createObjectURL', originalCreate);
+      else delete (URL as { createObjectURL?: unknown }).createObjectURL;
+      if (originalRevoke) Object.defineProperty(URL, 'revokeObjectURL', originalRevoke);
+      else delete (URL as { revokeObjectURL?: unknown }).revokeObjectURL;
+    }
+  });
+
   it('removes only this channel attachment while preserving other drafts and uploads', () => {
     const transfer = stageTransfer();
     const otherTransfer: Transfer = { ...transfer, id: 'upload-other', channelId: 'dm-2' };
