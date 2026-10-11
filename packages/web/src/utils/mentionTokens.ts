@@ -5,7 +5,8 @@
  * inline code spans (`` `...` ``) are matched first and kept as written. Every
  * client reader of mentions goes through this scan, so the rendered message
  * (`MarkdownRenderer`), the reply preview (`InlineMessageText`), the mention
- * highlight (`Message`) and the alert rule (`notificationFilters`) agree on
+ * highlight (`Message`), the composer's labels (`composerMentions`) and the
+ * alert rule (`notificationFilters`) agree on
  * which tokens are mentions. The server's relay rewrite
  * (`server/src/utils/federationMentions.ts`) uses the same expression.
  */

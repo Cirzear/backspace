@@ -1,10 +1,11 @@
 # Composer mention display
 
-The composer stores mention tokens as wire IDs (`<@userId>` and `<@&roleId>`), but paints their known names in a mirror over a native textarea. Sending, saved drafts and reply behavior continue to use the original wire text.
+The draft keeps the wire format: a mention is a `<@id>` token, and that is what is saved per channel, sent and counted against the length limit. The textarea shows each token whose id the channel knows as `@name`, painted by a mirror behind a transparent native textarea (`MentionTextarea`), so composition, selection, paste and the placeholder stay native.
 
-- User labels use the current channel's people and the canonical user view; a DM never borrows the roster of another space. A known self mention can be displayed even though DM autocomplete excludes self.
-- Editing or selecting through a displayed mention replaces the complete token, so partial edits cannot leave a corrupt user ID. Pasted display names are ordinary text, not implicit mentions.
-- Unknown IDs and tokens inside code remain literal. The textarea retains native composition, selection and paste handling; Enter during IME composition does not send or select a suggestion.
-- Mention suggestions are anchored at the typed @ rather than the composer edge; the mirror follows native scrolling.
+- Tokens are cut by the shared scan in `utils/mentionTokens.ts`, so a token inside code stays text, as it does in the sent message. Only `<@id>` is a mention; there are no role or everyone mentions on the wire, and the composer paints none.
+- A token is named through `useChannelUserResolver` (`utils/channelUser.ts`), the same roster and user view `MentionBadge` reads. A DM's tokens are read in its origin's id space, the signed-in user included. An id the channel does not know is shown as written.
+- An edit or selection that touches a shown mention replaces the whole token, so no partial id is left behind. Typed or pasted `@name` text is text, not a mention; mentions are made with the picker.
+- Enter during an IME composition neither sends nor picks a suggestion.
+- The desktop picker is anchored at the typed `@` (a marker in the mirror) and re-measures it after every render (`useFloatingPosition`'s `followAnchor`).
 
-This feature adds no notification settings, mass-mention permissions, unread counts, member menus, or changes to send/draft lifecycle.
+Editing a sent message uses its own textarea in `Message.tsx`, which still shows the raw tokens.
