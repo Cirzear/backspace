@@ -339,7 +339,7 @@ describe('mass-mention preference migration', () => {
     const migrationsDir = path.resolve(__dirname, '../../drizzle');
     try {
       // Exercise the exact pre-feature schema, rather than a hand-written approximation.
-      applyMigrations(upgrade, '0026_notification_settings.sql');
+      applyMigrations(upgrade, '0027_unread_count_indexes.sql');
       const previousDb = drizzle(upgrade, { schema });
       previousDb.insert(schema.users).values({ id: 'member', username: 'member', passwordHash: 'x', createdAt: NOW }).run();
       previousDb.insert(schema.spaces).values({ id: 'space', name: 'space', ownerId: 'member', createdAt: NOW }).run();
@@ -349,7 +349,7 @@ describe('mass-mention preference migration', () => {
       upgrade.prepare('INSERT INTO notification_settings (user_id, space_id, channel_id, level, muted, muted_until, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
         .run('member', 'space', 'channel', 'nothing', 0, null, NOW);
       const previous = upgrade.prepare('SELECT * FROM notification_settings ORDER BY channel_id').all();
-      upgrade.exec(fs.readFileSync(path.join(migrationsDir, '0027_mass_mention_preferences.sql'), 'utf8'));
+      upgrade.exec(fs.readFileSync(path.join(migrationsDir, '0028_mass_mention_preferences.sql'), 'utf8'));
       const upgraded = upgrade.prepare('SELECT * FROM notification_settings ORDER BY channel_id').all();
       expect(upgraded).toEqual(previous.map(row => ({ ...(row as Record<string, unknown>), suppress_everyone: 0, suppress_roles: 0 })));
     } finally {
