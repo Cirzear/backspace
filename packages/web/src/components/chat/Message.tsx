@@ -24,7 +24,7 @@ import { EmojiPicker } from './EmojiPicker';
 import { MobilePickerSheet } from './MobilePickerSheet';
 import { hasPermissionBit, PermissionBits } from '../../utils/permissions';
 import { isDeletedPartnerDm } from '../../utils/dmFormatters';
-import { isFederationGlobeApplicable, isMine, userDisplayName } from '../../utils/identity';
+import { isFederationGlobeApplicable, isMine, spaceMemberName } from '../../utils/identity';
 import { useCanonicalUserView } from '../../utils/userViewLookup';
 import { useSelfIdInChannel } from '../../utils/channelUser';
 import { contentMentionsAny } from '../../utils/mentionTokens';
@@ -426,15 +426,20 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     ? currentUser
     : (_rawMsgUser ? _canonicalMsgUser : message.user);
   const displayOrigin = isAuthor && currentUser ? '' : messageOrigin;
-  const displayName = userDisplayName(displayIdentity);
 
   const spaces = useSpaceStore((s) => s.spaces);
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId);
   const ownerId = spaces.find(s => s.id === currentSpaceId)?.ownerId;
 
+  // The author's row in the space's roster: it gives the name colour and the
+  // nickname. message.userId is the id on the space's instance, the id the
+  // loaded member list carries. A DM has no roster.
+  const spaceMemberOf = (userId: string) => (isDmMessage ? undefined : members.find(m => m.userId === userId));
+  const displayName = spaceMemberName(spaceMemberOf(message.userId), displayIdentity);
+
   const getMemberDisplayColor = (userId: string) => {
     if (isDmMessage) return { color: '#d8d8de' };
-    const member = members.find(m => m.userId === userId);
+    const member = spaceMemberOf(userId);
     return { color: memberNameColor(member ?? { userId, roles: [] }, ownerId) ?? '#d8d8de' };
   };
 
@@ -513,7 +518,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
           const replyIdentity = isMine(replyTo.user, messageOrigin, self) && currentUser
             ? currentUser
             : (_rawReplyUser ? _canonicalReplyUser : replyTo.user);
-          const replyDisplayName = userDisplayName(replyIdentity);
+          const replyDisplayName = spaceMemberName(spaceMemberOf(replyTo.userId), replyIdentity);
           const preview = (
             <>
               <Avatar src={replyIdentity.avatar} name={replyDisplayName} size={16} user={replyIdentity} />

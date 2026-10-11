@@ -221,7 +221,7 @@ export function isSelfInChannel(channelId: string, userId: string): boolean {
 }
 
 /**
- * Candidates whose shown name or username contains `query`, case-insensitive,
+ * Candidates whose shown name, space nickname or username contains `query`, case-insensitive,
  * at most `limit` of them. Matches the best-known view as well as the row the
  * origin delivered, so a stub whose own row has no display name is found by
  * the name the picker shows for it.
@@ -235,7 +235,8 @@ export function filterMentionCandidates(
   const matches = (user: User): boolean =>
     (user.displayName ?? '').toLowerCase().includes(q) || user.username.toLowerCase().includes(q);
   return candidates
-    .filter((c) => matches(c.user) || matches(getCanonicalUserView(c.user, c.origin)))
+    .filter((c) => (c.member?.nickname ?? '').toLowerCase().includes(q)
+      || matches(c.user) || matches(getCanonicalUserView(c.user, c.origin)))
     .slice(0, limit);
 }
 

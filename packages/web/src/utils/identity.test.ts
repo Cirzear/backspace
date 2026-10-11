@@ -8,6 +8,7 @@ import {
   isFederationGlobeApplicable,
   hostOf,
   userDisplayName,
+  spaceMemberName,
   ownRowAt,
   isMine,
   selfIdentityOf,
@@ -250,5 +251,14 @@ describe('ownRowAt', () => {
   it("is the session row's identity on the page's own instance", () => {
     const session = { id: 'n-1', homeInstance: null, homeUserId: null };
     expect(ownRowAt(session, '', 'n-1')).toEqual(session);
+  });
+});
+
+describe('spaceMemberName', () => {
+  it('names a member by their nickname in the space, else by userDisplayName', () => {
+    const user = { displayName: null, username: 'kai@orbit.example' };
+    expect(spaceMemberName({ nickname: 'Pilot' }, user)).toBe('Pilot');
+    expect(spaceMemberName({ nickname: null }, user)).toBe('kai');
+    expect(spaceMemberName(null, { displayName: 'Kai', username: 'kai' })).toBe('Kai');
   });
 });
