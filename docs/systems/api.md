@@ -130,9 +130,10 @@ PATCH  /spaces/:id/transfer-ownership  { newOwnerId }                          �
 ### Members
 ```
 GET    /spaces/:id/members                               → { members[] }
-PATCH  /spaces/:id/members/:uid  { roleIds }             → { member }  [MANAGE_ROLES]
+PATCH  /spaces/:id/members/:uid  { roleIds?, nickname? } → { member }  [roleIds: MANAGE_ROLES; nickname: self, or MANAGE_SPACE]
 DELETE /spaces/:id/members/:uid                          → { success }  [KICK_MEMBERS|self]
 ```
+`PATCH /members/:uid` takes `roleIds`, `nickname` or both; a body with neither, or one that is not an object, answers `400 validation_failed`. Every field is checked before anything is written, and both are written in one transaction, so a refused field leaves the other unchanged too. `nickname` is the member's name in this space (`space_members.nickname`); the account name is not touched. Anyone may set their own. Setting another member's needs `MANAGE_SPACE` (`403 missing_permission`), never reaches the owner (`403 space_owner_only`) and needs a higher rank (`403 role_hierarchy`). The value goes through `normalizeMemberNickname` (`packages/shared/src/constants.ts`): `null` or a string that trims to nothing clears it; otherwise it is trimmed and refused with `400 member_nickname_invalid` (`details: { max }`) when longer than `MAX_MEMBER_NICKNAME_LENGTH` (32 UTF-16 code units), when it holds a control character, a line or paragraph separator or a bidirectional control, or when it has no visible character. The answer is followed by `member_updated` to the space (websocket.md); a role change is also followed by `space_access_changed`. Instances up to 1.9.x read only `roleIds` and refuse a nickname-only body (`role_ids_invalid`, `cannot_change_own_roles` or `missing_permission`).
 
 ### Bans
 ```
