@@ -591,6 +591,19 @@
     "loading": "Loading members",
     "groups": {
       "owner": "Owner"
+    },
+    "menu": {
+      "profile": "View profile",
+      "nickname": "Change space nickname…",
+      "roles": "Roles"
+    },
+    "nickname": {
+      "title": "Change space nickname",
+      "label": "Space nickname",
+      "descriptionSelf": "Only applies in this space. Your account name and your nicknames in other spaces stay the same. Leave it empty to show your account name.",
+      "descriptionOther": "Only applies in this space. The account name of {{name}} stays the same. Leave it empty to show the account name.",
+      "reset": "Reset to account name",
+      "shownAs": "Nickname in this space: {{nickname}}"
     }
   },
   "mobile": {

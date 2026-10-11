@@ -208,6 +208,7 @@ its next follow-up or the next `ready`; its unread dot shows meanwhile.
 |------|--------|-------|
 | `space_updated` | space | space |
 | `member_joined` | spaceId, member: MemberWithUser | space |
+| `member_updated` | spaceId, member: MemberWithUser | space |
 | `member_left` | spaceId, userId | space |
 | `member_banned` | spaceId, reason | user (banned) |
 | `channel_created` | channel, spaceId | space |
@@ -233,6 +234,17 @@ cleared. Clients load the full list with `GET /users/@me/notification-settings`
 when each instance's `ready` arrives; the `ready` payload itself does not
 carry it. Mixed versions: an old client ignores the event; a new client on an
 old server gets a 404 from the list route, logs it and uses the defaults.
+
+`member_updated` follows every successful `PATCH /spaces/:id/members/:uid`
+(a nickname, a role set or both) and carries the member row the route
+answered: `nickname`, and `roles` with display fields only (permissions.md,
+"Who receives role and override data"). The client applies it only when the
+space with that id and the origin of the socket that delivered it is the
+loaded space (`applySpaceMemberUpdate` in `stores/spaceMemberUpdates.ts`), and
+takes only `nickname` and `roles` from it; the user row and presence have
+their own events. The HTTP answer goes through the same function. Mixed
+versions: an older client ignores the event; an older server does not send
+it, and its role changes still arrive through `space_access_changed`.
 
 `space_access_changed` follows any change to the space's roles or to a
 member's roles: `POST`, `PATCH`, `DELETE /spaces/:id/roles[/:rid]`,

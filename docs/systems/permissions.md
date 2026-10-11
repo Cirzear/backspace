@@ -162,7 +162,7 @@ Moderating another member needs a strictly higher rank than theirs:
 |---|---|
 | Nobody acts on the space owner | kick, ban, role changes, voice moderation |
 | The owner and instance admins (`isAdmin`) are exempt | everything below |
-| Actor's rank > target's rank | kick (`DELETE /members/:uid`, not leaving), ban, `PATCH /members/:uid`, `POST`/`DELETE /members/:uid/roles`, WS `voice_space_mute`, `voice_space_deafen`, `voice_move`, `voice_disconnect` |
+| Actor's rank > target's rank | kick (`DELETE /members/:uid`, not leaving), ban, `PATCH /members/:uid` (roles, and another member's nickname), `POST`/`DELETE /members/:uid/roles`, WS `voice_space_mute`, `voice_space_deafen`, `voice_move`, `voice_disconnect` |
 | Role position < actor's rank | assigning or removing that role (each role a `PATCH /members/:uid` adds or removes), editing or deleting it, moving it or moving another role to that position, creating a role (new roles start at 1), writing or deleting a channel or category override on that role (`PUT`/`DELETE /channels/:id/overrides`, `/categories/:id/overrides`; @everyone is position 0) |
 | Actor's rank > target's rank | writing or deleting a channel or category override on another member (an override on oneself is not moderation) |
 
@@ -496,6 +496,7 @@ rule (above). Every gated surface:
 | Surface | File | Gating |
 |---|---|---|
 | Members list: kick and ban | `spaceSettingsPanels/MembersPanel.tsx` | hidden for members ranked at or above the viewer |
+| Member list right-click menu | `layout/memberMenu/useMemberContextMenu.tsx` | Change nickname: always for oneself; for another member with MANAGE_SPACE when they are not the owner and rank below the viewer. Roles submenu: `viewerCanEditMemberRoles`, listing the roles below the viewer's top role. Kick and Ban: KICK_MEMBERS / BAN_MEMBERS, not oneself or the owner, member ranked below the viewer |
 | Members list: role checkboxes | `spaceSettingsPanels/MembersPanel.tsx` | roles at or above the viewer's top role disabled (`settings.members.rolesAboveYou`); a role the member does not have yet and that carries a bit the viewer does not hold disabled (`settings.members.rolesUnheld`); each reason shown under the list with a lock, and as the row's title; the editor does not open for members ranked at or above the viewer |
 | Profile card: Edit Roles | `ui/UserProfilePopout.tsx` | desktop only; offered for a member of the loaded space when `viewerCanEditMemberRoles` holds: the viewer holds MANAGE_ROLES, the member is neither the viewer (by their id on the space's instance) nor the owner and ranks below the viewer, and some role other than @everyone ranks below the viewer; opens the member role editor |
 | Member role editor: role checkboxes | `modals/MemberRolesModal.tsx` | the Members list rule: roles at or above the viewer's top role disabled (`settings.members.rolesAboveYou`); a role the member does not have yet and that carries a bit the viewer does not hold disabled (`settings.members.rolesUnheld`); each reason shown under the list with a lock, and as the checkbox's title |
@@ -570,6 +571,7 @@ role, `memberRolesView` a member row's roles. Every send site goes through it:
 | `POST /api/spaces/:id/roles`, `PATCH /api/spaces/:id/roles/:rid` answers | the actor | `roleView`, with the actor's permissions after the change (an actor who switched off their own `MANAGE_ROLES` gets no bits back) |
 | `GET /channels/:id/overrides`, `GET /categories/:id/overrides` | managers | refused unless `viewerReadsPermissionData` |
 | `member_joined` | the space | a new member has no roles: `roles: []` |
+| `member_updated` | the space | `memberRolesView`, the same row the `PATCH /members/:uid` answer carries |
 | `space_access_changed` | the space; after an instance admin change, that user alone | carries only `spaceId` |
 | `GET /api/spaces/explore`, `GET /api/spaces/invite/:code/preview`, `GET /api/directory/spaces` | anyone | carry no role or override data |
 
