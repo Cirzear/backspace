@@ -9,6 +9,12 @@
     "homeInstance": "Heimatinstanz: {{domain}}",
     "logOutConfirm": "Möchtest du dich wirklich abmelden?"
   },
+  "chat": {
+    "channelFallback": "Kanal",
+    "openCall": "Anruf öffnen",
+    "cancelCall": "Anruf abbrechen",
+    "unknownChannel": "Kanal"
+  },
   "instance": {
     "title": "Instanz auswählen",
     "description": "Verbinde dich mit einem Backspace-Server, dem du vertraust.",
@@ -30,16 +36,5 @@
     "title": "Backspace konnte nicht starten",
     "description": "Start oder sicherer Sitzungsspeicher fehlgeschlagen. Die App wurde zum Schutz deiner Sitzung blockiert.",
     "reload": "Neu laden"
-  },
-  "nav": {
-    "spaces": "Räume",
-    "dms": "Direktnachrichten",
-    "you": "Du"
-  },
-  "chat": {
-    "channelFallback": "Kanal",
-    "openCall": "Anruf öffnen",
-    "cancelCall": "Anruf abbrechen",
-    "unknownChannel": "Kanal"
   }
 }

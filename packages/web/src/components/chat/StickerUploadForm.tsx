@@ -1,20 +1,25 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { StickerUploadPreview, type UploadItem } from './StickerUploadPreview';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useFormatters } from '../../i18n/formatters';
-import { MAX_STICKER_BYTES, type PersonalSticker } from '@backspace/shared/src/stickers';
+import { MAX_STICKER_BATCH, MAX_STICKER_BYTES, MAX_STICKER_NAME_LENGTH, type PersonalSticker } from '@backspace/shared/src/stickers';
 import { uploadSticker } from './stickerUpload';
+import { describeError } from '../../i18n/errors';
+import { HttpError } from '../../api/client';
 
 interface StickerUploadFormProps {
-  onAdded: (stickers: PersonalSticker | PersonalSticker[]) => void;
+  /**
+   * The stickers the server accepted. `complete` is false when some images
+   * were refused; those stay in the form with their reason, so the form stays open.
+   */
+  onAdded: (stickers: PersonalSticker[], complete: boolean) => void;
   onCancel: () => void;
+  /** How many more stickers the collection can take. */
+  capacity: number;
 }
 
-interface UploadItem {
-  id: string;
-  file: File;
-  preview: string;
-  name: string;
-  ready: boolean;
+/** A refusal that every later upload in the batch would meet too. */
+function stopsBatch(error: unknown): boolean {
+  return error instanceof HttpError && (error.status === 429 || error.code === 'sticker_collection_full');
 }
 
 /** Pre-validates each file before creating blob URLs to fail fast on invalid format or size. */
@@ -35,26 +40,28 @@ function createUploadItem(file: File): UploadItem {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
     file,
     preview: URL.createObjectURL(file),
-    name: file.name.replace(/\.[^.]+$/, '').slice(0, 100),
+    name: file.name.replace(/\.[^.]+$/, '').slice(0, MAX_STICKER_NAME_LENGTH),
     ready: false,
+    error: null,
   };
 }
 
 /**
  * Supports single and batch sticker uploads.
  * Original files stay local until explicit confirmation; animated previews are never flattened.
+ * A batch is sent one image at a time: what the server accepted leaves the
+ * form, what it refused stays with its reason.
  */
-export function StickerUploadForm({ onAdded, onCancel }: StickerUploadFormProps) {
+export function StickerUploadForm({ onAdded, onCancel, capacity }: StickerUploadFormProps) {
   const { t } = useTranslation('chat');
-  const { formatBytes } = useFormatters();
   const inputRef = useRef<HTMLInputElement>(null);
   const chooseRef = useRef<HTMLButtonElement>(null);
   const selectModeRef = useRef<'replace' | 'append'>('replace');
-  const nameId = useId();
 
   const [items, setItems] = useState<UploadItem[]>([]);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
   const [error, setError] = useState('');
 
   const itemsRef = useRef(items);
@@ -102,6 +109,14 @@ export function StickerUploadForm({ onAdded, onCancel }: StickerUploadFormProps)
       setError(t(errorKey));
       return;
     }
+    const limit = Math.min(MAX_STICKER_BATCH, capacity);
+    const total = mode === 'append' ? itemsRef.current.length + files.length : files.length;
+    if (total > limit) {
+      setError(limit < MAX_STICKER_BATCH
+        ? t('stickers.capacityLimit', { count: limit })
+        : t('stickers.batchLimit', { count: limit }));
+      return;
+    }
     const newItems = files.map(createUploadItem);
     if (mode === 'append') {
       updateItems(prev => [...prev, ...newItems]);
@@ -111,7 +126,7 @@ export function StickerUploadForm({ onAdded, onCancel }: StickerUploadFormProps)
   };
 
   const updateName = (id: string, name: string) => {
-    setItems(prev => prev.map(item => (item.id === id ? { ...item, name } : item)));
+    setItems(prev => prev.map(item => (item.id === id ? { ...item, name, error: null } : item)));
   };
 
   const markReady = (id: string, ready: boolean) => {
@@ -132,22 +147,43 @@ export function StickerUploadForm({ onAdded, onCancel }: StickerUploadFormProps)
     submitting.current = true;
     setBusy(true);
     setError('');
-    try {
-      const results = await Promise.all(
-        items.map(item => uploadSticker(item.file, item.name.trim()))
-      );
-      if (active.current) {
-        onAdded(results.length === 1 ? results[0]! : results);
+    const batch = items;
+    const added: PersonalSticker[] = [];
+    const accepted = new Set<string>();
+    const refused = new Map<string, string>();
+    let stopped: string | null = null;
+    for (const [index, item] of batch.entries()) {
+      if (!active.current) break;
+      setProgress({ current: index + 1, total: batch.length });
+      try {
+        added.push(await uploadSticker(item.file, item.name.trim()));
+        accepted.add(item.id);
+      } catch (err) {
+        if (stopsBatch(err)) {
+          stopped = describeError(err);
+          break;
+        }
+        refused.set(item.id, describeError(err));
       }
-    } catch (err) {
-      if (active.current) setError((err as Error).message);
-    } finally {
-      submitting.current = false;
-      if (active.current) setBusy(false);
+    }
+    submitting.current = false;
+    if (!active.current) return;
+    setProgress(null);
+    setBusy(false);
+    updateItems(prev => prev
+      .filter(item => !accepted.has(item.id))
+      .map(item => ({ ...item, error: refused.get(item.id) ?? null })));
+    if (stopped) {
+      setError(stopped);
+    } else if (refused.size === 1 && batch.length === 1) {
+      setError([...refused.values()][0]!);
+    } else if (refused.size > 0) {
+      setError(t('stickers.batchFailed', { count: refused.size }));
+    }
+    if (added.length > 0 || (!stopped && refused.size === 0)) {
+      onAdded(added, !stopped && refused.size === 0);
     }
   };
-
-  const singleItem = items.length === 1 ? items[0] : null;
 
   return (
     <form
@@ -191,207 +227,11 @@ export function StickerUploadForm({ onAdded, onCancel }: StickerUploadFormProps)
           }}
         />
 
-        {items.length === 0 && (
-          <button
-            ref={chooseRef}
-            type="button"
-            disabled={busy}
-            onClick={() => openPicker('replace')}
-            aria-label={t('stickers.chooseImage')}
-            onDragOver={event => {
-              event.preventDefault();
-              event.stopPropagation();
-              if (!busy) setDragging(true);
-            }}
-            onDragLeave={event => {
-              if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false);
-            }}
-            onDrop={event => {
-              event.preventDefault();
-              event.stopPropagation();
-              choose(Array.from(event.dataTransfer.files), 'replace');
-            }}
-            className={`sticker-dropzone ${dragging ? 'sticker-dropzone-active' : ''}`}
-          >
-            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent-primary/10 text-accent-primary">
-              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-                <rect x="3" y="3" width="18" height="18" rx="5" />
-                <path d="m3 16 5-5 5 5 3-3 5 5" />
-                <circle cx="15.5" cy="8.5" r="1.5" />
-              </svg>
-            </span>
-            <span className="text-sm font-medium">{t('stickers.dropImage')}</span>
-            <span className="text-xs text-txt-tertiary">{t('stickers.pasteHint')}</span>
-          </button>
-        )}
-
-        {singleItem && (
-          <>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => openPicker('replace')}
-              aria-label={t('stickers.replace')}
-              onDragOver={event => {
-                event.preventDefault();
-                event.stopPropagation();
-                if (!busy) setDragging(true);
-              }}
-              onDragLeave={event => {
-                if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false);
-              }}
-              onDrop={event => {
-                event.preventDefault();
-                event.stopPropagation();
-                choose(Array.from(event.dataTransfer.files), 'replace');
-              }}
-              className={`sticker-dropzone ${dragging ? 'sticker-dropzone-active' : ''} sticker-checkerboard`}
-            >
-              <img
-                key={singleItem.preview}
-                src={singleItem.preview}
-                alt={t('stickers.preview')}
-                className="h-36 w-full object-contain"
-                onLoad={() => markReady(singleItem.id, true)}
-                onError={() => {
-                  markReady(singleItem.id, false);
-                  setError(t('stickers.invalidImage'));
-                }}
-              />
-            </button>
-            <div className="flex items-center justify-between gap-3 text-xs text-txt-tertiary">
-              <span className="truncate" title={singleItem.file.name}>{singleItem.file.name}</span>
-              <div className="flex shrink-0 items-center gap-2">
-                <button
-                  type="button"
-                  disabled={busy}
-                  className="text-txt-link hover:underline"
-                  onClick={() => openPicker('append')}
-                >
-                  + {t('stickers.addMore')}
-                </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  className="text-txt-link hover:underline"
-                  onClick={() => openPicker('replace')}
-                >
-                  {t('stickers.replace')}
-                </button>
-              </div>
-            </div>
-            <div>
-              <label htmlFor={nameId} className="mb-1.5 block text-xs font-medium text-txt-secondary">
-                {t('stickers.name')}
-              </label>
-              <input
-                id={nameId}
-                value={singleItem.name}
-                disabled={busy}
-                maxLength={100}
-                onChange={event => updateName(singleItem.id, event.target.value)}
-                className="input-search w-full"
-                placeholder={t('stickers.name')}
-              />
-            </div>
-          </>
-        )}
-
-        {items.length > 1 && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-medium text-txt-secondary">
-                {t('stickers.selectedCount', { count: items.length })}
-              </span>
-              <button
-                type="button"
-                disabled={busy}
-                className="text-xs text-accent-primary hover:underline font-medium"
-                onClick={() => openPicker('append')}
-              >
-                + {t('stickers.addMore')}
-              </button>
-            </div>
-
-            <div className="space-y-2 max-h-56 overflow-y-auto pr-1 scrollbar-thin">
-              {items.map((item, index) => (
-                <div key={item.id} className="flex items-center gap-2.5 rounded-lg border border-border-soft bg-surface-elevated/50 p-2">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border-soft bg-surface-input sticker-checkerboard">
-                    <img
-                      src={item.preview}
-                      alt={t('stickers.preview')}
-                      className="h-full w-full object-contain"
-                      onLoad={() => markReady(item.id, true)}
-                      onError={() => {
-                        markReady(item.id, false);
-                        setError(t('stickers.invalidImage'));
-                      }}
-                    />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="mb-1 flex items-center justify-between gap-1 text-[11px] text-txt-tertiary">
-                      <span className="truncate" title={item.file.name}>{item.file.name}</span>
-                      <span className="shrink-0">{formatBytes(item.file.size)}</span>
-                    </div>
-                    <input
-                      value={item.name}
-                      disabled={busy}
-                      maxLength={100}
-                      placeholder={t('stickers.name')}
-                      aria-label={`${t('stickers.name')} #${index + 1}`}
-                      onChange={event => updateName(item.id, event.target.value)}
-                      className="input-search h-7 w-full text-xs px-2 py-1"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => removeItem(item.id)}
-                    className="sticker-icon-button shrink-0 text-txt-tertiary hover:text-txt-danger"
-                    aria-label={t('stickers.removeNamed', { name: item.name || item.file.name })}
-                  >
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                      <path d="m6 6 12 12M6 18 18 6" />
-                    </svg>
-                  </button>
-                </div>
-              ))}
-            </div>
-
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => openPicker('append')}
-              onKeyDown={e => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  openPicker('append');
-                }
-              }}
-              onDragOver={event => {
-                event.preventDefault();
-                event.stopPropagation();
-                if (!busy) setDragging(true);
-              }}
-              onDragLeave={event => {
-                if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false);
-              }}
-              onDrop={event => {
-                event.preventDefault();
-                event.stopPropagation();
-                choose(Array.from(event.dataTransfer.files), 'append');
-              }}
-              className={`flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-dashed py-2.5 text-xs text-txt-tertiary transition-colors hover:border-accent-primary/50 hover:text-txt-primary ${
-                dragging ? 'border-accent-primary bg-accent-primary/5 text-accent-primary' : 'border-border-soft'
-              }`}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-              <span>{t('stickers.dropMore')}</span>
-            </div>
-          </div>
-        )}
+        <StickerUploadPreview
+          items={items} busy={busy} dragging={dragging} chooseRef={chooseRef}
+          openPicker={openPicker} choose={choose} setDragging={setDragging}
+          markReady={markReady} updateName={updateName} removeItem={removeItem} setError={setError}
+        />
 
         {items.length === 0 && (
           <p className="text-center text-[11px] text-txt-tertiary">{t('stickers.limits')}</p>
@@ -410,7 +250,11 @@ export function StickerUploadForm({ onAdded, onCancel }: StickerUploadFormProps)
         </button>
         <button type="submit" disabled={!isAllReady || busy} className="sticker-primary-button">
           {busy && <span className="sticker-spinner" aria-hidden="true" />}
-          <span role={busy ? 'status' : undefined}>{t(busy ? 'stickers.uploading' : 'stickers.save')}</span>
+          <span role={busy ? 'status' : undefined}>
+            {progress && progress.total > 1
+              ? t('stickers.uploadingProgress', progress)
+              : t(busy ? 'stickers.uploading' : 'stickers.save')}
+          </span>
         </button>
       </div>
     </form>

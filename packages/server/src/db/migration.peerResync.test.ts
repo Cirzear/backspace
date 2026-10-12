@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.resolve(__dirname, '../../drizzle');
-const TAG = '0027_peer_resync';
+const TAG = '0022_peer_resync';
 
 function statementsOf(file: string): string[] {
   return fs.readFileSync(path.join(MIGRATIONS_DIR, file), 'utf8')

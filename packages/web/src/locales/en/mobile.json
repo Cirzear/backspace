@@ -9,6 +9,12 @@
     "homeInstance": "Home instance: {{domain}}",
     "logOutConfirm": "Are you sure you want to log out?"
   },
+  "chat": {
+    "channelFallback": "Channel",
+    "openCall": "Open call",
+    "cancelCall": "Cancel call",
+    "unknownChannel": "channel"
+  },
   "instance": {
     "title": "Choose your instance",
     "description": "Connect to the Backspace server you trust.",
@@ -30,16 +36,5 @@
     "title": "Unable to start Backspace",
     "description": "Startup or secure session storage failed. The app is blocked to protect your session.",
     "reload": "Reload"
-  },
-  "nav": {
-    "spaces": "Spaces",
-    "dms": "DMs",
-    "you": "You"
-  },
-  "chat": {
-    "channelFallback": "Channel",
-    "openCall": "Open call",
-    "cancelCall": "Cancel call",
-    "unknownChannel": "channel"
   }
 }

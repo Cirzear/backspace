@@ -4,6 +4,7 @@ import { usePendingMessageStore } from './pendingMessageStore';
 import { useTransferStore } from './transferStore';
 import { getSessionItem, setSessionItem, removeSessionItem, flushSessionStorage } from '../platform/sessionStorage';
 import { useChannelActivityStore } from './channelActivityStore';
+import { useChannelPokeStore } from './channelPokeStore';
 import { useNotificationStore } from './notificationStore';
 import { useUnreadCountStore } from './unreadCountStore';
 import { useMemo } from 'react';
@@ -93,6 +94,7 @@ function resetUserStores() {
   useSpaceStore.getState().reset();
   useNotificationStore.getState().reset();
   useChannelActivityStore.getState().reset();
+  useChannelPokeStore.getState().reset();
   useUnreadCountStore.getState().reset();
   useSocialStore.getState().reset();
   useVoiceStore.getState().resetSession();

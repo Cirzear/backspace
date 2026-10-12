@@ -9,7 +9,7 @@ vi.mock('../../audio/AudioManager', () => ({
 
 import { api } from '../../api/client';
 import { useAuthStore } from '../../stores/authStore';
-import { setMyUserIdForOrigin, useSpaceStore, type TaggedSpace } from '../../stores/spaceStore';
+import { useSpaceStore, type TaggedSpace } from '../../stores/spaceStore';
 import { OwnerTitleHeading } from './OwnerTitleHeading';
 
 const space: TaggedSpace = {
@@ -32,7 +32,7 @@ beforeEach(() => {
   vi.restoreAllMocks();
   useSpaceStore.getState().reset();
   useSpaceStore.setState({ spaces: [{ ...space }] });
-  useAuthStore.setState({ user });
+  useAuthStore.setState({ user, myRowIds: new Map() });
 });
 
 describe('owner title heading', () => {
@@ -41,7 +41,8 @@ describe('owner title heading', () => {
     expect(screen.getByRole('heading', { name: 'Owner — 1' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Edit owner title' }));
     expect(screen.getByLabelText('Owner title')).toHaveValue('');
-    expect(screen.getByRole('button', { name: 'Reset to default' })).toBeDisabled();
+    // Reset shows only while a title is set, as in the nickname dialog.
+    expect(screen.queryByRole('button', { name: 'Reset to default' })).not.toBeInTheDocument();
   });
 
   it('saves through the API and displays only the confirmed server response', async () => {
@@ -70,6 +71,17 @@ describe('owner title heading', () => {
     expect(screen.getByRole('heading', { name: 'Owner — 1' })).toBeInTheDocument();
   });
 
+  it('closes without a write when the title is unchanged', async () => {
+    useSpaceStore.setState({ spaces: [{ ...space, ownerTitle: 'Captain' }] });
+    const update = vi.spyOn(api.spaces, 'update');
+    render(<Heading />);
+    await userEvent.click(screen.getByRole('button', { name: 'Edit owner title' }));
+    await userEvent.type(screen.getByLabelText('Owner title'), '  ');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(update).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Owner title')).not.toBeInTheDocument();
+  });
+
   it('does not save when cancelled', async () => {
     const update = vi.spyOn(api.spaces, 'update');
     render(<Heading />);
@@ -86,7 +98,17 @@ describe('owner title heading', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Edit owner title' }));
     await userEvent.type(screen.getByLabelText('Owner title'), '   ');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
-    expect(screen.getByRole('alert')).toHaveTextContent('1–32');
+    expect(screen.getByRole('alert')).toHaveTextContent('1 to 32');
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a title the server would refuse, such as one with only invisible characters', async () => {
+    const update = vi.spyOn(api.spaces, 'update');
+    render(<Heading />);
+    await userEvent.click(screen.getByRole('button', { name: 'Edit owner title' }));
+    await userEvent.type(screen.getByLabelText('Owner title'), '\u200B\u200B');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('at least one visible character');
     expect(update).not.toHaveBeenCalled();
   });
 
@@ -110,10 +132,29 @@ describe('owner title heading', () => {
 
   it('uses the owner’s ID on the remote host rather than their home account ID', () => {
     const origin = 'https://peer.example';
-    setMyUserIdForOrigin(origin, 'remote-owner');
+    useAuthStore.getState().recordMyRow(origin, 'remote-owner');
     useSpaceStore.setState({ spaces: [{ ...space, ownerId: 'remote-owner', _instanceOrigin: origin }] });
     render(<Heading />);
     expect(screen.getByRole('button', { name: 'Edit owner title' })).toBeInTheDocument();
+  });
+
+  it('offers the editor once the remote host names the signed-in user, without a remount', async () => {
+    const origin = 'https://peer.example';
+    useSpaceStore.setState({ spaces: [{ ...space, ownerId: 'remote-owner', _instanceOrigin: origin }] });
+    render(<Heading />);
+    expect(screen.queryByRole('button', { name: 'Edit owner title' })).not.toBeInTheDocument();
+    act(() => useAuthStore.getState().recordMyRow(origin, 'remote-owner'));
+    expect(await screen.findByRole('button', { name: 'Edit owner title' })).toBeInTheDocument();
+  });
+
+  it('shows the default heading and no editor for a host that does not send owner titles', () => {
+    // A 1.10.0 host omits the field and drops it from a PATCH without an error.
+    const olderHostSpace: Partial<TaggedSpace> = { ...space };
+    delete olderHostSpace.ownerTitle;
+    useSpaceStore.setState({ spaces: [olderHostSpace as TaggedSpace] });
+    render(<Heading />);
+    expect(screen.getByRole('heading', { name: 'Owner — 1' })).toHaveClass('uppercase');
+    expect(screen.queryByRole('button', { name: 'Edit owner title' })).not.toBeInTheDocument();
   });
 
   it.each(['', 'https://peer.example'])('retains the title from ready and newly joined space payloads at %s', (origin) => {

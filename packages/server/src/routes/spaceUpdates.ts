@@ -1,6 +1,6 @@
 import type { UpdateSpaceRequest } from '@backspace/shared';
 import { AVATAR_COLORS } from '@backspace/shared';
-import { MAX_OWNER_TITLE_LENGTH } from '@backspace/shared/src/constants.js';
+import { MAX_OWNER_TITLE_LENGTH, normalizeOwnerTitle } from '@backspace/shared/src/constants.js';
 import { eq, inArray } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import path from 'path';
@@ -49,12 +49,11 @@ export function updateSpaceRoutes(app: FastifyInstance): void {
     const updates: Partial<typeof schema.spaces.$inferInsert> = {};
 
     if (ownerTitle !== undefined) {
-      if (ownerTitle !== null && (typeof ownerTitle !== 'string'
-        || !ownerTitle.trim() || ownerTitle.trim().length > MAX_OWNER_TITLE_LENGTH
-        || /[\r\n]/.test(ownerTitle))) {
+      const normalized = normalizeOwnerTitle(ownerTitle);
+      if (normalized === undefined) {
         return sendError(reply, 400, 'space_owner_title_invalid', { max: MAX_OWNER_TITLE_LENGTH });
       }
-      updates.ownerTitle = ownerTitle === null ? null : ownerTitle.trim();
+      updates.ownerTitle = normalized;
     }
 
     if (name !== undefined) {

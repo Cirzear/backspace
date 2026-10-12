@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { buildImageMenuItems } from './imageMenuItems';
-import { api } from '../../api/client';
+import { api, HttpError } from '../../api/client';
 import { uploadSticker } from './stickerUpload';
 
-vi.mock('../../api/client', () => ({ api: { stickers: { collect: vi.fn() } } }));
+vi.mock('../../api/client', async importOriginal => ({
+  ...await importOriginal<typeof import('../../api/client')>(),
+  api: { stickers: { collect: vi.fn() } },
+}));
 const toast = vi.hoisted(() => vi.fn());
-const runtime = vi.hoisted(() => ({ native: false }));
-vi.mock('../../platform/instanceRuntime', () => ({ getHomeOrigin: () => runtime.native ? 'https://home.test' : window.location.origin }));
 vi.mock('../../stores/uiStore', () => ({ useUIStore: { getState: () => ({ addToast: toast }) } }));
 vi.mock('../../utils/imageActions', () => ({ saveImage: vi.fn(), copyImageToClipboard: vi.fn() }));
 vi.mock('./stickerUpload', async importOriginal => ({ ...await importOriginal<typeof import('./stickerUpload')>(), uploadSticker: vi.fn() }));
@@ -14,7 +15,6 @@ const token = `sticker:https://chat.test/api/stickers/assets/${'a'.repeat(64)}.w
 const menu = (source: string) => buildImageMenuItems({ imageUrl: '/api/uploads/thumbnail.webp', stickerSource: source, stickerName: 'Happy' });
 
 beforeEach(() => {
-  runtime.native = false;
   vi.clearAllMocks();
   vi.mocked(api.stickers.collect).mockResolvedValue({ id: 'a'.repeat(64), name: 'Happy', token });
 });
@@ -25,7 +25,7 @@ it('collects a token from the menu, including after it was removed from the coll
   expect(item).toMatchObject({ key: 'collect-sticker', label: 'Add to my stickers' });
   if (item.type !== 'action') throw new Error('Expected action');
   await item.onClick();
-  expect(api.stickers.collect).toHaveBeenCalledWith({ id: 'a'.repeat(64), token });
+  expect(api.stickers.collect).toHaveBeenCalledWith({ id: 'a'.repeat(64), token, name: 'Happy' });
   expect(toast).toHaveBeenLastCalledWith('Added to my stickers', 'success');
   await item.onClick();
   expect(api.stickers.collect).toHaveBeenCalledTimes(2);
@@ -60,14 +60,12 @@ it('keeps failures visible and never reports a false success', async () => {
   expect(toast).not.toHaveBeenCalledWith('Added to my stickers', 'success');
 });
 
-it('collects native home uploads but not uploads belonging to the WebView origin', async () => {
-  runtime.native = true;
-  const fetchImage = vi.fn().mockResolvedValue(new Response(new Blob(['image'], { type: 'image/png' })));
-  vi.stubGlobal('fetch', fetchImage);
-  const item = menu('/api/uploads/original.png')[0]!;
-  expect(item.key).toBe('collect-sticker');
+it('shows the localized text for a coded refusal', async () => {
+  vi.mocked(api.stickers.collect).mockRejectedValueOnce(
+    new HttpError(400, 'Only stickers from this instance can be added to a collection', undefined, 'sticker_not_local'),
+  );
+  const item = menu(token)[0]!;
   if (item.type !== 'action') throw new Error('Expected action');
   await item.onClick();
-  expect(fetchImage).toHaveBeenCalledWith('https://home.test/api/uploads/original.png');
-  expect(menu(`${window.location.origin}/api/uploads/original.png`).map(item => item.key)).not.toContain('collect-sticker');
+  expect(toast).toHaveBeenLastCalledWith('Stickers from another server cannot be added to your collection yet.', 'warning');
 });

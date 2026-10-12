@@ -11,9 +11,6 @@ export interface ReactionPickerPopoverProps {
 }
 
 const VIEWPORT_MARGIN = 8;
-const DEFAULT_PICKER_WIDTH = 360;
-// Default estimated height covers the tabs header (~40px) + emoji picker (~400px) + padding.
-const DEFAULT_PICKER_HEIGHT = 450;
 
 /**
  * Floating reaction emoji/sticker picker for chat messages.
@@ -25,7 +22,7 @@ export function ReactionPickerPopover({
   onEmojiSelect,
   onClose,
 }: ReactionPickerPopoverProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation('common');
   const popoverRef = useRef<HTMLDivElement>(null);
   const [coords, setCoords] = useState<{ top: number; left: number; flipAbove: boolean }>({
     top: VIEWPORT_MARGIN,
@@ -34,22 +31,15 @@ export function ReactionPickerPopover({
   });
 
   const updatePosition = useCallback(() => {
-    if (!anchorEl) return;
+    const popover = popoverRef.current;
+    if (!anchorEl || !popover) return;
     const btnRect = layoutRect(anchorEl.getBoundingClientRect());
     const vh = layoutPixels(window.innerHeight);
     const vw = layoutPixels(window.innerWidth);
 
-    // Measure actual rendered size if available to handle tab switching (Emoji vs Stickers),
-    // otherwise fallback to safe defaults.
-    const actualWidth = popoverRef.current
-      ? layoutPixels(popoverRef.current.offsetWidth)
-      : DEFAULT_PICKER_WIDTH;
-    const actualHeight = popoverRef.current
-      ? layoutPixels(popoverRef.current.offsetHeight)
-      : DEFAULT_PICKER_HEIGHT;
-
-    const pickerWidth = actualWidth || DEFAULT_PICKER_WIDTH;
-    const pickerHeight = actualHeight || DEFAULT_PICKER_HEIGHT;
+    // offset dimensions already use CSS layout pixels; unlike DOMRect, do not divide them by zoom.
+    const pickerWidth = popover.offsetWidth;
+    const pickerHeight = popover.offsetHeight;
 
     const spaceBelow = vh - btnRect.bottom;
     const spaceAbove = btnRect.top;
@@ -81,7 +71,7 @@ export function ReactionPickerPopover({
   // Re-check position when content size changes (e.g. switching between Emoji and Stickers tabs)
   useEffect(() => {
     const el = popoverRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
+    if (!el) return;
     const observer = new ResizeObserver(() => {
       updatePosition();
     });
@@ -111,13 +101,13 @@ export function ReactionPickerPopover({
     return () => document.removeEventListener('mousedown', handler);
   }, [anchorEl, onClose]);
 
-  // Close on Escape
+  // Capture Escape before the emoji search input stops keyboard-event bubbling.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
+    document.addEventListener('keydown', handler, true);
+    return () => document.removeEventListener('keydown', handler, true);
   }, [onClose]);
 
   if (!anchorEl) return null;
@@ -126,16 +116,15 @@ export function ReactionPickerPopover({
     <div
       ref={popoverRef}
       role="dialog"
-      aria-label={t('message.reactions.picker')}
+      aria-label={t('actions.addReaction')}
       className={`fixed z-[300] ${coords.flipAbove ? 'animate-slide-down' : 'animate-slide-up'}`}
       style={{
         top: coords.top,
         left: coords.left,
-        // Match the scaled viewport used by the mobile shell and keyboard layout.
-        maxHeight: `calc(100 * var(--app-vh) - ${VIEWPORT_MARGIN * 2}px)`,
+        maxHeight: `calc(100 * var(--app-dvh) - ${VIEWPORT_MARGIN * 2}px)`,
       }}
     >
-      <div className="glass rounded-xl overflow-hidden max-h-[calc(100*var(--app-vh)-16px)] flex flex-col">
+      <div className="glass rounded-xl overflow-hidden max-h-[calc(100*var(--app-dvh)-16px)] flex flex-col">
         <EmojiPicker onEmojiSelect={onEmojiSelect} />
       </div>
     </div>,

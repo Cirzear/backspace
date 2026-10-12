@@ -1,20 +1,36 @@
-import { MAX_OWNER_TITLE_LENGTH } from '@backspace/shared/src/constants.js';
-import React, { useState } from 'react';
+import { MAX_OWNER_TITLE_LENGTH, normalizeOwnerTitle } from '@backspace/shared/src/constants.js';
+import React, { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { describeError } from '../../i18n/errors';
 import { useFormatters } from '../../i18n/formatters';
-import { useAuthStore } from '../../stores/authStore';
-import { getMyUserIdForOrigin, useSpaceStore, type TaggedSpace } from '../../stores/spaceStore';
+import { useSelfIdentity } from '../../stores/authStore';
+import { useSpaceStore, type TaggedSpace } from '../../stores/spaceStore';
+import { hostKeepsOwnerTitle, ownerGroupTitle } from '../../utils/memberGroups';
 import { Modal } from '../ui/Modal';
 
+/**
+ * Sets or resets the owner title. Laid out like the space nickname dialog: a
+ * description, the field, and a glass action pill with Reset (only while a
+ * title is set), Cancel and Save. The heading changes only when the host
+ * answers; a refusal stays in the dialog.
+ */
 function OwnerTitleEditor({ space, onClose }: { space: TaggedSpace; onClose: () => void }) {
   const { t } = useTranslation(['spaces', 'common', 'errors']);
   const updateSpace = useSpaceStore((s) => s.updateSpace);
-  const [title, setTitle] = useState(space.ownerTitle ?? '');
+  const current = ownerGroupTitle(space);
+  const [title, setTitle] = useState(current ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const writing = useRef(false);
+  const close = () => { if (!writing.current) onClose(); };
 
   const save = async (ownerTitle: string | null) => {
+    if (writing.current) return;
+    if (ownerTitle === current) {
+      onClose();
+      return;
+    }
+    writing.current = true;
     setSaving(true);
     setError('');
     try {
@@ -24,31 +40,43 @@ function OwnerTitleEditor({ space, onClose }: { space: TaggedSpace; onClose: () 
     } catch (err) {
       setError(describeError(err));
     } finally {
+      writing.current = false;
       setSaving(false);
     }
   };
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
-    const trimmed = title.trim();
-    if (!trimmed || trimmed.length > MAX_OWNER_TITLE_LENGTH || /[\r\n]/.test(trimmed)) {
+    // The server's own rule, so both refuse the same values. Only Reset sends null.
+    const normalized = normalizeOwnerTitle(title);
+    if (typeof normalized !== 'string') {
       setError(t('errors:space_owner_title_invalid', { max: MAX_OWNER_TITLE_LENGTH }));
       return;
     }
-    void save(trimmed);
+    void save(normalized);
   };
 
   return (
-    <Modal isOpen onClose={() => { if (!saving) onClose(); }} title={t('spaces:members.ownerTitle.edit')}>
-      <form onSubmit={submit} className="space-y-4">
-        <div>
-          <label htmlFor="space-owner-title" className="block text-sm font-medium text-txt-primary mb-2">
+    <Modal isOpen onClose={close} title={t('spaces:members.ownerTitle.edit')} mobileStyle="sheet">
+      <form onSubmit={submit}>
+        <p id="space-owner-title-hint" className="mb-4 text-sm text-txt-secondary">
+          {t('spaces:members.ownerTitle.hint', { max: MAX_OWNER_TITLE_LENGTH })}
+        </p>
+
+        {error && (
+          <div role="alert" className="mb-3 p-2 bg-accent-rose/10 border border-accent-rose/30 rounded text-txt-danger text-sm">
+            {error}
+          </div>
+        )}
+
+        <div className="mb-4">
+          <label htmlFor="space-owner-title" className="block text-xs font-bold text-txt-secondary uppercase mb-2">
             {t('spaces:members.ownerTitle.label')}
           </label>
           <input
             id="space-owner-title"
+            type="text"
             autoFocus
-            required
             maxLength={MAX_OWNER_TITLE_LENGTH}
             value={title}
             disabled={saving}
@@ -57,46 +85,71 @@ function OwnerTitleEditor({ space, onClose }: { space: TaggedSpace; onClose: () 
             aria-describedby="space-owner-title-hint"
             className="input-standard w-full"
           />
-          <p id="space-owner-title-hint" className="text-xs text-txt-tertiary mt-2">
-            {t('spaces:members.ownerTitle.hint', { max: MAX_OWNER_TITLE_LENGTH })}
-          </p>
         </div>
-        {error && <p role="alert" className="text-sm text-txt-danger">{error}</p>}
-        <div className="flex items-center justify-end gap-2">
-          <button type="button" disabled={saving || space.ownerTitle === null} onClick={() => void save(null)} className="mr-auto text-xs text-txt-secondary hover:text-txt-primary disabled:opacity-50">
-            {t('spaces:members.ownerTitle.reset')}
-          </button>
-          <button type="button" disabled={saving} onClick={onClose} className="px-3 py-2 rounded-lg text-sm text-txt-secondary hover:bg-interactive-hover disabled:opacity-50">
-            {t('common:actions.cancel')}
-          </button>
-          <button type="submit" disabled={saving} className="px-3 py-2 rounded-lg text-sm bg-accent-primary text-white disabled:opacity-50">
-            {saving ? t('common:states.saving') : t('common:actions.save')}
-          </button>
+
+        <div className="sticky bottom-0 z-10 pointer-events-none">
+          <div className="flex justify-center pt-3 pb-1">
+            <div className="glass-bubble rounded-full px-3 py-2 flex items-center gap-3 pointer-events-auto">
+              {current !== null && (
+                <button
+                  type="button"
+                  onClick={() => void save(null)}
+                  disabled={saving}
+                  className="px-3 py-1 text-sm text-txt-tertiary hover:text-txt-secondary transition-colors disabled:opacity-50"
+                >
+                  {t('spaces:members.ownerTitle.reset')}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={close}
+                disabled={saving}
+                className="px-3 py-1 text-sm text-txt-tertiary hover:text-txt-secondary transition-colors disabled:opacity-50"
+              >
+                {t('common:actions.cancel')}
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="px-3 py-1.5 bg-accent-primary hover:bg-accent-primary/80 text-white text-sm font-medium rounded-full transition-colors disabled:opacity-50"
+              >
+                {saving ? t('common:states.saving') : t('common:actions.save')}
+              </button>
+            </div>
+          </div>
         </div>
       </form>
     </Modal>
   );
 }
 
-/** The heading is cosmetic: only the actual owner sees the editor, regardless of role permissions. */
-export function OwnerTitleHeading({ space, count }: { space: TaggedSpace; count: number }) {
+/**
+ * The owner group's heading in the member list, on desktop and phone. The
+ * heading is cosmetic: only the actual owner sees the editor, regardless of
+ * role permissions. The edit control's negative margin keeps the heading as
+ * tall as the other group headings; `touch` makes it a 44px tap target for
+ * the phone screen.
+ */
+export function OwnerTitleHeading({ space, count, touch = false }: { space: TaggedSpace; count: number; touch?: boolean }) {
   const { t } = useTranslation('spaces');
   const { formatNumber } = useFormatters();
-  const homeUserId = useAuthStore((s) => s.user?.id);
-  // Federated owners have an instance-local user ID on the space's host.
-  const userId = space._instanceOrigin ? getMyUserIdForOrigin(space._instanceOrigin) : homeUserId;
+  // The owner id is the owner's row on the space's host, so compare it with
+  // the signed-in user's row there, not with the home account id.
+  const self = useSelfIdentity();
+  const myIdHere = self?.rowIds.get(space._instanceOrigin);
   const [editing, setEditing] = useState(false);
-  const canEdit = userId === space.ownerId;
-  const title = space.ownerTitle ?? t('members.groups.owner');
+  const canEdit = myIdHere !== undefined && myIdHere === space.ownerId && hostKeepsOwnerTitle(space);
+  const ownerTitle = ownerGroupTitle(space);
+  const title = ownerTitle ?? t('members.groups.owner');
 
   return (
     <>
       <div className="flex items-center gap-1 px-2 mb-1">
-        <h3 title={title} className={`min-w-0 truncate text-[10.5px] font-bold text-txt-tertiary tracking-[0.06em] ${space.ownerTitle === null ? 'uppercase' : ''}`}>
+        <h3 title={title} className={`min-w-0 truncate text-[10.5px] font-bold text-txt-tertiary tracking-[0.06em] ${ownerTitle === null ? 'uppercase' : ''}`}>
           {title} — {formatNumber(count)}
         </h3>
         {canEdit && (
-          <button type="button" onClick={() => setEditing(true)} aria-label={t('members.ownerTitle.edit')} title={t('members.ownerTitle.edit')} className="shrink-0 p-1 rounded text-txt-tertiary hover:text-txt-primary hover:bg-interactive-hover">
+          <button type="button" onClick={() => setEditing(true)} aria-label={t('members.ownerTitle.edit')} title={t('members.ownerTitle.edit')} className={`shrink-0 rounded text-txt-tertiary hover:text-txt-primary hover:bg-interactive-hover ${touch ? '-my-4 flex h-11 w-11 items-center justify-center active:bg-interactive-hover' : '-my-1 p-1'}`}>
             <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="m16 3 5 5M4 15 16 3l5 5L9 20l-6 1 1-6Z" />
             </svg>

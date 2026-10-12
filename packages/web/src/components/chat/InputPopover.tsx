@@ -14,8 +14,8 @@ interface InputPopoverProps {
   activeTab: InputPopoverTab;
   onClose: () => void;
   onEmojiSelect: (emoji: { native: string }) => void;
-  onGifSelect: (url: string) => void;
-  onStickerSelect: (token: string) => void;
+  /** Sends already-hosted media content: a GIF URL or a sticker token. */
+  onGifSelect: (content: string) => void;
   anchorRef: React.RefObject<HTMLElement | null>;
   gifEnabled: boolean;
   onTabChange: (tab: InputPopoverTab) => void;
@@ -73,7 +73,6 @@ function DesktopPopover({
   onClose,
   onEmojiSelect,
   onGifSelect,
-  onStickerSelect,
   anchorRef,
   gifEnabled,
   onTabChange,
@@ -162,7 +161,7 @@ function DesktopPopover({
         {/* Content */}
         <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
           {activeTab === 'emoji' && <EmojiPicker stickers={false} onEmojiSelect={onEmojiSelect} />}
-          {activeTab === 'sticker' && <StickerPicker onSelect={onStickerSelect} />}
+          {activeTab === 'sticker' && <StickerPicker onSelect={onGifSelect} />}
           {activeTab === 'gif' && gifEnabled && <GifPicker onGifSelect={onGifSelect} />}
         </div>
       </div>
@@ -180,7 +179,6 @@ function MobileSheet({
   onClose,
   onEmojiSelect,
   onGifSelect,
-  onStickerSelect,
   gifEnabled,
   onTabChange,
   availableTabs,
@@ -191,7 +189,7 @@ function MobileSheet({
       header={<TabBar activeTab={activeTab} availableTabs={availableTabs} onTabChange={onTabChange} />}
     >
       {activeTab === 'emoji' && <EmojiPicker stickers={false} onEmojiSelect={onEmojiSelect} mobile />}
-      {activeTab === 'sticker' && <StickerPicker onSelect={onStickerSelect} mobile />}
+      {activeTab === 'sticker' && <StickerPicker onSelect={onGifSelect} mobile />}
       {activeTab === 'gif' && gifEnabled && <GifPicker onGifSelect={onGifSelect} mobile />}
     </MobilePickerSheet>
   );

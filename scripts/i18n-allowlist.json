@@ -158,5 +158,6 @@
   "{{count}} sticker selected",
   "{{count}} stickers selected",
   "{{quantity}} unread direct messages",
-  "Choose quality, then approve Android’s screen capture request. Microphone and call audio continue through the native service while you share in the background."
+  "Choose quality, then approve Android’s screen capture request. Microphone and call audio continue through the native service while you share in the background.",
+  "Sticker"
 ]

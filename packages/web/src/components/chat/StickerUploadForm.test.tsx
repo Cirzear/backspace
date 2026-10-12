@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MAX_STICKER_BYTES } from '@backspace/shared/src/stickers';
+import { MAX_STICKER_BATCH, MAX_STICKER_BYTES } from '@backspace/shared/src/stickers';
+import { HttpError } from '../../api/client';
 import { StickerUploadForm } from './StickerUploadForm';
 import { uploadSticker } from './stickerUpload';
 
@@ -22,7 +23,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 it('previews locally, edits the name, and only uploads after explicit confirmation', async () => {
   const added = vi.fn();
-  render(<StickerUploadForm onAdded={added} onCancel={vi.fn()} />);
+  render(<StickerUploadForm onAdded={added} onCancel={vi.fn()} capacity={200} />);
   expect(screen.getByRole('button', { name: 'Choose image' })).toHaveFocus();
   expect(confirm()).toBeDisabled();
   const file = png();
@@ -33,13 +34,13 @@ it('previews locally, edits the name, and only uploads after explicit confirmati
   fireEvent.load(screen.getByAltText('Preview sticker'));
   fireEvent.change(screen.getByRole('textbox'), { target: { value: '  My favorite  ' } });
   fireEvent.click(confirm());
-  await waitFor(() => expect(added).toHaveBeenCalledWith(sticker));
+  await waitFor(() => expect(added).toHaveBeenCalledWith([sticker], true));
   expect(uploadSticker).toHaveBeenCalledWith(file, 'My favorite');
 });
 
 it('cancels without uploading and releases its local preview', () => {
   const cancel = vi.fn();
-  const { unmount } = render(<StickerUploadForm onAdded={vi.fn()} onCancel={cancel} />);
+  const { unmount } = render(<StickerUploadForm onAdded={vi.fn()} onCancel={cancel} capacity={200} />);
   choose();
   fireEvent.click(screen.getAllByRole('button', { name: 'Cancel' }).at(-1)!);
   expect(cancel).toHaveBeenCalledOnce();
@@ -51,7 +52,7 @@ it('cancels without uploading and releases its local preview', () => {
 it('supports dropping and pasting without forwarding files to the message composer', () => {
   const drop = vi.fn();
   const paste = vi.fn();
-  render(<div onDrop={drop} onPaste={paste}><StickerUploadForm onAdded={vi.fn()} onCancel={vi.fn()} /></div>);
+  render(<div onDrop={drop} onPaste={paste}><StickerUploadForm onAdded={vi.fn()} onCancel={vi.fn()} capacity={200} /></div>);
   fireEvent.drop(screen.getByRole('button', { name: 'Choose image' }), { dataTransfer: { files: [png()] } });
   expect(screen.getByRole('textbox')).toHaveValue('Happy');
   fireEvent.paste(screen.getByRole('textbox'), { clipboardData: { files: [new File(['gif'], 'Dance.gif', { type: 'image/gif' })] } });
@@ -66,7 +67,7 @@ it.each([
   ['oversize', new File([new Uint8Array(MAX_STICKER_BYTES + 1)], 'huge.png', { type: 'image/png' }), 'Choose a non-empty image up to 5 MB.'],
   ['unsupported', new File(['svg'], 'vector.svg', { type: 'image/svg+xml' }), 'Only PNG, JPEG, WebP and GIF images are supported.'],
 ])('rejects %s files before upload', (_case, file, error) => {
-  render(<StickerUploadForm onAdded={vi.fn()} onCancel={vi.fn()} />);
+  render(<StickerUploadForm onAdded={vi.fn()} onCancel={vi.fn()} capacity={200} />);
   choose(file);
   expect(screen.getByRole('alert')).toHaveTextContent(error);
   expect(uploadSticker).not.toHaveBeenCalled();
@@ -75,7 +76,7 @@ it.each([
 
 it('supports multi-file drops and batch uploading', async () => {
   const added = vi.fn();
-  render(<StickerUploadForm onAdded={added} onCancel={vi.fn()} />);
+  render(<StickerUploadForm onAdded={added} onCancel={vi.fn()} capacity={200} />);
   const file1 = new File(['1'], 'First.png', { type: 'image/png' });
   const file2 = new File(['2'], 'Second.png', { type: 'image/png' });
   fireEvent.drop(screen.getByRole('button', { name: 'Choose image' }), { dataTransfer: { files: [file1, file2] } });
@@ -96,11 +97,11 @@ it('supports multi-file drops and batch uploading', async () => {
   await waitFor(() => expect(uploadSticker).toHaveBeenCalledTimes(2));
   expect(uploadSticker).toHaveBeenCalledWith(file1, 'First');
   expect(uploadSticker).toHaveBeenCalledWith(file2, 'Second');
-  await waitFor(() => expect(added).toHaveBeenCalledWith([sticker, sticker]));
+  await waitFor(() => expect(added).toHaveBeenCalledWith([sticker, sticker], true));
 });
 
 it('allows removing an item from the batch before submitting', () => {
-  render(<StickerUploadForm onAdded={vi.fn()} onCancel={vi.fn()} />);
+  render(<StickerUploadForm onAdded={vi.fn()} onCancel={vi.fn()} capacity={200} />);
   const file1 = new File(['1'], 'First.png', { type: 'image/png' });
   const file2 = new File(['2'], 'Second.png', { type: 'image/png' });
   fireEvent.drop(screen.getByRole('button', { name: 'Choose image' }), { dataTransfer: { files: [file1, file2] } });
@@ -113,7 +114,7 @@ it('allows removing an item from the batch before submitting', () => {
 });
 
 it('blocks corrupt previews and blank names', () => {
-  render(<StickerUploadForm onAdded={vi.fn()} onCancel={vi.fn()} />);
+  render(<StickerUploadForm onAdded={vi.fn()} onCancel={vi.fn()} capacity={200} />);
   choose();
   fireEvent.error(screen.getByAltText('Preview sticker'));
   expect(screen.getByRole('alert')).toHaveTextContent('This image cannot be previewed.');
@@ -127,7 +128,7 @@ it('blocks corrupt previews and blank names', () => {
 it('prevents duplicate submits, shows a real pending state, and retains the preview on failure', async () => {
   let reject!: (error: Error) => void;
   vi.mocked(uploadSticker).mockImplementation(() => new Promise((_resolve, fail) => { reject = fail; }));
-  render(<StickerUploadForm onAdded={vi.fn()} onCancel={vi.fn()} />);
+  render(<StickerUploadForm onAdded={vi.fn()} onCancel={vi.fn()} capacity={200} />);
   choose();
   fireEvent.load(screen.getByAltText('Preview sticker'));
   fireEvent.click(confirm());
@@ -139,4 +140,56 @@ it('prevents duplicate submits, shows a real pending state, and retains the prev
   expect(screen.getByRole('alert')).toHaveTextContent('Storage unavailable');
   expect(screen.getByRole('textbox')).toHaveValue('Happy');
   expect(confirm()).toBeEnabled();
+});
+
+function dropFiles(names: string[]) {
+  const files = names.map(name => new File([name], `${name}.png`, { type: 'image/png' }));
+  fireEvent.drop(screen.getByRole('button', { name: 'Choose image' }), { dataTransfer: { files } });
+  return files;
+}
+
+it('sends a batch one image at a time and keeps only the refused ones', async () => {
+  const added = vi.fn();
+  const second = { ...sticker, id: 'b'.repeat(64), name: 'Third' };
+  let release!: () => void;
+  vi.mocked(uploadSticker)
+    .mockImplementationOnce(() => new Promise(resolve => { release = () => resolve(sticker); }))
+    .mockRejectedValueOnce(new HttpError(400, 'Upload a PNG', undefined, 'sticker_invalid_image', { max: 5 }))
+    .mockResolvedValueOnce(second);
+  render(<StickerUploadForm onAdded={added} onCancel={vi.fn()} capacity={200} />);
+  dropFiles(['First', 'Second', 'Third']);
+  screen.getAllByAltText('Preview sticker').forEach(preview => fireEvent.load(preview));
+  fireEvent.click(confirm());
+  expect(uploadSticker).toHaveBeenCalledOnce();
+  expect(screen.getByRole('status')).toHaveTextContent('Adding 1 of 3…');
+  await act(async () => release());
+  await waitFor(() => expect(added).toHaveBeenCalledWith([sticker, second], false));
+  expect(uploadSticker).toHaveBeenCalledTimes(3);
+  expect(screen.getByRole('alert')).toHaveTextContent('1 image could not be added. It is still listed below.');
+  expect(screen.getByRole('textbox')).toHaveValue('Second');
+  expect(confirm()).toBeEnabled();
+});
+
+it('stops a batch at a refusal every later image would meet', async () => {
+  const added = vi.fn();
+  vi.mocked(uploadSticker).mockRejectedValueOnce(new HttpError(429, 'Too many requests', undefined, 'rate_limited'));
+  render(<StickerUploadForm onAdded={added} onCancel={vi.fn()} capacity={200} />);
+  dropFiles(['First', 'Second']);
+  screen.getAllByAltText('Preview sticker').forEach(preview => fireEvent.load(preview));
+  fireEvent.click(confirm());
+  await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+  expect(uploadSticker).toHaveBeenCalledOnce();
+  expect(added).not.toHaveBeenCalled();
+  expect(screen.getAllByRole('textbox')).toHaveLength(2);
+});
+
+it('refuses more images than one batch or the collection can take', () => {
+  const { unmount } = render(<StickerUploadForm onAdded={vi.fn()} onCancel={vi.fn()} capacity={200} />);
+  dropFiles(Array.from({ length: MAX_STICKER_BATCH + 1 }, (_, index) => `Image${index}`));
+  expect(screen.getByRole('alert')).toHaveTextContent(`Choose up to ${MAX_STICKER_BATCH} images at a time.`);
+  expect(URL.createObjectURL).not.toHaveBeenCalled();
+  unmount();
+  render(<StickerUploadForm onAdded={vi.fn()} onCancel={vi.fn()} capacity={2} />);
+  dropFiles(['First', 'Second', 'Third']);
+  expect(screen.getByRole('alert')).toHaveTextContent('Your collection has room for 2 more stickers.');
 });

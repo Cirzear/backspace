@@ -86,6 +86,10 @@ describe('formatDmPreview', () => {
     })).toBe('hello world');
   });
 
+  it('names a sticker instead of showing its token', () => {
+    expect(formatDmPreview({ content: `sticker:https://chat.test/api/stickers/assets/${'a'.repeat(64)}.webp` })).toBe('Sticker');
+  });
+
   it('returns text content when attachments array is empty', () => {
     expect(formatDmPreview({
       content: 'hello world', attachments: [],

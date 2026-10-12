@@ -19,6 +19,6 @@ describe('bounded sticker image download', () => {
   });
 
   it('exposes missing-file errors rather than attempting an upload', async () => {
-    await expect(readStickerImage(new Response(null, { status: 404 }))).rejects.toThrow('404');
+    await expect(readStickerImage(new Response(null, { status: 404 }))).rejects.toThrow('The image could not be loaded.');
   });
 });

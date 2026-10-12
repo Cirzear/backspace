@@ -162,7 +162,7 @@ describe('ReactionPill', () => {
 it('shows a sticker preview with reactors and preserves toggle behavior', () => {
   const token = `sticker:https://chat.test/api/stickers/assets/${'a'.repeat(64)}.webp`;
   const toggle = vi.fn();
-  render(<ReactionPill emoji={token} reactions={[{ ...reaction(MIRA, 1), emoji: token }]} onToggle={toggle} />);
+  render(<ReactionPill emoji={token} origin="" reactions={[{ ...reaction(MIRA, 1), emoji: token }]} onToggle={toggle} />);
   expect(screen.getByRole('img')).toHaveAttribute('src', token.slice('sticker:'.length));
   fireEvent.mouseEnter(screen.getByRole('button'));
   act(() => { vi.advanceTimersByTime(400); });

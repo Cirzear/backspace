@@ -24,7 +24,7 @@ import { outboxQueueKey } from '../utils/federationOutboxQueue.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS = path.resolve(__dirname, '../../drizzle');
 const PRE_SQUASH_FIXTURE = path.resolve(__dirname, '../../test/fixtures/pre-squash-schema.sql');
-const FIRST_UNAPPLIED = '0021_notification_settings';
+const FIRST_UNAPPLIED = '0021_outbox_queue_keys';
 
 interface JournalEntry { idx: number; when: number; tag: string }
 interface SnapshotColumn { name: string; type: string; primaryKey: boolean; notNull: boolean; default?: string | number }
@@ -174,7 +174,7 @@ function outboxSchema(db: Database.Database): Array<{ type: string; name: string
 }
 
 function loadOutboxSnapshot(): SnapshotTable {
-  const file = path.join(MIGRATIONS, 'meta', '0026_snapshot.json');
+  const file = path.join(MIGRATIONS, 'meta', `${FIRST_UNAPPLIED.slice(0, 4)}_snapshot.json`);
   const table = (JSON.parse(fs.readFileSync(file, 'utf8')) as { tables: Record<string, SnapshotTable | undefined> }).tables.federation_outbox;
   if (!table) throw new Error(`${file} has no federation_outbox table`);
   return table;
@@ -276,7 +276,7 @@ describe('upgrading through initDatabase from every database shape in the field'
     db.close();
   });
 
-  it.each(['preSquash', 'squashed', 'empty'] as const)('%s: leaves the outbox in the shape the 0026 snapshot describes', (shape) => {
+  it.each(['preSquash', 'squashed', 'empty'] as const)('%s: leaves the outbox in the shape the 0021 snapshot describes', (shape) => {
     const db = new Database(shapes[shape], { readonly: true });
     expectSnapshotShape(db);
     db.close();

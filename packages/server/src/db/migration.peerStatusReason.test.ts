@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.resolve(__dirname, '../../drizzle');
-const TAG = '0028_peer_status_reason';
+const TAG = '0023_peer_status_reason';
 
 function statementsOf(file: string): string[] {
   return fs.readFileSync(path.join(MIGRATIONS_DIR, file), 'utf8')
@@ -54,7 +54,7 @@ beforeEach(() => {
   applyUpTo(db, TAG);
 });
 
-describe('migration 0028_peer_status_reason', () => {
+describe('migration 0023_peer_status_reason', () => {
   it('clears the old reason of a needs_attention row our admin later denied, so it stays denied', () => {
     seedPeer(db, 'denied-reset', 'rejected', 'peer_reset_detected');
     seedPeer(db, 'denied-repeer', 'rejected', 'repeer_incomplete');

@@ -472,7 +472,7 @@ The Federation row carries a numeric badge driven by `uiStore.federationApproval
 Params: `{ spaceId? }` (falls back to `currentSpaceId`)
 
 - Groups online members by their highest-positioned role
-- Owner gets special `__owner__` group (position Infinity)
+- Owner gets special `__owner__` group (position Infinity), headed by `OwnerTitleHeading` as on desktop: the owner title when one is set, with the owner's edit control (spaces.md, "Owner title")
 - Offline members in separate section
 - Each member row: avatar with status, role-colored name, federated domain, activity card
 - Tap opens `user-profile` screen

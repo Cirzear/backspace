@@ -1,4 +1,6 @@
 import type { DmMessageWithUser, MessageWithUser } from '@backspace/shared';
+import { receiveChannelPoke } from '../components/chat/channelPoke';
+import { useUnreadCountStore } from '../stores/unreadCountStore';
 import { useAuthStore } from '../stores/authStore';
 import { useChatStore } from '../stores/chatStore';
 import { getMyUserIdForOrigin, useSpaceStore } from '../stores/spaceStore';
@@ -23,6 +25,16 @@ function prepareIncomingMessage(origin: string, message: MessageWithUser | DmMes
 }
 
 export const chatEvents = {
+  channel_poke: (origin, event) => {
+    const { addRealtimeMessage } = useChatStore.getState();
+    const { upsertUserView } = useSpaceStore.getState();
+    if (event.message.user) upsertUserView(event.message.user, origin);
+    addRealtimeMessage(event.message.channelId, event.message);
+    receiveChannelPoke(origin, event.message);
+  },
+  channel_unread_count: (origin, event) => {
+    useUnreadCountStore.getState().updateCounts(origin, event.counts);
+  },
   message_created: (origin, event) => {
     const isHome = origin === '';
     const { addRealtimeMessage } = useChatStore.getState();

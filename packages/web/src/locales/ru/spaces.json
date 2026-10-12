@@ -499,7 +499,6 @@
     "aboveYouShort": "На уровне вашей самой высокой роли или выше"
   },
   "sidebar": {
-    "dmUnreadMessages": "Непрочитанные личные сообщения: {{quantity}}",
     "directMessages": "Личные сообщения",
     "addSpace": "Добавить пространство",
     "joinSpace": "Присоединиться к пространству",
@@ -541,7 +540,6 @@
       },
       "left": "Вы покинули пространство",
       "leaveFailed": "Не удалось покинуть пространство",
-      "unreadMessages": "Непрочитанных сообщений: {{quantity}}",
       "unreadMessages_one": "{{count}} непрочитанное сообщение",
       "unreadMessages_few": "{{count}} непрочитанных сообщения",
       "unreadMessages_many": "{{count}} непрочитанных сообщений",

@@ -259,13 +259,13 @@ describe('syncPeerMutationLog: where the first pull after the upgrade starts', (
   function upgradeWithPeer(lastSyncedAt: number): void {
     sqlite = new Database(':memory:');
     testDb = drizzle(sqlite, { schema });
-    applyMigrations(sqlite, f => f < '0027');
+    applyMigrations(sqlite, f => f < '0022');
     sqlite.prepare('INSERT INTO instance_settings (id, updated_at) VALUES (1, 1)').run();
     sqlite.prepare(`
       INSERT INTO federation_peers (id, origin, hmac_secret, status, last_synced_at, created_at, peer_instance_id)
       VALUES (?, ?, 'secret', 'active', ?, 1, 'epoch-1')
     `).run(PEER, PEER_ORIGIN, lastSyncedAt);
-    applyMigrations(sqlite, f => f >= '0027');
+    applyMigrations(sqlite, f => f >= '0022');
   }
 
   function ledgerStartedAt(): number {

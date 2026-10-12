@@ -1,11 +1,11 @@
-import { getHomeOrigin } from '../../platform/instanceRuntime';
-import { stickerUrl } from '@backspace/shared/src/stickers';
+import { stickerIdOf, stickerUrl } from '@backspace/shared/src/stickers';
 import type { ContextMenuAction, ContextMenuItem } from '../../stores/contextMenuStore';
 import { saveImage, copyImageToClipboard } from '../../utils/imageActions';
 import { useUIStore } from '../../stores/uiStore';
 import { api } from '../../api/client';
 import i18n from '../../i18n';
 import { uploadSticker, readStickerImage } from './stickerUpload';
+import { describeError } from '../../i18n/errors';
 
 interface ImageMenuParams {
   imageUrl?: string | null;
@@ -18,9 +18,9 @@ interface ImageMenuParams {
 function collectStickerItem(source: string, name: string): ContextMenuAction | null {
   const sticker = stickerUrl(source);
   let url: URL;
-  try { url = new URL(sticker ?? source, getHomeOrigin()); }
+  try { url = new URL(sticker ?? source, window.location.origin); }
   catch { return null; }
-  const localUpload = url.origin === getHomeOrigin()
+  const localUpload = url.origin === window.location.origin
     && /^\/api\/uploads\/[^/]+$/.test(url.pathname) && !url.search && !url.hash;
   if (!sticker && !localUpload) return null;
 
@@ -35,14 +35,14 @@ function collectStickerItem(source: string, name: string): ContextMenuAction | n
       try {
         if (sticker) {
           // The server validates its canonical origin; the browser's development origin may differ.
-          await api.stickers.collect({ id: url.pathname.split('/').pop()!.replace('.webp', ''), token: source });
+          await api.stickers.collect({ id: stickerIdOf(source)!, token: source, name });
         } else {
           const response = await fetch(url.href);
           await uploadSticker(await readStickerImage(response), name);
         }
         addToast(i18n.t('chat:stickers.saved'), 'success');
       } catch (err) {
-        addToast((err as Error).message, 'warning');
+        addToast(describeError(err), 'warning');
       }
     },
   };
@@ -51,7 +51,7 @@ function collectStickerItem(source: string, name: string): ContextMenuAction | n
 export function buildImageMenuItems({ imageUrl, sourceUrl, stickerSource, stickerName }: ImageMenuParams): ContextMenuItem[] {
   if (!imageUrl) return [];
   const items: ContextMenuItem[] = [];
-  const collect = stickerSource ? collectStickerItem(stickerSource, stickerName || i18n.t('chat:stickers.title')) : null;
+  const collect = stickerSource ? collectStickerItem(stickerSource, stickerName || i18n.t('chat:stickers.sticker')) : null;
   if (collect) items.push(collect);
   items.push({
     key: 'save-image', type: 'action', label: i18n.t('chat:menu.saveImage'),

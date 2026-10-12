@@ -58,6 +58,7 @@ Adds `detached_home_instance`, `detached_home_user_id` and their index. The data
 | banner | text | | Upload filename |
 | avatarColor | text | | Hex color |
 | ownerId | text NOT NULL | | FK → users.id |
+| ownerTitle | text | | The owner title: the heading over the owner's group in the member list, set by the owner alone (migration `0030_space_owner_title`). Null shows the translated default ("Owner"). Stored as `normalizeOwnerTitle` returns it. Cleared when ownership is transferred. See [spaces.md](spaces.md), "Owner title". |
 | inviteCode | text UNIQUE | | |
 | visibility | text | `'private'` | public/request/private |
 | description | text | | |
@@ -101,11 +102,14 @@ PK: (spaceId, userId)
 | channelId | text NOT NULL | FK → channels.id CASCADE |
 | userId | text NOT NULL | FK → users.id |
 | replyToId | text | FK → messages.id SET NULL |
-| content | text | |
+| content | text | For a system row, JSON (`channelSystemEvents.ts`) |
+| type | text NOT NULL, default `'user'` | `user` (a member wrote it) or `system` (the instance wrote it; a poke is the only one so far, websocket.md "Channel pokes"). Migration `0029_persistent_channel_pokes` |
 | editedAt | integer | |
 | createdAt | integer NOT NULL | |
 
-Indexes: `idx_messages_channel_id` (channelId); `idx_messages_user_id` (userId); `idx_messages_channel_unread` (channelId, `CAST(id AS INTEGER)`, userId), migration `0027_unread_count_indexes`. The last one serves the unread counts (websocket.md, "Unread counts"): the messages of a channel after a read cursor, compared as numbers, without reading the table. SQLite uses an expression index only when the query spells the expression the same way, type name case included, so the count writes `CAST(... AS INTEGER)`; the index names the column unqualified because SQLite refuses a qualified one there.
+A system row's `userId` is the member who acted (the poker). `userWrittenMessages()` in `db/userWrittenMessages.ts` is the one condition for "a message a member wrote": the unread counts, the last message id in `ready`, channel search and the reply target check all take it, so a system row is never unread, never found by a search and never replied to.
+
+Indexes: `idx_messages_channel_id` (channelId); `idx_messages_user_id` (userId); `idx_messages_channel_unread` (channelId, `CAST(id AS INTEGER)`, userId, type), created by migration `0027_unread_count_indexes` and given `type` by `0029_persistent_channel_pokes`. The last one serves the unread counts (websocket.md, "Unread counts"): the messages members wrote in a channel after a read cursor, compared as numbers, without reading the table. SQLite uses an expression index only when the query spells the expression the same way, type name case included, so the count writes `CAST(... AS INTEGER)`; the index names the column unqualified because SQLite refuses a qualified one there.
 
 ### attachments
 | Column | Type | Default | Notes |
@@ -128,6 +132,21 @@ Indexes: `idx_messages_channel_id` (channelId); `idx_messages_user_id` (userId);
 | federationMeta | text | | JSON rejection info |
 | createdAt | integer NOT NULL | | |
 CHECK: exactly one of messageId/dmMessageId is set
+
+### sticker_assets and personal_stickers
+
+Migration `0031_personal_stickers` adds only these two tables; message and reaction columns are unchanged (a sticker is a token in `content` or `emoji`, see [uploads.md](uploads.md#14-personal-stickers)).
+
+| Table | Column | Type | Notes |
+|-------|--------|------|-------|
+| sticker_assets | id | text PK NOT NULL | SHA-256 of the encoded WebP bytes |
+| sticker_assets | created_at | integer NOT NULL | Epoch ms of the latest upload of these bytes; set before the file is written, and the start of the cleanup's 24-hour grace period |
+| personal_stickers | user_id | text NOT NULL | FK → users.id, ON DELETE CASCADE |
+| personal_stickers | sticker_id | text NOT NULL | FK → sticker_assets.id |
+| personal_stickers | name | text NOT NULL | User’s collection label |
+| personal_stickers | created_at | integer NOT NULL | Epoch ms |
+
+The composite primary key (user_id, sticker_id) makes collection idempotent; one user holds at most 200 rows (`MAX_PERSONAL_STICKERS`, checked by the routes). Removing an entry or deleting its user removes only the association. An asset stays while any collection entry, message or reaction on this instance names it; after that, and once past its grace period, the storage cleanup deletes the row and its file (`cleanupUnusedStickerAssets`). Files live under `UPLOAD_DIR/stickers`, outside the attachment phases and the storage stats.
 
 ### embeds
 | Column | Type | Notes |

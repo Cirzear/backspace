@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "5cfc9b6f-c88d-48db-a0c9-1eccc50d4af4",
-  "prevId": "8ddfea8d-dfbc-4762-bb2a-3c8569a5372c",
+  "id": "73879691-b13b-4d9e-8cd7-fb8fd8fa4a73",
+  "prevId": "03a3fa87-cdf5-4a34-8bcb-40fb6021e37d",
   "tables": {
     "attachments": {
       "name": "attachments",
@@ -703,6 +703,14 @@
           "notNull": false,
           "autoincrement": false,
           "default": 0
+        },
+        "closed_changed_at": {
+          "name": "closed_changed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
         }
       },
       "indexes": {
@@ -953,6 +961,15 @@
             "dm_message_id"
           ],
           "isUnique": false
+        },
+        "idx_dm_reactions_message_user_emoji": {
+          "name": "idx_dm_reactions_message_user_emoji",
+          "columns": [
+            "dm_message_id",
+            "user_id",
+            "emoji"
+          ],
+          "isUnique": true
         }
       },
       "foreignKeys": {
@@ -1134,6 +1151,53 @@
         }
       },
       "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "federation_applied_events": {
+      "name": "federation_applied_events",
+      "columns": {
+        "source_origin": {
+          "name": "source_origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "event_key": {
+          "name": "event_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "applied_at": {
+          "name": "applied_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_applied_events_applied_at": {
+          "name": "idx_applied_events_applied_at",
+          "columns": [
+            "applied_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "federation_applied_events_source_origin_event_key_pk": {
+          "columns": [
+            "source_origin",
+            "event_key"
+          ],
+          "name": "federation_applied_events_source_origin_event_key_pk"
+        }
+      },
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
@@ -1398,6 +1462,13 @@
           "notNull": true,
           "autoincrement": false
         },
+        "queue_key": {
+          "name": "queue_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "context_type": {
           "name": "context_type",
           "type": "text",
@@ -1456,23 +1527,31 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "offered_at": {
+          "name": "offered_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
+        "idx_outbox_queue": {
+          "name": "idx_outbox_queue",
+          "columns": [
+            "peer_id",
+            "queue_key",
+            "created_at"
+          ],
+          "isUnique": false
+        },
         "idx_outbox_retry": {
           "name": "idx_outbox_retry",
           "columns": [
             "next_retry_at"
           ],
           "isUnique": false
-        },
-        "federation_outbox_peer_id_entity_id_unique": {
-          "name": "federation_outbox_peer_id_entity_id_unique",
-          "columns": [
-            "peer_id",
-            "entity_id"
-          ],
-          "isUnique": true
         }
       },
       "foreignKeys": {
@@ -1666,8 +1745,8 @@
           "notNull": false,
           "autoincrement": false
         },
-        "needs_attention_reason": {
-          "name": "needs_attention_reason",
+        "status_reason": {
+          "name": "status_reason",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -1752,6 +1831,261 @@
       },
       "indexes": {},
       "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "federation_subject_clocks": {
+      "name": "federation_subject_clocks",
+      "columns": {
+        "subject_key": {
+          "name": "subject_key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "changed_at": {
+          "name": "changed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "recorded_at": {
+          "name": "recorded_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_subject_clocks_recorded_at": {
+          "name": "idx_subject_clocks_recorded_at",
+          "columns": [
+            "recorded_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "federation_sync_cursors": {
+      "name": "federation_sync_cursors",
+      "columns": {
+        "peer_id": {
+          "name": "peer_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "context_type": {
+          "name": "context_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "cursor_ts": {
+          "name": "cursor_ts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "cursor_id": {
+          "name": "cursor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "peer_epoch": {
+          "name": "peer_epoch",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_pulled_at": {
+          "name": "last_pulled_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "federation_sync_cursors_peer_id_federation_peers_id_fk": {
+          "name": "federation_sync_cursors_peer_id_federation_peers_id_fk",
+          "tableFrom": "federation_sync_cursors",
+          "tableTo": "federation_peers",
+          "columnsFrom": [
+            "peer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "federation_sync_cursors_peer_id_context_type_pk": {
+          "columns": [
+            "peer_id",
+            "context_type"
+          ],
+          "name": "federation_sync_cursors_peer_id_context_type_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "federation_sync_retry": {
+      "name": "federation_sync_retry",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "peer_id": {
+          "name": "peer_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "context_type": {
+          "name": "context_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "subject_key": {
+          "name": "subject_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "message_id": {
+          "name": "message_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "event_ts": {
+          "name": "event_ts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "event_hash": {
+          "name": "event_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "event_json": {
+          "name": "event_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "last_reason": {
+          "name": "last_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "first_failed_at": {
+          "name": "first_failed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "next_retry_at": {
+          "name": "next_retry_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_sync_retry_event": {
+          "name": "idx_sync_retry_event",
+          "columns": [
+            "peer_id",
+            "event_hash"
+          ],
+          "isUnique": true
+        },
+        "idx_sync_retry_subject": {
+          "name": "idx_sync_retry_subject",
+          "columns": [
+            "peer_id",
+            "subject_key"
+          ],
+          "isUnique": false
+        },
+        "idx_sync_retry_order": {
+          "name": "idx_sync_retry_order",
+          "columns": [
+            "peer_id",
+            "event_ts"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "federation_sync_retry_peer_id_federation_peers_id_fk": {
+          "name": "federation_sync_retry_peer_id_federation_peers_id_fk",
+          "tableFrom": "federation_sync_retry",
+          "tableTo": "federation_peers",
+          "columnsFrom": [
+            "peer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -2200,6 +2534,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "ledger_started_at": {
+          "name": "ledger_started_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "updated_at": {
           "name": "updated_at",
           "type": "integer",
@@ -2612,14 +2953,6 @@
     "messages": {
       "name": "messages",
       "columns": {
-        "type": {
-          "name": "type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'user'"
-        },
         "id": {
           "name": "id",
           "type": "text",
@@ -2728,105 +3061,6 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "notification_settings": {
-      "name": "notification_settings",
-      "columns": {
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "target_type": {
-          "name": "target_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "target_id": {
-          "name": "target_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "level": {
-          "name": "level",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "muted_until": {
-          "name": "muted_until",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "suppress_everyone": {
-          "name": "suppress_everyone",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "suppress_roles": {
-          "name": "suppress_roles",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_notification_settings_target": {
-          "name": "idx_notification_settings_target",
-          "columns": [
-            "target_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "notification_settings_user_id_users_id_fk": {
-          "name": "notification_settings_user_id_users_id_fk",
-          "tableFrom": "notification_settings",
-          "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "notification_settings_user_id_target_type_target_id_pk": {
-          "columns": [
-            "user_id",
-            "target_type",
-            "target_id"
-          ],
-          "name": "notification_settings_user_id_target_type_target_id_pk"
-        }
-      },
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
@@ -3091,79 +3325,6 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "personal_stickers": {
-      "name": "personal_stickers",
-      "columns": {
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "sticker_id": {
-          "name": "sticker_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "personal_stickers_user_id_users_id_fk": {
-          "name": "personal_stickers_user_id_users_id_fk",
-          "tableFrom": "personal_stickers",
-          "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "personal_stickers_sticker_id_sticker_assets_id_fk": {
-          "name": "personal_stickers_sticker_id_sticker_assets_id_fk",
-          "tableFrom": "personal_stickers",
-          "tableTo": "sticker_assets",
-          "columnsFrom": [
-            "sticker_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "personal_stickers_user_id_sticker_id_pk": {
-          "columns": [
-            "user_id",
-            "sticker_id"
-          ],
-          "name": "personal_stickers_user_id_sticker_id_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
     "reactions": {
       "name": "reactions",
       "columns": {
@@ -3210,6 +3371,15 @@
             "message_id"
           ],
           "isUnique": false
+        },
+        "idx_reactions_message_user_emoji": {
+          "name": "idx_reactions_message_user_emoji",
+          "columns": [
+            "message_id",
+            "user_id",
+            "emoji"
+          ],
+          "isUnique": true
         }
       },
       "foreignKeys": {
@@ -3600,13 +3770,6 @@
     "spaces": {
       "name": "spaces",
       "columns": {
-        "owner_title": {
-          "name": "owner_title",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "id": {
           "name": "id",
           "type": "text",
@@ -3711,30 +3874,6 @@
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "sticker_assets": {
-      "name": "sticker_assets",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}

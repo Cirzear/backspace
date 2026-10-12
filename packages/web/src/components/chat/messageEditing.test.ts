@@ -71,4 +71,13 @@ describe('findLastOwnEditableMessage', () => {
 
     expect(findLastOwnEditableMessage(messages, '', self)).toBeNull();
   });
+
+  it('skips a sticker, whose content is a token and not text', () => {
+    const messages = [
+      message('1', me, 'editable'),
+      message('2', me, `sticker:https://chat.test/api/stickers/assets/${'a'.repeat(64)}.webp`),
+    ];
+
+    expect(findLastOwnEditableMessage(messages, '', self)?.id).toBe('1');
+  });
 });

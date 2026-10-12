@@ -489,7 +489,6 @@
     "aboveYouShort": "Ranks at or above your highest role"
   },
   "sidebar": {
-    "dmUnreadMessages": "{{quantity}} unread direct messages",
     "directMessages": "Direct Messages",
     "addSpace": "Add a Space",
     "joinSpace": "Join a Space",
@@ -527,7 +526,6 @@
       },
       "left": "Left space",
       "leaveFailed": "Failed to leave space",
-      "unreadMessages": "Unread messages: {{quantity}}",
       "unreadMessages_one": "{{count}} unread message",
       "unreadMessages_other": "{{count}} unread messages",
       "unreadMessagesOver99": "More than 99 unread messages"

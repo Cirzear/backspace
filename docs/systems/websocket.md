@@ -23,9 +23,10 @@ Source: `packages/server/src/ws/handler.ts` (transport/auth), `packages/server/s
 ### Messages
 | type | fields | notes |
 |------|--------|-------|
-| `message_create` | channelId, content, replyToId? | SEND_MESSAGES perm; MENTION_EVERYONE for content with `@everyone`, `@here` or a role token (permissions.md, "Mass mentions"); `replyToId` must name a message in the same channel |
-| `message_edit` | messageId, content | author only; MENTION_EVERYONE when the edit adds a mass mention the message did not have |
+| `message_create` | channelId, content, replyToId? | SEND_MESSAGES perm; MENTION_EVERYONE for content with `@everyone`, `@here` or a role token (permissions.md, "Mass mentions"); `replyToId` must name a message a member wrote in the same channel |
+| `message_edit` | messageId, content | author only; MENTION_EVERYONE when the edit adds a mass mention the message did not have; a system message cannot be edited (`error` with `system_message_immutable`) |
 | `message_delete` | messageId | author or MANAGE_MESSAGES |
+| `channel_poke` | channelId, targetUserId | VIEW_CHANNEL and SEND_MESSAGES; 5 a minute per actor. See "Channel pokes" |
 | `typing_start` | channelId | 5s auto-expire |
 
 ### DM Messages
@@ -41,7 +42,7 @@ Source: `packages/server/src/ws/handler.ts` (transport/auth), `packages/server/s
 ### Reactions (space + DM, auto-detected)
 | type | fields | notes |
 |------|--------|-------|
-| `reaction_add` | messageId, emoji | ADD_REACTIONS perm (space). One reaction per user and emoji: a repeat stores nothing, sends no `reaction_added` and queues no relay. The client does not send one either (`chatStore.addReaction` skips a reaction the user holds or has an add in flight for) |
+| `reaction_add` | messageId, emoji | ADD_REACTIONS perm (space). `emoji` is a native emoji or a sticker token (`sticker:<asset URL>`, uploads.md "Personal stickers"); the server stores and relays either as the same string. One reaction per user and emoji: a repeat stores nothing, sends no `reaction_added` and queues no relay. The client does not send one either (`chatStore.addReaction` skips a reaction the user holds or has an add in flight for) |
 | `reaction_remove` | messageId, emoji | own reactions only |
 
 Adds are idempotent by `(messageId, instance-local userId, emoji)` (the DM table
@@ -127,7 +128,7 @@ All four also need the actor to outrank the target (permissions.md, "Role hierar
 |------|--------|-------|
 | `ready` | (see Ready Payload below) | user |
 | `pong` | — | user |
-| `error` | message, code?, details?, dmChannelId? | user; `details` fills the code's placeholders, as in an HTTP error body (`content_too_long` carries `max`); a refused `dm_call_start` or `dm_call_accept` goes to the sending socket only and names its `dmChannelId`; a refused `dm_message_create`, `dm_message_edit` or `dm_message_delete` goes to the sending socket only |
+| `error` | message, code?, details?, dmChannelId? | user; `details` fills the code's placeholders, as in an HTTP error body (`content_too_long` carries `max`); a refused `dm_call_start` or `dm_call_accept` goes to the sending socket only and names its `dmChannelId`; a refused `dm_message_create`, `dm_message_edit`, `dm_message_delete` or `channel_poke` goes to the sending socket only |
 
 ### Messages
 | type | fields | scope |
@@ -139,12 +140,87 @@ All four also need the actor to outrank the target (permissions.md, "Role hierar
 | `reaction_added` | messageId, reaction (includes user) | channel (VIEW_CHANNEL) |
 | `reaction_removed` | messageId, userId, emoji | channel (VIEW_CHANNEL) |
 | `embeds_resolved` | messageId, channelId, embeds[] | channel (VIEW_CHANNEL) |
+| `channel_poke` | message: MessageWithUser (`type: 'system'`) | channel (VIEW_CHANNEL); see "Channel pokes" |
 
 In a space channel every event above is emitted with
 `connectionManager.sendToChannel`, from the REST route and from the WebSocket
 handler alike, so both paths reach the same audience. (`reaction_added` and
 `reaction_removed` are reused on the DM path, where they go out with
 `sendToDmMembers`.) See permissions.md, "Broadcast audience".
+
+#### Channel pokes
+
+A member pokes another member in a space channel: the web client offers Poke
+when the viewer right-clicks a message author's avatar or name. The instance
+hosting the space handles it (`ws/channelPoke.ts`); a poke is never relayed
+to a peer, and DMs have none.
+
+**Capability.** `ready.supportsPoke` is `true` from an instance that handles
+`channel_poke`. The client keeps it per origin (`stores/channelPokeStore.ts`)
+and offers Poke only for messages from an origin that said so. A 1.10.0 or
+older instance sends no flag; there, and in DMs, without SEND_MESSAGES and on
+a message still sending, right-clicking the author opens the message menu as
+before.
+
+**Checks**, in order, each refused with an `error` and its code on the
+sending socket only, storing and sending nothing:
+
+| Refusal | Code |
+|---------|------|
+| `channelId` or `targetUserId` is not a string | `validation_failed` |
+| no such channel, or the actor lacks VIEW_CHANNEL there | `channel_not_found` |
+| the actor lacks SEND_MESSAGES there | `missing_permission` (`details.permission` = `SEND_MESSAGES`) |
+| the target has no member row in the space (an instance admin who never joined included) | `member_not_found` |
+| the target lacks VIEW_CHANNEL there | `poke_target_no_access` |
+| the actor poked 5 times in the last minute | `rate_limited` |
+
+Both ids are the hosting instance's own: the actor is the socket's user there
+(a federated member's replicated row), the target is the `userId` of the
+message the client right-clicked. Anything else the event carries is
+ignored. The limit is a fixed window of 5 per 60 seconds per actor row,
+across every channel and target (`CHANNEL_POKE_RATE_LIMIT`), on top of the
+per-user limit on every event; a refused poke is not counted.
+`DISABLE_RATE_LIMITS` switches it off.
+
+**Stored row.** A poke is stored as a channel message with `type: 'system'`
+(database.md, "messages"), authored by the actor, whose content is
+`{ event: 'channel_poke', targetUserId, targetDisplayName }`
+(`@backspace/shared/src/channelSystemEvents.ts`, which holds the parser).
+`targetDisplayName` is the target's nickname in the space, else their account
+name without the instance (`dmSystemName`), at the time of the poke.
+
+**Delivery.** After the row is stored, one `channel_poke` event carries it,
+hydrated like any channel message, to everyone with VIEW_CHANNEL
+(`sendToChannel`). It is not sent as a `message_created`: a client from
+before pokes ignores an event type it does not know, where a
+`message_created` would mark the channel unread, play the message sound and,
+on the `all` notification level, raise a notification showing the JSON. No
+`channel_unread_count` follows it.
+
+**A passive row.** A system row is not something a member wrote
+(`userWrittenMessages()`): it does not count as unread, does not move the
+last message id in `ready` (so it never makes a channel unread), is left out
+of channel search, cannot be replied to, and cannot be edited
+(`system_message_immutable`). It carries no mass mention stamps, whatever
+names it records. It can be deleted like any message, by the actor or with
+MANAGE_MESSAGES.
+
+**Client.** The author menu sends `channel_poke` to the space's instance
+(`wsSend` with its origin); when that socket is closed it shows
+`chat:poke.disconnected` instead, and a refusal shows as the coded error's
+toast. A `channel_poke` event adds the row to the timeline through
+`chatStore.addRealtimeMessage`, which keeps channel system rows out of
+`realtimeMessageEvents`, so no sound, notification or unread dot follows. The
+row renders as `ChannelSystemMessage`: "{actor} poked {target}", both named
+through `spaceMemberName` from the space's roster like every other surface of
+the space, the stored name used only for a target no longer in it. Content
+the client does not know renders "System message". Then, for a viewer of the
+channel on that origin, the target's newest avatar in the message list
+(`data-poke-user`) shakes and a pointing hand slides in
+(`components/chat/channelPoke.ts`). The cue does not play with reduced
+motion, nor, unless the viewer is the actor, in DND or in a channel that is
+muted or set to `nothing`. Loading history never plays it. An older client
+shows a stored poke as "System message" when it loads history.
 
 ### DM Messages
 | type | fields | scope |
@@ -177,7 +253,8 @@ VIEW_CHANNEL and READ_MESSAGE_HISTORY there (or ADMINISTRATOR); a DM only
 while the user is an open member of a conversation that is not deleted.
 Deleted messages are gone from the table and drop out of the next count.
 DM system messages count like any other message, as they do for the
-unread dot.
+unread dot. A space channel's system rows (pokes) do not count, as they do
+not move the unread dot (see "Channel pokes").
 
 **The cap.** A count stops at 100, which reads "100 or more". The badges
 show anything above 99 as "99+", and a sum of capped counts reaches 100
@@ -400,6 +477,7 @@ reason: `'displaced'` (new tab) | `'session_closed'`
   voiceUserStates?: Record<string, { isMuted, isDeafened, isCameraOn, isScreenSharing }>,
   spaceVoiceStates?: Record<string, { spaceMuted, spaceDeafened, permissionMuted }>,
   readStates?: ReadState[],
+  supportsPoke?: boolean,          // true from an instance that handles channel_poke (see "Channel pokes"); absent before
   unreadCounts?: Record<channelId, number>, // unread messages per countable space channel and open DM, capped at 100 (see "Unread counts")
   activeCalls?: ActiveCallInfo[],  // includes federatedCallHost?, livekitUrl?, livekitToken? for federated calls
   userActivities?: Record<userId, Activity[]>,  // space members, DM members and friends; keys are this instance's row ids

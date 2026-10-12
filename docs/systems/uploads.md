@@ -17,10 +17,17 @@ Source files:
 - `packages/web/src/components/chat/AttachmentProgress.tsx` -- Radial-progress overlay for in-flight transfers in optimistic bubbles
 - `packages/web/src/components/layout/TransferIndicator.tsx` -- Channel-header transfer indicator + global tray panel
 - `packages/web/src/components/chat/ImagePreview.tsx` -- Full-screen image preview modal with save/copy toolbar
+- `packages/server/src/routes/stickers.ts` -- Personal sticker collection, upload (base64 JSON, not tus) and asset serving
+- `packages/server/src/utils/stickerAssets.ts` -- Sticker asset paths, the reference scan and the unused-asset cleanup
+- `packages/shared/src/stickers.ts` -- Sticker token grammar (`stickerUrl`, `stickerIdOf`) and limits
+- `packages/web/src/components/chat/StickerPicker.tsx`, `StickerUploadForm.tsx`, `StickerUploadPreview.tsx`, `StickerMessage.tsx` -- Picker, batch upload form, sticker message row
+- `packages/web/src/utils/stickerMessages.ts` -- What a sticker message is and what a one-line surface shows for it
 
-DB tables: `attachments`, `instance_settings` (maxUploadSizeBytes). See `docs/systems/database.md` for full schemas.
+DB tables: `attachments`, `instance_settings` (maxUploadSizeBytes), `sticker_assets`, `personal_stickers`. See `docs/systems/database.md` for full schemas.
 
 **Out of scope:** Federation file replication/download queue (see `docs/systems/federation.md`), admin storage stats UI, admin user management.
+
+**Personal stickers** have their own small upload path, storage directory and cleanup phase; see [section 14](#14-personal-stickers). The tus pipeline and the attachment lifecycle do not handle them.
 
 ### Capability Matrix
 
@@ -430,6 +437,11 @@ Three-phase cleanup:
 **Phase 3: Dangling attachment records** -- Attachment DB records pointing to deleted messages.
 - Deletes file, thumbnail, and DB record
 
+**Phase 4: Unused sticker assets** -- `cleanupUnusedStickerAssets` in `utils/stickerAssets.ts`; see [section 14](#14-personal-stickers), "Cleanup".
+- Deletes the asset row and its file when nothing on this instance names it and the row is past its 24-hour grace period
+- Deletes temporary sticker files older than one hour
+- Its counts are added to `deletedFiles` and `freedBytes`; it removes no attachment records
+
 #### `cleanupOldMedia(maxAgeDays: number, dryRun: boolean) -> CleanupResult`
 
 Age-based media cleanup:
@@ -690,6 +702,58 @@ These functions are called client-side when displaying content from federated in
 | `packages/web/src/utils/imageActions.ts` | `saveImage()` -- right-click Save Image, `ImagePreview` toolbar |
 | `packages/web/src/components/chat/messageMenuItems.tsx` | Save Image / Save Video / Save Audio menu entries |
 | `packages/web/src/components/chat/AttachmentRenderer.tsx` | File-card download button (replaces the previous native `<a download>`) |
+
+---
+
+## 14. Personal Stickers
+
+Each account keeps a collection of stickers: small images it can send as a message or use as a reaction. A sticker travels as text, never as an attachment, so it needs no new message, reaction, WebSocket or federation field.
+
+### Token
+
+A sticker is the whole content of a message, or the whole `emoji` of a reaction, written as
+
+```
+sticker:<origin>/api/stickers/assets/<sha256>.webp
+```
+
+`<origin>` is `getOurOrigin()` of the instance that stores the asset (`PUBLIC_ORIGIN`, else `https://DOMAIN`). `stickerUrl` in `packages/shared/src/stickers.ts` accepts a value only when it is exactly one canonical http(s) URL with that path, no userinfo, query or fragment, and returns the URL to draw; `stickerIdOf` returns the hash. Anything else, including text that merely contains a token, is ordinary text. The origin is written into every token, so changing `PUBLIC_ORIGIN` or `DOMAIN` later leaves earlier stickers pointing at the old address.
+
+The client reads `isStickerMessage` and `messageTextForPreview` from `utils/stickerMessages.ts`. The timeline row draws the image (`StickerMessage`) and draws no embeds for it. Every one-line surface (DM sidebar preview, desktop notification body, reply quote, search result) shows the localized word "Sticker". A sticker message has no Edit action, is skipped by the Up key, and hides Copy Text. A reaction pill draws the image at 28 px and its hover card at full width above the reactor names.
+
+### Upload and collection
+
+`POST /api/stickers` takes `{ name, image }`, the image as canonical base64 inside the JSON body of the authenticated API client (not tus: stickers are small and are stored once per content hash). The route:
+
+1. refuses a blank name (`validation_failed`, the schema caps it at 100 characters), more than 30 uploads per account per minute (`429 rate_limited`, a fixed window keyed on the row id, so each federated account counts on its own) and a full collection (`409 sticker_collection_full`, 200 entries, `MAX_PERSONAL_STICKERS`);
+2. decodes the bytes with sharp: at most 5 MiB in, at most 16,777,216 decoded pixels across all frames, PNG, JPEG, WebP or GIF only (SVG and anything else is `400 sticker_invalid_image` with `details.max`, the limit in MB);
+3. re-encodes to WebP, keeping animation and frame delays, fitting every frame into 512 x 512 without enlarging, and refuses a result larger than 5 MiB. Metadata and any bytes outside the image are dropped;
+4. names the asset by the SHA-256 of the encoded bytes, writes (or makes fresh again) its `sticker_assets` row, writes the file to a temporary name and renames it into place, then adds the collection entry.
+
+`POST /api/stickers/:id/collect` takes `{ token, name }` and adds an existing local asset: the token must be exactly this instance's token for that id (`400 sticker_not_local` otherwise) and the asset must exist (`404 sticker_not_found`). The client sends a localized default name. Collecting is idempotent: an entry already in the collection is returned unchanged, even when the collection is full. `DELETE /api/stickers/:id` removes only the caller's entry; the asset stays for messages and reactions that use it. The picker removes entries only in its Manage mode, so picking a sticker never removes one.
+
+The upload form takes up to 20 images at once (`MAX_STICKER_BATCH`, fewer when the collection has less room) from the file picker, a drop or a paste. It previews and names them locally and sends nothing until the user confirms. It then uploads them one at a time: each accepted image leaves the form and is added to the picker, each refused one stays with its reason under its name, and the batch stops at the first refusal every later image would meet (`rate_limited`, `sticker_collection_full`). Nothing is rolled back.
+
+Collecting from a message is in the image's context menu ("Add to my stickers"): a sticker message is collected by its token, and a local image attachment (`/api/uploads/...` on the page's own origin) is read by the browser from its original URL, capped at 5 MiB while streaming, and uploaded like a picked file. The server never fetches a URL a client names.
+
+### Serving
+
+`GET /api/stickers/assets/:sha256.webp` is public, like `/api/uploads/:filename`: anyone holding the link can read the image. It answers `404 sticker_not_found` for a malformed name, an unknown id, or a row whose file is missing, and otherwise sends the file with `Cache-Control: public, max-age=31536000, immutable`, `Content-Type: image/webp`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; img-src 'self'` and `X-Frame-Options: DENY`. The collection routes need a JWT and only ever read or change the caller's own entries.
+
+### Storage and cleanup
+
+Files live in `UPLOAD_DIR/stickers/<sha256>.webp`. The attachment phases of the janitor read only the top level of `UPLOAD_DIR`, and the storage stats do not count this directory. Back it up with the rest of the upload directory.
+
+Phase 4 of `cleanupStorage` (`cleanupUnusedStickerAssets`) removes an asset when no collection entry, channel message, DM message, channel reaction or DM reaction on this instance names it and its `created_at` is more than 24 hours old. The upload sets `created_at` to the upload time before it writes the file, also for bytes that already have a row, so a file being uploaded is never inside the cleanup's reach; the cleanup runs synchronously from its reference scan to its last delete. Temporary files older than an hour are removed too.
+
+### Across instances
+
+A sticker message or reaction crosses instances as its token, through the existing DM message and reaction relay and the existing channel routes. Viewers' browsers load the image from the origin in the token, the way they load an image embed from its host; no instance downloads or replicates the asset, and the file size checks of [federation file replication](federation.md#7-file-replication) do not apply.
+
+- A user sends stickers from their home collection (`api.stickers` is the home client). In a space hosted on another instance, the message is stored there and the image still comes from the home instance.
+- The cleanup above counts only rows on its own instance. A sticker used only in a space on another instance stops rendering there once its owner removes it from their collection and no local message or reaction uses it.
+- "Add to my stickers" on another instance's sticker is refused with `sticker_not_local`.
+- What an older version shows: a 1.10.0 or older client shows the token as a line of text with a link, and a sticker reaction as a pill holding that text. A current instance resolves no embed for a token (embeds.md, `extractUrls`). A space hosted on a 1.10.0 or older instance does: a sticker sent there gets an image embed of its asset URL, so that instance's own clients see the text and the image, and a current client hides the embed and draws the sticker once. A relayed DM gets no embed on any version, because the receiving side of the relay resolves none.
 
 ---
 

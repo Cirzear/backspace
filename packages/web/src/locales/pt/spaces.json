@@ -533,7 +533,6 @@
       },
       "left": "Você saiu do espaço",
       "leaveFailed": "Falha ao sair do espaço",
-      "unreadMessages": "Unread messages: {{quantity}}",
       "unreadMessages_one": "{{count}} mensagem não lida",
       "unreadMessages_many": "{{count}} mensagens não lidas",
       "unreadMessages_other": "{{count}} mensagens não lidas",
@@ -569,7 +568,6 @@
       "spaceDeafened": "Ensurdecido no espaço",
       "permissionMuted": "Silenciado (sem permissão para falar)"
     },
-    "dmUnreadMessages": "{{quantity}} unread direct messages",
     "dmUnreadMessages_one": "{{count}} mensagem direta não lida",
     "dmUnreadMessages_many": "{{count}} mensagens diretas não lidas",
     "dmUnreadMessages_other": "{{count}} mensagens diretas não lidas",
@@ -607,10 +605,10 @@
       "owner": "Dono"
     },
     "ownerTitle": {
-      "edit": "Edit owner title",
-      "label": "Owner title",
-      "hint": "Visible to all members in this space. Use 1–{{max}} characters; this does not change permissions.",
-      "reset": "Reset to default"
+      "edit": "Editar título do dono",
+      "label": "Título do dono",
+      "hint": "Visível para todos os membros deste espaço. De 1 a {{max}} caracteres; as permissões não mudam.",
+      "reset": "Restaurar título padrão"
     },
     "menu": {
       "profile": "Ver perfil",

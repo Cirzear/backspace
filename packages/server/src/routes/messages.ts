@@ -15,6 +15,7 @@ import {
   type Embed,
 } from '@backspace/shared';
 import { sanitizeUser } from '../utils/sanitize.js';
+import { userWrittenMessages } from '../db/userWrittenMessages.js';
 import { addsMassMention, hasMassMention, massMentionFields } from '@backspace/shared/src/mentions.js';
 import { deleteAttachmentFiles } from '../utils/fileCleanup.js';
 import { sendError } from '../utils/httpErrors.js';
@@ -153,7 +154,8 @@ export function fetchReplyToMessages(
 }
 
 /**
- * True when `replyToId` names an existing message inside `channelId`.
+ * True when `replyToId` names an existing message a member wrote inside
+ * `channelId` (a system row such as a poke takes no replies).
  *
  * Used by both channel message-create paths (REST and WebSocket) so a reply can
  * only ever point at the channel it is posted into. Author permissions are not
@@ -168,9 +170,22 @@ export function isReplyTargetInChannel(channelId: string, replyToId: string): bo
     .where(and(
       eq(schema.messages.id, replyToId),
       eq(schema.messages.channelId, channelId),
+      userWrittenMessages(),
     ))
     .get();
   return target !== undefined;
+}
+
+/**
+ * The mass mention stamps of a stored channel message (`massMentionFields`).
+ * A system message is written by this instance and records names people
+ * chose (a poke records its target's name), so its text is never a mention:
+ * a member whose nickname is `@everyone` must not reach every member by
+ * being poked. Only messages members wrote carry the stamps.
+ */
+export function storedMassMentionFields(message: { type: 'user' | 'system'; content: string | null }): { mentionEveryone: boolean; mentionRoleIds: string[] } {
+  if (message.type === 'system') return { mentionEveryone: false, mentionRoleIds: [] };
+  return massMentionFields(message.content);
 }
 
 export function buildMessageWithUser(
@@ -190,7 +205,7 @@ export function buildMessageWithUser(
     type: message.type,
     editedAt: message.editedAt,
     createdAt: message.createdAt,
-    ...massMentionFields(message.content),
+    ...storedMassMentionFields(message),
     user: sanitizeUser(user),
     attachments: attachmentRows.map(a => ({
       id: a.id,
@@ -449,8 +464,12 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
       return sendError(reply, 404, 'message_not_found');
     }
 
-    // System event payloads are server-authored and cannot be edited by the actor.
-    if (message.type === 'system' || message.userId !== request.userId) {
+    // A system row (a poke) is written by this instance, so nobody edits it,
+    // its author included; the DM routes refuse theirs with the same code.
+    if (message.type === 'system') {
+      return sendError(reply, 403, 'system_message_immutable');
+    }
+    if (message.userId !== request.userId) {
       return sendError(reply, 403, 'message_edit_not_author');
     }
 

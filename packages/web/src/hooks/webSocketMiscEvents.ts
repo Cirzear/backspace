@@ -25,12 +25,6 @@ export const miscEvents = {
     useChannelActivityStore.getState().updateCounts(origin, event.counts);
     useUnreadCountStore.getState().updateCounts(origin, event.counts);
   },
-  channel_poke_failed: (origin, event) => {
-    useUIStore.getState().addToast(event.message, 'warning');
-  },
-  channel_poke: (origin, event) => {
-    receiveChannelPoke(origin, event);
-  },
   mark_unread: (origin, event) => {
     const { onMarkUnread } = useChatStore.getState();
     onMarkUnread(event.channelId, event.messageId);

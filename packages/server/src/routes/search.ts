@@ -5,6 +5,8 @@ import { authenticate } from '../utils/auth.js';
 import { sendError } from '../utils/httpErrors.js';
 import { hasPermission, getChannelSpaceId, PermissionBits, isDmMember } from '../utils/permissions.js';
 import { hydrateChannelMessages } from './messages.js';
+import { userWrittenMessages } from '../db/userWrittenMessages.js';
+import { notStickerContent } from '../db/stickerContent.js';
 import { hydrateDmMessages } from './dm.js';
 
 interface SearchQuery {
@@ -42,10 +44,11 @@ export async function searchRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const db = getDb();
-    const conditions: ReturnType<typeof eq>[] = [eq(schema.messages.channelId, id)];
+    // What members wrote: a poke's JSON content is not searchable text.
+    const conditions: ReturnType<typeof eq>[] = [eq(schema.messages.channelId, id), userWrittenMessages()];
 
     if (q && q.trim()) {
-      conditions.push(like(schema.messages.content, `%${q.trim()}%`));
+      conditions.push(like(schema.messages.content, `%${q.trim()}%`), notStickerContent(schema.messages.content));
     }
 
     if (from && from.trim()) {
@@ -141,7 +144,7 @@ export async function searchRoutes(app: FastifyInstance): Promise<void> {
     const conditions: ReturnType<typeof eq>[] = [eq(schema.dmMessages.dmChannelId, id)];
 
     if (q && q.trim()) {
-      conditions.push(like(schema.dmMessages.content, `%${q.trim()}%`));
+      conditions.push(like(schema.dmMessages.content, `%${q.trim()}%`), notStickerContent(schema.dmMessages.content));
     }
 
     if (from && from.trim()) {

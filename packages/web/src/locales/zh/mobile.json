@@ -9,6 +9,12 @@
     "homeInstance": "主实例：{{domain}}",
     "logOutConfirm": "确定要退出登录吗？"
   },
+  "chat": {
+    "channelFallback": "频道",
+    "openCall": "打开通话",
+    "cancelCall": "取消呼叫",
+    "unknownChannel": "频道"
+  },
   "instance": {
     "title": "选择实例",
     "description": "连接到你信任的 Backspace 服务器。",
@@ -30,16 +36,5 @@
     "title": "无法启动 Backspace",
     "description": "启动或安全会话存储失败。为保护会话，应用已被阻止继续运行。",
     "reload": "重新加载"
-  },
-  "nav": {
-    "spaces": "空间",
-    "dms": "私信",
-    "you": "我"
-  },
-  "chat": {
-    "channelFallback": "频道",
-    "openCall": "打开通话",
-    "cancelCall": "取消呼叫",
-    "unknownChannel": "频道"
   }
 }

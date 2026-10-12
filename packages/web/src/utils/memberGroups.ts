@@ -29,6 +29,26 @@ export function memberNameColor(member: Pick<MemberWithUser, 'userId' | 'roles'>
 }
 
 /**
+ * The owner group's heading as the space's host stores it: the owner title,
+ * or null for the translated default ("Owner"). It labels the group, never the
+ * owner's name: the owner's row, messages and profile show their nickname or
+ * account name like anyone else's (`spaceMemberName`). Every surface that
+ * shows the heading reads it here.
+ */
+export function ownerGroupTitle(space: { ownerTitle?: string | null }): string | null {
+  return typeof space.ownerTitle === 'string' ? space.ownerTitle : null;
+}
+
+/**
+ * Whether the space's host keeps owner titles. A host on 1.10.0 or older does
+ * not send `ownerTitle` and ignores it in a PATCH, so a title written there
+ * would be dropped without an error.
+ */
+export function hostKeepsOwnerTitle(space: { ownerTitle?: string | null }): boolean {
+  return space.ownerTitle !== undefined;
+}
+
+/**
  * Which heading a member is listed under: the owner first, then one group per
  * top role, highest first, then everyone online without a role.
  */

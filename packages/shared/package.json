@@ -23,6 +23,8 @@
     "./src/stickers.js": "./src/stickers.ts",
     "./src/dmSystemEvents": "./src/dmSystemEvents.ts",
     "./src/dmSystemEvents.js": "./src/dmSystemEvents.ts",
+    "./src/channelSystemEvents": "./src/channelSystemEvents.ts",
+    "./src/channelSystemEvents.js": "./src/channelSystemEvents.ts",
     "./translation": {
       "types": "./src/translation.d.ts"
     }

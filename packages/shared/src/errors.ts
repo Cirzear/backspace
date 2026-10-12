@@ -253,6 +253,7 @@ export const ERROR_CODES = [
   'system_message_immutable',
   'message_edit_not_author',
   'message_delete_forbidden',
+  'poke_target_no_access',
   'paging_cursor_conflict',
   'internal_error',
   // misc
@@ -267,6 +268,12 @@ export const ERROR_CODES = [
   'directory_unreachable',
   'directory_private_space',
   'directory_requires_discovery',
+
+  // Personal stickers
+  'sticker_invalid_image',
+  'sticker_not_local',
+  'sticker_not_found',
+  'sticker_collection_full',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

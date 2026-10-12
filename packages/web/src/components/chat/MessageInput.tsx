@@ -651,7 +651,6 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
           onClose={() => setActivePopover(null)}
           onEmojiSelect={handleEmojiSelect}
           onGifSelect={handleMediaSelect}
-          onStickerSelect={handleMediaSelect}
           anchorRef={popoverAnchorRef}
           gifEnabled={gifEnabled}
           onTabChange={setActivePopover}

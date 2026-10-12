@@ -72,12 +72,11 @@ const SPACE: TaggedSpace = {
   icon: null,
   banner: null,
   avatarColor: 'teal',
-  ownerId: 'workbench-user',
+  ownerTitle: null, ownerId: 'workbench-user',
   inviteCode: null,
   visibility: 'public',
   directoryListed: false,
   description: 'Rock pools, field notes and the odd crab.',
-  ownerTitle: null,
   createdAt: 1,
   _instanceOrigin: '',
 };

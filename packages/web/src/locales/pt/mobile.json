@@ -10,36 +10,31 @@
     "logOutConfirm": "Tem certeza de que deseja sair?"
   },
   "chat": {
+    "channelFallback": "Canal",
     "openCall": "Abrir chamada",
     "cancelCall": "Cancelar chamada",
-    "unknownChannel": "canal",
-    "channelFallback": "Channel"
+    "unknownChannel": "canal"
   },
   "instance": {
-    "title": "Choose your instance",
-    "description": "Connect to the Backspace server you trust.",
-    "address": "Instance address",
-    "httpsHelp": "Enter a complete HTTPS origin, such as https://chat.example.com. HTTP and invalid certificates are not supported.",
-    "check": "Check instance",
-    "checking": "Checking…",
-    "confirm": "Use this instance",
-    "connectionError": "Could not verify the instance. Check the address, connection and HTTPS certificate.",
-    "invalidOrigin": "Enter a complete HTTPS origin without credentials, path, query or fragment.",
-    "httpError": "The instance returned HTTP {{status}}.",
-    "invalidResponse": "The server did not return valid Backspace instance information.",
-    "sessionHelp": "Unsent drafts and transfers are kept only for this session.",
-    "selected": "Instance: {{host}}",
-    "change": "Change instance",
-    "logoutRequired": "Log out before changing the instance."
+    "title": "Escolha sua instância",
+    "description": "Conecte-se ao servidor Backspace em que você confia.",
+    "address": "Endereço da instância",
+    "httpsHelp": "Insira uma origem HTTPS completa, como https://chat.example.com. HTTP e certificados inválidos não são suportados.",
+    "check": "Verificar instância",
+    "checking": "Verificando…",
+    "confirm": "Usar esta instância",
+    "connectionError": "Não foi possível verificar a instância. Verifique o endereço, a conexão e o certificado HTTPS.",
+    "invalidOrigin": "Insira uma origem HTTPS completa sem credenciais, caminho, consulta ou fragmento.",
+    "httpError": "A instância retornou HTTP {{status}}.",
+    "invalidResponse": "O servidor não retornou informações válidas da instância do Backspace.",
+    "sessionHelp": "Rascunhos e transferências não enviados são mantidos apenas para esta sessão.",
+    "selected": "Instância: {{host}}",
+    "change": "Alterar instância",
+    "logoutRequired": "Saia antes de alterar a instância."
   },
   "startup": {
-    "title": "Unable to start Backspace",
-    "description": "Startup or secure session storage failed. The app is blocked to protect your session.",
-    "reload": "Reload"
-  },
-  "nav": {
-    "spaces": "Spaces",
-    "dms": "DMs",
-    "you": "You"
+    "title": "Não foi possível iniciar o Backspace",
+    "description": "Falha na inicialização ou no armazenamento seguro da sessão. O aplicativo foi bloqueado para proteger sua sessão.",
+    "reload": "Recarregar"
   }
 }

@@ -941,7 +941,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         newMessages.set(channelId, updated);
       }
-      // Channel system history is passive: do not enqueue sound/desktop notification events.
+      // Channel system history is passive; DM system-event behavior is unchanged.
       if (normalizedMessage.type === 'system' && !('dmChannelId' in normalizedMessage)) {
         return { messages: newMessages, detachedChannels };
       }

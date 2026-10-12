@@ -9,6 +9,12 @@
     "homeInstance": "Домашний сервер: {{domain}}",
     "logOutConfirm": "Вы уверены, что хотите выйти?"
   },
+  "chat": {
+    "channelFallback": "Канал",
+    "openCall": "Открыть звонок",
+    "cancelCall": "Отменить звонок",
+    "unknownChannel": "канал"
+  },
   "instance": {
     "title": "Выберите сервер",
     "description": "Подключитесь к серверу Backspace, которому доверяете.",
@@ -30,16 +36,5 @@
     "title": "Не удалось запустить Backspace",
     "description": "Ошибка запуска или защищённого хранилища сеанса. Приложение заблокировано для защиты вашего сеанса.",
     "reload": "Перезагрузить"
-  },
-  "nav": {
-    "spaces": "Пространства",
-    "dms": "Личные сообщения",
-    "you": "Вы"
-  },
-  "chat": {
-    "channelFallback": "Канал",
-    "openCall": "Открыть звонок",
-    "cancelCall": "Отменить звонок",
-    "unknownChannel": "канал"
   }
 }

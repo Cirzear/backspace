@@ -7,7 +7,7 @@ import { backfillOutboxQueueKeys, outboxQueueKey } from '../utils/federationOutb
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS = path.resolve(__dirname, '../../drizzle');
-const OUTBOX_QUEUE_MIGRATION = '0026_outbox_queue_keys.sql';
+const OUTBOX_QUEUE_MIGRATION = '0021_outbox_queue_keys.sql';
 
 function apply(db: Database.Database, file: string): void {
   const text = fs.readFileSync(path.join(MIGRATIONS, file), 'utf8');

@@ -1,19 +1,36 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { useInterfaceScaleStore } from '../../stores/interfaceScaleStore';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import React from 'react';
 import { ReactionPickerPopover } from './ReactionPickerPopover';
 
 // Mock EmojiPicker to keep test light and focused on positioning/interactions
 vi.mock('./EmojiPicker', () => ({
   EmojiPicker: ({ onEmojiSelect }: { onEmojiSelect: (emoji: { native: string }) => void }) => (
-    <div data-testid="mock-emoji-picker" style={{ height: 440, width: 350 }}>
+    <div data-testid="mock-emoji-picker" onKeyDown={(event) => event.stopPropagation()} style={{ height: 440, width: 350 }}>
       <button onClick={() => onEmojiSelect({ native: '🎉' })}>Select Emoji</button>
     </div>
   ),
 }));
 
 describe('ReactionPickerPopover', () => {
+  let resized: () => void;
+  let pickerHeight: number;
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    useInterfaceScaleStore.setState({ scale: 100 });
+  });
   beforeEach(() => {
+    pickerHeight = 450;
+    useInterfaceScaleStore.setState({ scale: 100 });
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(360);
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(() => pickerHeight);
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resized = callback; }
+      observe() {}
+      disconnect() {}
+    });
     // Standard desktop viewport (1024 x 800)
     Object.defineProperty(window, 'innerWidth', { value: 1024, configurable: true });
     Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true });
@@ -67,7 +84,7 @@ describe('ReactionPickerPopover', () => {
     const dialog = screen.getByRole('dialog');
     expect(dialog).toBeInTheDocument();
 
-    // Flip above: top = anchor.top (650) - DEFAULT_PICKER_HEIGHT (450) - MARGIN (8) = 192px
+    // Flip above: top = anchor.top (650) - measured picker height (450) - MARGIN (8) = 192px
     const topValue = parseInt(dialog.style.top, 10);
     expect(topValue).toBeLessThan(650);
     // Ensure the dialog bottom does not exceed viewport height (800)
@@ -94,7 +111,7 @@ describe('ReactionPickerPopover', () => {
     expect(topValue).toBeGreaterThanOrEqual(8);
   });
 
-  it('closes on Escape key press', () => {
+  it('closes on Escape from inside the picker even when it stops bubbling', () => {
     const onClose = vi.fn();
     const anchor = createAnchor({ top: 200, bottom: 232, left: 800, right: 832 });
     render(
@@ -105,7 +122,7 @@ describe('ReactionPickerPopover', () => {
       />
     );
 
-    fireEvent.keyDown(document, { key: 'Escape' });
+    fireEvent.keyDown(screen.getByText('Select Emoji'), { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -139,4 +156,23 @@ describe('ReactionPickerPopover', () => {
     fireEvent.click(screen.getByText('Select Emoji'));
     expect(onEmojiSelect).toHaveBeenCalledWith({ native: '🎉' });
   });
+  it('keeps CSS dimensions unscaled at 200% interface zoom', () => {
+    useInterfaceScaleStore.setState({ scale: 200 });
+    const anchor = createAnchor({ top: 650, bottom: 682, left: 800, right: 832 });
+    render(<ReactionPickerPopover anchorEl={anchor} onEmojiSelect={vi.fn()} onClose={vi.fn()} />);
+    const dialog = screen.getByRole('dialog');
+    // 1024 visual pixels = 512 CSS pixels; the 360px picker must not be divided again.
+    expect(dialog.style.left).toBe('56px');
+    expect(dialog.style.top).toBe('8px');
+  });
+
+  it('remeasures when switching from emoji to the taller sticker tab', () => {
+    pickerHeight = 200;
+    const anchor = createAnchor({ top: 400, bottom: 432, left: 800, right: 832 });
+    render(<ReactionPickerPopover anchorEl={anchor} onEmojiSelect={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.getByRole('dialog').style.top).toBe('440px');
+    act(() => { pickerHeight = 500; resized(); });
+    expect(screen.getByRole('dialog').style.top).toBe('8px');
+  });
+
 });

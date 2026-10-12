@@ -1,4 +1,3 @@
-import { getHomeOrigin } from '../platform/instanceRuntime';
 // Dev-only workbench for the Backspace page (`/backspace`) and its two entry
 // points. Nothing in the app imports this file; `dev-project-hub.html` is its
 // only entry. It exists so every card state can be looked at and
@@ -128,7 +127,7 @@ const FILLED_LINKS: ProjectLinks = {
 function linksFor(state: HubState): ProjectLinks {
   if (state === 'shipping') return PROJECT_LINKS;
   if (state === 'community-request-form') {
-    return { ...FILLED_LINKS, community: { origin: getHomeOrigin(), spaceId: COMMUNITY_SPACE_ID } };
+    return { ...FILLED_LINKS, community: { origin: window.location.origin, spaceId: COMMUNITY_SPACE_ID } };
   }
   return FILLED_LINKS;
 }
@@ -194,7 +193,7 @@ const COMMUNITY_SPACE: TaggedSpace = {
   icon: null,
   banner: null,
   avatarColor: 'mint',
-  ownerId: 'maintainer', ownerTitle: null,
+  ownerTitle: null, ownerId: 'maintainer',
   inviteCode: null,
   visibility: 'request',
   directoryListed: true,

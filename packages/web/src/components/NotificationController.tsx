@@ -10,6 +10,7 @@ import i18n from '../i18n';
 import { useSpaceStore } from '../stores/spaceStore';
 import { useUIStore } from '../stores/uiStore';
 import { replaceEmojiShortcodesInMarkdownSource } from '../utils/emojiShortcodes';
+import { isStickerMessage } from '../utils/stickerMessages';
 
 /**
  * Headless component that bridges store events to native OS notifications and badge counts.
@@ -90,9 +91,11 @@ export function NotificationController() {
           // i18n.t, not a hook: read at notification time, in the language
           // selected now rather than when this subscription was made.
           const displayName = message.user?.displayName || message.user?.username || i18n.t('chat:notification.unknownSender');
-          const body = message.content
-            ? replaceEmojiShortcodesInMarkdownSource(message.content).replace(/[*_~`>#\-\[\]]/g, '').slice(0, 100)
-            : i18n.t('chat:notification.attachmentOnly');
+          const body = isStickerMessage(message.content)
+            ? i18n.t('chat:stickers.sticker')
+            : message.content
+              ? replaceEmojiShortcodesInMarkdownSource(message.content).replace(/[*_~`>#\-\[\]]/g, '').slice(0, 100)
+              : i18n.t('chat:notification.attachmentOnly');
           // The event's channel id is the one the message was filed under; a
           // DM message has no `channelId` of its own (it has `dmChannelId`).
           showAlertNotification('message', displayName, body, {

@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "03a3fa87-cdf5-4a34-8bcb-40fb6021e37d",
-  "prevId": "24305c4b-09cf-4b11-9741-7a999a6f9426",
+  "id": "4b498e74-96f0-4186-b044-b7df65f453a6",
+  "prevId": "74d930c0-ab2d-4119-a770-6cb0e2681533",
   "tables": {
     "attachments": {
       "name": "attachments",
@@ -860,6 +860,15 @@
           ],
           "isUnique": false
         },
+        "idx_dm_messages_channel_unread": {
+          "name": "idx_dm_messages_channel_unread",
+          "columns": [
+            "dm_channel_id",
+            "CAST(id AS INTEGER)",
+            "user_id"
+          ],
+          "isUnique": false
+        },
         "idx_dm_messages_source_unique": {
           "name": "idx_dm_messages_source_unique",
           "columns": [
@@ -961,6 +970,15 @@
             "dm_message_id"
           ],
           "isUnique": false
+        },
+        "idx_dm_reactions_message_user_emoji": {
+          "name": "idx_dm_reactions_message_user_emoji",
+          "columns": [
+            "dm_message_id",
+            "user_id",
+            "emoji"
+          ],
+          "isUnique": true
         }
       },
       "foreignKeys": {
@@ -3008,6 +3026,15 @@
             "user_id"
           ],
           "isUnique": false
+        },
+        "idx_messages_channel_unread": {
+          "name": "idx_messages_channel_unread",
+          "columns": [
+            "channel_id",
+            "CAST(id AS INTEGER)",
+            "user_id"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {
@@ -3048,6 +3075,141 @@
             "id"
           ],
           "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "notification_settings": {
+      "name": "notification_settings",
+      "columns": {
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "space_id": {
+          "name": "space_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "channel_id": {
+          "name": "channel_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "level": {
+          "name": "level",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "muted": {
+          "name": "muted",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "muted_until": {
+          "name": "muted_until",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "suppress_everyone": {
+          "name": "suppress_everyone",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "suppress_roles": {
+          "name": "suppress_roles",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_notification_settings_space_row": {
+          "name": "idx_notification_settings_space_row",
+          "columns": [
+            "user_id",
+            "space_id"
+          ],
+          "isUnique": true,
+          "where": "\"notification_settings\".\"channel_id\" IS NULL"
+        },
+        "idx_notification_settings_channel_row": {
+          "name": "idx_notification_settings_channel_row",
+          "columns": [
+            "user_id",
+            "channel_id"
+          ],
+          "isUnique": true,
+          "where": "\"notification_settings\".\"channel_id\" IS NOT NULL"
+        }
+      },
+      "foreignKeys": {
+        "notification_settings_user_id_users_id_fk": {
+          "name": "notification_settings_user_id_users_id_fk",
+          "tableFrom": "notification_settings",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "notification_settings_space_id_spaces_id_fk": {
+          "name": "notification_settings_space_id_spaces_id_fk",
+          "tableFrom": "notification_settings",
+          "tableTo": "spaces",
+          "columnsFrom": [
+            "space_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "notification_settings_channel_id_channels_id_fk": {
+          "name": "notification_settings_channel_id_channels_id_fk",
+          "tableFrom": "notification_settings",
+          "tableTo": "channels",
+          "columnsFrom": [
+            "channel_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -3362,6 +3524,15 @@
             "message_id"
           ],
           "isUnique": false
+        },
+        "idx_reactions_message_user_emoji": {
+          "name": "idx_reactions_message_user_emoji",
+          "columns": [
+            "message_id",
+            "user_id",
+            "emoji"
+          ],
+          "isUnique": true
         }
       },
       "foreignKeys": {
@@ -4260,6 +4431,20 @@
           "autoincrement": false,
           "default": 0
         },
+        "detached_home_instance": {
+          "name": "detached_home_instance",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "detached_home_user_id": {
+          "name": "detached_home_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "last_active_day": {
           "name": "last_active_day",
           "type": "text",
@@ -4294,6 +4479,13 @@
           "name": "idx_users_home_user_id",
           "columns": [
             "home_user_id"
+          ],
+          "isUnique": false
+        },
+        "idx_users_detached_home_user_id": {
+          "name": "idx_users_detached_home_user_id",
+          "columns": [
+            "detached_home_user_id"
           ],
           "isUnique": false
         }
@@ -4411,11 +4603,24 @@
   "_meta": {
     "schemas": {},
     "tables": {},
-    "columns": {
-      "\"federation_peers\".\"needs_attention_reason\"": "\"federation_peers\".\"status_reason\""
-    }
+    "columns": {}
   },
   "internal": {
-    "indexes": {}
+    "indexes": {
+      "idx_dm_messages_channel_unread": {
+        "columns": {
+          "CAST(id AS INTEGER)": {
+            "isExpression": true
+          }
+        }
+      },
+      "idx_messages_channel_unread": {
+        "columns": {
+          "CAST(id AS INTEGER)": {
+            "isExpression": true
+          }
+        }
+      }
+    }
   }
 }

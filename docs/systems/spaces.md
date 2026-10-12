@@ -81,9 +81,11 @@ Cross-references: [database.md](database.md) (table schemas), [permissions.md](p
 ### Update
 
 **Endpoint:** `PATCH /api/spaces/:id`
-**Permission:** `MANAGE_SPACE`
+**Permission:** `MANAGE_SPACE`; `ownerTitle` the owner only
 
-**Updatable fields:** name (1-100 chars), icon, banner, avatarColor (validated against AVATAR_COLORS), visibility (public/request/private), description (max 200 chars), directoryListed (boolean).
+**Updatable fields:** name (1-100 chars), icon, banner, avatarColor (validated against AVATAR_COLORS), visibility (public/request/private), description (max 200 chars), directoryListed (boolean), ownerTitle (see "Owner title" below).
+
+Every field is checked before anything is written. A body with `ownerTitle` from anyone but the owner is refused with `403 space_owner_only` as a whole, so a member with `MANAGE_SPACE` cannot rename the space in the same request either.
 
 **Directory listing:** `directoryListed: true` is refused with `400 directory_private_space` when the resulting visibility is `private`, and a listed space switched to `private` has the flag cleared in the same write. A change to the flag, or to name, description, icon, banner, avatarColor or visibility while the space is listed, calls `markDirectoryDirty()` so the directory pinger tells the hub; deleting a listed space does the same. See [directory.md](directory.md) §3.
 
@@ -479,7 +481,7 @@ All paths: insert `space_members`, register in `connectionManager`, broadcast `m
 **Body:** `{ newOwnerId: string }`
 **Validation:** New owner must be a member, cannot transfer to self.
 
-Updates `spaces.ownerId`, broadcasts `space_updated` WS event, then `space_access_changed` to the space with the former and the new owner as the members whose own permissions changed (each also gets a `space_voice_state`; websocket.md). Their clients refetch the detail, so the new owner gets the role bits and the former owner loses them unless a role still grants `MANAGE_ROLES` (permissions.md, "Who receives role and override data"). Voice permissions are re-checked.
+Updates `spaces.ownerId` and clears `spaces.ownerTitle` in the same write (the title was the former owner's), broadcasts `space_updated` WS event, then `space_access_changed` to the space with the former and the new owner as the members whose own permissions changed (each also gets a `space_voice_state`; websocket.md). Their clients refetch the detail, so the new owner gets the role bits and the former owner loses them unless a role still grants `MANAGE_ROLES` (permissions.md, "Who receives role and override data"). Voice permissions are re-checked.
 
 **Client (`TransferOwnershipModal`):** Member picker with search, two-step confirm. Shows warning "You will become a regular member." Uses toast notification on success.
 
@@ -508,7 +510,9 @@ Rules for `roleIds`:
 
 Both single-role routes apply the same checks as the replace route (not own roles, not the owner's, member of the space, role of this space other than @everyone, role hierarchy) and are followed by `space_access_changed` in the same way.
 
-**Where a nickname shows.** `spaceMemberName` in `web/src/utils/identity.ts` names a member inside a space: the nickname from the space's roster row, else the display name. The member lists (desktop and phone), a space message's author and reply line, mentions, the mention picker (which also matches on it) and the typing line use it. DMs, friends and the profile's name and username show the account; the profile card adds a "Nickname in this space" line above the name.
+**Where a nickname shows.** `spaceMemberName` in `web/src/utils/identity.ts` names a member inside a space: the nickname from the space's roster row, else the display name. The member lists (desktop and phone), a space message's author and reply line, mentions, the mention picker (which also matches on it), the typing line and the poke row (both people; websocket.md, "Channel pokes") use it. DMs, friends and the profile's name and username show the account; the profile card adds a "Nickname in this space" line above the name.
+
+**Owner title.** The owner may replace the owner group's heading in the member list ("Owner") with a title of their own (`spaces.ownerTitle`), visible to every member. It is a heading, not a name: the owner's row under it, their messages, mentions, the typing line and the profile card name them by `spaceMemberName` like anyone else, and the settings Members panel keeps its "Owner" marker. `ownerGroupTitle` in `web/src/utils/memberGroups.ts` reads it for every surface that shows the heading, and `OwnerTitleHeading` renders it on the desktop member list and the phone members screen; a custom title keeps its own capitalization, the default stays uppercase like the other group headings. The heading shows only while the owner is online, because offline members are listed together under Offline. The owner gets a pencil beside it (a 44px tap target on the phone) that opens a dialog laid out like the nickname dialog: Save, Cancel, and Reset while a title is set. The dialog checks the value with `normalizeOwnerTitle` before sending, writes through `spaceStore.updateSpace` to the space's own instance, and changes the heading only from that instance's answer; other members get it through `space_updated`. Server rules: `PATCH /api/spaces/:id` above and api.md. Version mix: a client up to 1.10.0 ignores the field and shows "Owner"; on a space hosted by an instance up to 1.10.0 the field is absent, the heading stays "Owner" and the pencil is not offered (`hostKeepsOwnerTitle`), because that instance would answer 200 and drop the title. No federation event carries the title; each instance serves it for the spaces it hosts.
 
 **Member list right-click menu** (`layout/memberMenu/`, desktop member list). A right click, the menu key or Shift+F10 on a member row opens it; a left click, Enter or Space opens the profile. Items: View profile; Send message and the friend action that fits (add, cancel, accept or decline, remove), both through the origin-aware helpers (`openDirectMessage`, `friendRequestTarget`); Change space nickname; a Roles submenu of checkboxes; Kick and Ban, each after a confirmation. Which items show follows permissions.md, "Client gating". Writes go to the space's own instance (`getApiForOrigin(space._instanceOrigin)`) with the member's id there. A role checkbox changes only after the server accepts the write, and is disabled while one is in flight. The menu closes when the space changes. On a space hosted by a 1.9.x instance the nickname item is offered but the instance refuses the request, and the dialog shows its reason.
 

@@ -11,6 +11,7 @@ vi.mock('../stores/uiStore', () => ({
 const runtime = vi.hoisted(() => ({ native: false }));
 vi.mock('../platform/instanceRuntime', () => ({
   getHomeOrigin: () => runtime.native ? 'https://home.test' : window.location.origin,
+  getHomeMediaOrigin: () => null,
   getApiBaseUrl: () => runtime.native ? 'https://home.test/api' : '/api',
 }));
 

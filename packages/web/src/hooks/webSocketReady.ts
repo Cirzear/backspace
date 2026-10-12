@@ -19,12 +19,14 @@ import { broadcastVoiceStatus } from '../utils/voice';
 import { readyActivityEntries, readyRowIndex } from '../utils/presenceSubject';
 import { getActiveRoom } from './useLiveKit';
 import { wsSend } from './useWebSocket';
+import { useChannelPokeStore } from '../stores/channelPokeStore';
 import { activePeerOrigins, awaitingApprovalPeerOrigins, rejectedPeerOrigins } from './webSocketFederationEvents';
 
 type ReadyEvent = Extract<ServerEvent, { type: 'ready' }>;
 
 /** Preserve hydration order; each phase owns one store or connection concern. */
 export function handleReady(origin: string, event: ReadyEvent, readyAlreadyDelivered = false): void {
+  useChannelPokeStore.getState().setHost(origin, event.supportsPoke === true);
   const { currentSpaceId } = useSpaceStore.getState();
   initializeReadyAccount(origin, event);
   normalizeReadySpaces(origin, event);

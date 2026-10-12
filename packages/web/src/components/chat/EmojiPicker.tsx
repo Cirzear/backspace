@@ -86,11 +86,8 @@ export function EmojiPicker({ onEmojiSelect, mobile = false, stickers = true }: 
           </button>
         </div>
       )}
-      {stickers && showStickers ? (
-        <StickerPicker mobile={mobile} onSelect={token => onEmojiSelect({ native: token })} />
-      ) : (
-        <Picker
-          data={loadEmojiData}
+      {stickers && showStickers ? <StickerPicker mobile={mobile} onSelect={token => onEmojiSelect({ native: token })} /> : <Picker
+        data={loadEmojiData}
         onEmojiSelect={onEmojiSelect}
         theme="dark"
         set="native"
@@ -103,8 +100,7 @@ export function EmojiPicker({ onEmojiSelect, mobile = false, stickers = true }: 
         emojiButtonSize={mobile ? 40 : 32}
         dynamicWidth={mobile ? true : false}
         categories={['frequent', 'people', 'nature', 'foods', 'activity', 'places', 'objects', 'symbols', 'flags']}
-      />
-      )}
+      />}
     </div>
   );
 }

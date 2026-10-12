@@ -320,6 +320,13 @@ function handleMessageEdit(event: Record<string, unknown>, userId: string): void
     return;
   }
 
+  // A system row (a poke) is written by this instance, so nobody edits it,
+  // its author included; PATCH /api/messages/:id refuses it with the same code.
+  if (message.type === 'system') {
+    connectionManager.sendToUser(userId, { type: 'error', message: errorText('system_message_immutable'), code: 'system_message_immutable' });
+    return;
+  }
+
   if (message.userId !== userId) {
     connectionManager.sendToUser(userId, { type: 'error', message: 'You can only edit your own messages' });
     return;

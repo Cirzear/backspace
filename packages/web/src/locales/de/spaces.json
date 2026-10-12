@@ -489,7 +489,6 @@
     "aboveYouShort": "Steht auf oder über deiner höchsten Rolle"
   },
   "sidebar": {
-    "dmUnreadMessages": "{{quantity}} ungelesene Direktnachrichten",
     "directMessages": "Direktnachrichten",
     "addSpace": "Space hinzufügen",
     "joinSpace": "Space beitreten",
@@ -527,7 +526,6 @@
       },
       "left": "Du hast den Space verlassen",
       "leaveFailed": "Space konnte nicht verlassen werden",
-      "unreadMessages": "Ungelesene Nachrichten: {{quantity}}",
       "unreadMessages_one": "{{count}} ungelesene Nachricht",
       "unreadMessages_other": "{{count}} ungelesene Nachrichten",
       "unreadMessagesOver99": "Mehr als 99 ungelesene Nachrichten"
@@ -597,9 +595,9 @@
       "owner": "Besitzer"
     },
     "ownerTitle": {
-      "edit": "Inhabertitel bearbeiten",
-      "label": "Inhabertitel",
-      "hint": "Für alle Mitglieder dieses Spaces sichtbar. 1–{{max}} Zeichen; Berechtigungen bleiben unverändert.",
+      "edit": "Besitzertitel bearbeiten",
+      "label": "Besitzertitel",
+      "hint": "Für alle Mitglieder dieses Spaces sichtbar. 1 bis {{max}} Zeichen; Berechtigungen bleiben unverändert.",
       "reset": "Standard wiederherstellen"
     },
     "menu": {

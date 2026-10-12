@@ -1,5 +1,3 @@
-DROP TABLE IF EXISTS `notification_settings`;
---> statement-breakpoint
 CREATE TABLE `notification_settings` (
 	`user_id` text NOT NULL,
 	`space_id` text NOT NULL,

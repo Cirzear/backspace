@@ -4,8 +4,12 @@ import { StickerPicker } from './StickerPicker';
 import { StickerMessage } from './StickerMessage';
 import { api } from '../../api/client';
 import { uploadSticker } from './stickerUpload';
+import { MAX_PERSONAL_STICKERS } from '@backspace/shared/src/stickers';
 
-vi.mock('../../api/client', () => ({ api: { stickers: { list: vi.fn(), remove: vi.fn(), collect: vi.fn() } } }));
+vi.mock('../../api/client', async importOriginal => ({
+  ...await importOriginal<typeof import('../../api/client')>(),
+  api: { stickers: { list: vi.fn(), remove: vi.fn(), collect: vi.fn() } },
+}));
 vi.mock('./stickerUpload', () => ({ uploadSticker: vi.fn() }));
 vi.mock('../../stores/authStore', () => ({ useAuthStore: (selector: (s: unknown) => unknown) => selector({ user: { id: 'alice' } }) }));
 const preview = vi.hoisted(() => vi.fn());
@@ -90,6 +94,18 @@ describe('sticker controls', () => {
     await waitFor(() => expect(uploadSticker).toHaveBeenCalledTimes(2));
     expect(await screen.findByRole('button', { name: 'Happy' })).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: 'Cool' })).toBeInTheDocument();
+    // Newest first, as the server lists the collection after a reload.
+    const tiles = screen.getAllByRole('button').filter(button => ['Happy', 'Cool'].includes(button.getAttribute('aria-label') ?? ''));
+    expect(tiles.map(tile => tile.getAttribute('aria-label'))).toEqual(['Cool', 'Happy']);
+  });
+
+  it('turns uploading off once the collection is full', async () => {
+    vi.mocked(api.stickers.list).mockResolvedValue(Array.from({ length: MAX_PERSONAL_STICKERS }, (_, index) => ({
+      ...sticker, id: index.toString(16).padStart(64, '0'), name: `Sticker ${index}`,
+    })));
+    render(<StickerPicker onSelect={vi.fn()} />);
+    expect(await screen.findByText('Your collection is full. Remove a sticker to add another.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Upload image' })).toBeDisabled();
   });
 
   it('previews the full image without a permanent collection button', async () => {

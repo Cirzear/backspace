@@ -14,7 +14,7 @@ beforeEach(() => {
   db = new Database(':memory:');
   db.pragma('foreign_keys = ON');
   db.exec('CREATE TABLE users(id TEXT PRIMARY KEY, is_deleted INTEGER DEFAULT 0)');
-  db.exec(readFileSync(new URL('../../drizzle/0031_ai_translation.sql', import.meta.url), 'utf8'));
+  db.exec(readFileSync(new URL('../../drizzle/0032_ai_translation.sql', import.meta.url), 'utf8'));
   db.prepare('INSERT INTO users(id) VALUES (?), (?)').run('alice', 'bob');
   storage = new ServerTranslationStorage(db, encryption);
 });

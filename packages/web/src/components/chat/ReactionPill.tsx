@@ -122,7 +122,7 @@ export function ReactionPill({ emoji, reactions, origin, onToggle }: ReactionPil
         }`}
         style={{ padding: '2px 8px', fontSize: '13px', lineHeight: 1 }}
       >
-        {imageUrl ? <img src={imageUrl} alt={t('chat:stickers.title')} className="w-7 h-7 object-contain" />
+        {imageUrl ? <img src={imageUrl} alt={t('chat:stickers.sticker')} className="w-7 h-7 object-contain" />
           : <span style={{ fontSize: '14px', lineHeight: 1 }}>{emoji}</span>}
         <span className={`font-semibold ${mine ? 'text-accent-mint' : 'text-txt-secondary'}`} style={{ fontSize: '12px' }}>
           {fmt.formatNumber(reactions.length)}
@@ -138,7 +138,7 @@ export function ReactionPill({ emoji, reactions, origin, onToggle }: ReactionPil
             ? 'flex-col w-[224px] max-w-[calc(100*var(--app-vw)-24px)] rounded-xl overflow-hidden'
             : 'rounded-md px-2.5 py-1.5 gap-2 max-w-[360px]'}`}
         >
-          {imageUrl ? <div className="w-full p-4 bg-surface-elevated/50">
+          {imageUrl ? <div className="w-full p-4">
             <img src={imageUrl} alt={t('chat:stickers.preview')} className="w-full h-40 object-contain" />
           </div>
             : <span className="text-[16px] leading-none flex-shrink-0">{emoji}</span>}

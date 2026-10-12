@@ -18,6 +18,7 @@ import { Tooltip } from '../ui/Tooltip';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { TransferOwnershipModal } from '../modals/TransferOwnershipModal';
 import { NotificationSettingsModal, type NotificationSettingsModalTarget } from '../notifications/NotificationSettingsModal';
+import { useNotificationMuted } from '../notifications/useNotificationMuted';
 import type { SpaceLayoutItem, SpaceFolder } from '@backspace/shared';
 
 import { getSpaceGradient } from '../../utils/gradients';
@@ -479,8 +480,6 @@ function FolderFlyout({
                     <span className="text-[13px] font-bold text-white">{space.name.charAt(0).toUpperCase()}</span>
                   )}
                 </div>
-              </div>
-
               </div>
 
               {/* Name */}

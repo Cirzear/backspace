@@ -1,5 +1,14 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const pauseUpload = vi.fn();
+const resumeUpload = vi.fn();
+
+vi.mock('../../stores/transferStore', () => ({
+  useTransferStore: (selector: (state: { pauseUpload: typeof pauseUpload; resumeUpload: typeof resumeUpload }) => unknown) =>
+    selector({ pauseUpload, resumeUpload }),
+}));
+
 import type { Transfer, TransferState } from '../../stores/transferStore';
 import { StagedTransferTiles } from './StagedTransferTiles';
 
@@ -15,7 +24,7 @@ function makeTransfer(state: TransferState, mimetype = 'application/vnd.android.
 }
 
 function renderTile(transfer: Transfer) {
-  const callbacks = { onPause: vi.fn(), onResume: vi.fn(), onRemove: vi.fn() };
+  const callbacks = { onRemove: vi.fn() };
   const view = render(
     <StagedTransferTiles
       stagedTransfers={[transfer]}
@@ -27,6 +36,11 @@ function renderTile(transfer: Transfer) {
 }
 
 describe('StagedTransferTiles', () => {
+  beforeEach(() => {
+    pauseUpload.mockReset();
+    resumeUpload.mockReset();
+  });
+
   it.each(['application/vnd.android.package-archive', 'image/png'])(
     'keeps the completed %s remove chip outside clipping containers',
     (mimetype) => {
@@ -50,20 +64,20 @@ describe('StagedTransferTiles', () => {
     'clips only the %s progress overlay and preserves its controls',
     (state) => {
       const transfer = makeTransfer(state);
-      const { onPause, onResume, onRemove } = renderTile(transfer);
+      const { onRemove } = renderTile(transfer);
       const abort = screen.getByRole('button', { name: 'Abort' });
       const clip = abort.closest('.overflow-hidden');
 
-      expect(clip).toHaveClass('absolute', 'inset-0', 'rounded-inherit');
+      expect(clip).toHaveClass('absolute', 'inset-0', 'rounded-lg');
       expect(clip?.parentElement).not.toHaveClass('overflow-hidden');
       expect(screen.queryByRole('button', { name: 'Remove attachment' })).not.toBeInTheDocument();
       if (state === 'active') {
         fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
-        expect(onPause).toHaveBeenCalledExactlyOnceWith(transfer.id);
+        expect(pauseUpload).toHaveBeenCalledExactlyOnceWith(transfer.id);
       }
       if (state === 'paused') {
         fireEvent.click(screen.getByRole('button', { name: 'Resume' }));
-        expect(onResume).toHaveBeenCalledExactlyOnceWith(transfer.id);
+        expect(resumeUpload).toHaveBeenCalledExactlyOnceWith(transfer.id);
       }
       fireEvent.click(abort);
       expect(onRemove).toHaveBeenCalledExactlyOnceWith(transfer.id);
@@ -77,8 +91,6 @@ describe('StagedTransferTiles', () => {
       <StagedTransferTiles
         stagedTransfers={[{ ...transfer, state: 'completed' }]}
         previewUrls={new Map()}
-        onPause={view.onPause}
-        onResume={view.onResume}
         onRemove={view.onRemove}
       />,
     );
@@ -92,8 +104,6 @@ describe('StagedTransferTiles', () => {
       <StagedTransferTiles
         stagedTransfers={[]}
         previewUrls={new Map()}
-        onPause={vi.fn()}
-        onResume={vi.fn()}
         onRemove={vi.fn()}
       />,
     );
