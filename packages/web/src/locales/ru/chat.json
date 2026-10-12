@@ -226,7 +226,11 @@
     "batchFailed_few": "Не удалось добавить {{count}} изображения. Они остались в списке ниже.",
     "batchFailed_many": "Не удалось добавить {{count}} изображений. Они остались в списке ниже.",
     "batchFailed_other": "Не удалось добавить {{count}} изображений. Они остались в списке ниже.",
-    "uploadingProgress": "Добавление {{current}} из {{total}}…"
+    "uploadingProgress": "Добавление {{current}} из {{total}}…",
+    "rename": "Переименовать",
+    "renameTitle": "Переименовать стикер",
+    "search": "Поиск стикеров",
+    "noResults": "Стикеры не найдены"
   },
   "poke": {
     "action": "Толкнуть",

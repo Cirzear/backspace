@@ -192,4 +192,39 @@ describe('personal stickers', () => {
     expect(metadata.pages).toBe(2);
     expect([metadata.width, metadata.pageHeight]).toEqual([512, 512]);
   });
+
+  it('renames a sticker in the user collection and rejects invalid names or unknown stickers', async () => {
+    const uploaded = (await upload()).json();
+    const renamed = await app.inject({
+      method: 'PATCH',
+      url: `/api/stickers/${uploaded.id}`,
+      headers: { authorization: 'alice' },
+      payload: { name: 'Renamed Happy' },
+    });
+    expect(renamed.statusCode).toBe(200);
+    expect(renamed.json()).toMatchObject({ id: uploaded.id, name: 'Renamed Happy', token: uploaded.token });
+
+    // In the list, the new name is reflected
+    const list = await app.inject({ url: '/api/stickers', headers: { authorization: 'alice' } });
+    expect(list.json()).toEqual([expect.objectContaining({ id: uploaded.id, name: 'Renamed Happy' })]);
+
+    // Bob cannot rename Alice's sticker
+    const otherUser = await app.inject({
+      method: 'PATCH',
+      url: `/api/stickers/${uploaded.id}`,
+      headers: { authorization: 'bob' },
+      payload: { name: 'Bob Name' },
+    });
+    expect(otherUser.statusCode).toBe(404);
+
+    // Rejects blank name
+    const blank = await app.inject({
+      method: 'PATCH',
+      url: `/api/stickers/${uploaded.id}`,
+      headers: { authorization: 'alice' },
+      payload: { name: '   ' },
+    });
+    expect(blank.statusCode).toBe(400);
+    expect(blank.json()).toMatchObject({ code: 'validation_failed' });
+  });
 });

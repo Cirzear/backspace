@@ -202,7 +202,11 @@
     "capacityLimit_other": "“我的表情”还可以添加 {{count}} 个。",
     "full": "“我的表情”已满。请先移除一个再添加。",
     "batchFailed_other": "有 {{count}} 张图片未能添加，仍保留在下方列表中。",
-    "uploadingProgress": "正在添加第 {{current}} 个，共 {{total}} 个…"
+    "uploadingProgress": "正在添加第 {{current}} 个，共 {{total}} 个…",
+    "rename": "重命名",
+    "renameTitle": "重命名表情",
+    "search": "搜索表情",
+    "noResults": "未找到匹配的表情"
   },
   "poke": {
     "action": "戳一戳",
