@@ -197,7 +197,9 @@ DELETE /messages/:id                                      → { success }  [auth
 ```
 `replyToId` on POST must name a message in the same channel, otherwise `400 Invalid reply target` and nothing is inserted. See permissions.md, "Reply-target confinement".
 
-Content with `@everyone`, `@here` or a role token (`<@&roleId>`) outside code needs MENTION_EVERYONE on the channel: without it POST answers `403 missing_permission` (`details.permission` = `MENTION_EVERYONE`) and nothing is stored. PATCH refuses the same way only when the edit adds a mass mention the stored message did not have. Every channel message the server returns or broadcasts carries `mentionEveryone: boolean` and `mentionRoleIds: string[]`, read from its content. See permissions.md, "Mass mentions".
+Content with `@everyone`, `@here` or a role token (`<@&roleId>`) outside code needs MENTION_EVERYONE on the channel: without it POST answers `403 missing_permission` (`details.permission` = `MENTION_EVERYONE`) and nothing is stored. PATCH refuses the same way only when the edit adds a mass mention the stored message did not have. Every channel message the server returns or broadcasts carries `mentionEveryone: boolean` and `mentionRoleIds: string[]`, read from its content; a system message carries `false` and `[]` whatever its content holds. See permissions.md, "Mass mentions".
+
+Every channel message also carries `type`: `user`, or `system` for a row the instance wrote (a poke; websocket.md, "Channel pokes"). History and messages-around return system rows in place; a 1.10.0 or older server sends no `type` and has no channel system rows. A system row is never created over REST. PATCH on one answers `403 system_message_immutable`, its author included, before the author check. A POST whose `replyToId` names a system row is `400 reply_target_invalid`. Channel search (below) leaves system rows out of its results and its count.
 
 ### Message history paging
 
@@ -292,6 +294,8 @@ GET /dm/:id/search               ?q=&from=&has=&before=&after=&offset=&limit= �
 GET /dm/:id/messages/around      ?messageId=&limit=                           → { messages[] }
 ```
 has: `file`|`image`|`link`
+
+Channel search matches only messages members wrote (`userWrittenMessages()`); a poke's JSON content is not text anyone wrote. DM search still returns DM system rows.
 
 ## Explore (`routes/explore.ts`) — auth required
 ```

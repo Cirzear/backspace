@@ -2,6 +2,7 @@ import type { ServerEvent } from '@backspace/shared';
 import { and, eq, isNull, ne, sql } from 'drizzle-orm';
 import { getDb, schema } from '../db/index.js';
 import { computePermissions, PermissionBits } from '../utils/permissions.js';
+import { userWrittenMessages } from '../db/userWrittenMessages.js';
 
 /**
  * Exact unread message counts for the sidebar badges (websocket.md,
@@ -36,13 +37,17 @@ function readCursor(userId: string, channelId: string): string {
 // written exactly as in the index definition: SQLite matches an index
 // expression only when the type name has the same case.
 
-/** Messages in space channel `channelId` after `cursor` by anyone but `userId`, up to the cap. */
+/**
+ * Messages members wrote in space channel `channelId` after `cursor` by anyone
+ * but `userId`, up to the cap. A system row (a poke) is not counted.
+ */
 export function countChannelUnread(userId: string, channelId: string, cursor: string): number {
   const db = getDb();
   const unread = db.select({ one: sql<number>`1`.as('one') }).from(schema.messages).where(and(
     eq(schema.messages.channelId, channelId),
     sql`CAST(${schema.messages.id} AS INTEGER) > CAST(${cursor} AS INTEGER)`,
     ne(schema.messages.userId, userId),
+    userWrittenMessages(),
   )).limit(UNREAD_COUNT_CAP).as('unread');
   return db.select({ count: sql<number>`count(*)` }).from(unread).get()?.count ?? 0;
 }

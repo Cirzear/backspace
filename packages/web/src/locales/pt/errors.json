@@ -209,6 +209,7 @@
   "message_empty": "Uma mensagem precisa de algum texto ou de um anexo.",
   "message_edit_not_author": "Você só pode editar suas próprias mensagens.",
   "message_delete_forbidden": "Você não pode excluir esta mensagem.",
+  "poke_target_no_access": "Esse membro não pode ver este canal, então não pode ser cutucado aqui.",
   "paging_cursor_conflict": "As mensagens podem ser carregadas antes ou depois de uma mensagem, não as duas coisas ao mesmo tempo.",
   "internal_error": "Algo deu errado no servidor. Tente novamente.",
   "voice_disabled": "Voz e vídeo não estão configurados nesta instância.",

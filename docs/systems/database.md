@@ -102,11 +102,14 @@ PK: (spaceId, userId)
 | channelId | text NOT NULL | FK → channels.id CASCADE |
 | userId | text NOT NULL | FK → users.id |
 | replyToId | text | FK → messages.id SET NULL |
-| content | text | |
+| content | text | For a system row, JSON (`channelSystemEvents.ts`) |
+| type | text NOT NULL, default `'user'` | `user` (a member wrote it) or `system` (the instance wrote it; a poke is the only one so far, websocket.md "Channel pokes"). Migration `0029_persistent_channel_pokes` |
 | editedAt | integer | |
 | createdAt | integer NOT NULL | |
 
-Indexes: `idx_messages_channel_id` (channelId); `idx_messages_user_id` (userId); `idx_messages_channel_unread` (channelId, `CAST(id AS INTEGER)`, userId), migration `0027_unread_count_indexes`. The last one serves the unread counts (websocket.md, "Unread counts"): the messages of a channel after a read cursor, compared as numbers, without reading the table. SQLite uses an expression index only when the query spells the expression the same way, type name case included, so the count writes `CAST(... AS INTEGER)`; the index names the column unqualified because SQLite refuses a qualified one there.
+A system row's `userId` is the member who acted (the poker). `userWrittenMessages()` in `db/userWrittenMessages.ts` is the one condition for "a message a member wrote": the unread counts, the last message id in `ready`, channel search and the reply target check all take it, so a system row is never unread, never found by a search and never replied to.
+
+Indexes: `idx_messages_channel_id` (channelId); `idx_messages_user_id` (userId); `idx_messages_channel_unread` (channelId, `CAST(id AS INTEGER)`, userId, type), created by migration `0027_unread_count_indexes` and given `type` by `0029_persistent_channel_pokes`. The last one serves the unread counts (websocket.md, "Unread counts"): the messages members wrote in a channel after a read cursor, compared as numbers, without reading the table. SQLite uses an expression index only when the query spells the expression the same way, type name case included, so the count writes `CAST(... AS INTEGER)`; the index names the column unqualified because SQLite refuses a qualified one there.
 
 ### attachments
 | Column | Type | Default | Notes |

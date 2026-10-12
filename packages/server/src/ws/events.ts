@@ -1,5 +1,6 @@
+import { handleChannelPoke } from './channelPoke.js';
 import type { WebSocket } from 'ws';
-import { addsMassMention, hasMassMention, massMentionFields } from '@backspace/shared/src/mentions.js';
+import { addsMassMention, hasMassMention } from '@backspace/shared/src/mentions.js';
 import { eq, inArray, and } from 'drizzle-orm';
 import { getDb, schema } from '../db/index.js';
 import { generateSnowflake } from '../utils/snowflake.js';
@@ -7,7 +8,7 @@ import { connectionManager, getVoiceRoomElapsedSeconds } from './handler.js';
 import type { VoiceRoom, DmRoomMeta, SpaceRoomMeta, FederatedCallEntry } from './handler.js';
 import { isMember, getChannelSpaceId, isDmMember, isDeadOneOnOne, hasPermission, computePermissions, PermissionBits } from '../utils/permissions.js';
 import { broadcastDmMessage, getDmMessageWithUser, reopenForClosedMembers } from '../routes/dm.js';
-import { fetchReplyToMessages, isReplyTargetInChannel } from '../routes/messages.js';
+import { fetchReplyToMessages, isReplyTargetInChannel, storedMassMentionFields } from '../routes/messages.js';
 import { MAX_MESSAGE_LENGTH, isChosenUserStatus, type MessageWithUser, type Attachment, type DmMessageWithUser, type Embed, type ServerEvent, type DmCallUndeliverableFailure, type DmCallUndeliverableReason } from '@backspace/shared';
 import type { CallRelayResult, CallFanoutFailure } from '../utils/federationOutbox.js';
 import { mapCallReasonToEventReason } from '../utils/federationOutbox.js';
@@ -120,9 +121,10 @@ function getMessageWithUser(messageId: string): MessageWithUser | null {
     userId: message.userId,
     replyToId: message.replyToId,
     content: message.content,
+    type: message.type,
     editedAt: message.editedAt,
     createdAt: message.createdAt,
-    ...massMentionFields(message.content),
+    ...storedMassMentionFields(message),
     user: sanitizeUser(user),
     attachments,
     embeds: embedRows.map(e => embedRowToEmbed(e)),
@@ -153,6 +155,9 @@ export function handleClientEvent(
       break;
     case 'message_delete':
       handleMessageDelete(event, userId);
+      break;
+    case 'channel_poke':
+      handleChannelPoke({ event, userId, ws });
       break;
     case 'typing_start':
       handleTypingStart(event, userId, username);
@@ -338,6 +343,12 @@ function handleMessageEdit(event: Record<string, unknown>, userId: string): void
     return;
   }
 
+  // A system row (a poke) is written by this instance, so nobody edits it,
+  // its author included; PATCH /api/messages/:id refuses it with the same code.
+  if (message.type === 'system') {
+    connectionManager.sendToUser(userId, { type: 'error', message: errorText('system_message_immutable'), code: 'system_message_immutable' });
+    return;
+  }
   if (message.userId !== userId) {
     connectionManager.sendToUser(userId, { type: 'error', message: 'You can only edit your own messages' });
     return;

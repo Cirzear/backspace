@@ -15,7 +15,8 @@ export function dmSystemContent(event: DmSystemEvent): string {
 /**
  * The name a system message records for a user at the time of the event: the
  * display name, else the handle without the `@<domain>` a replicated row
- * carries, else "Unknown" for a row that no longer exists.
+ * carries, else "Unknown" for a row that no longer exists. A channel poke
+ * records it too, after the target's nickname in the space.
  */
 export function dmSystemName(user: { displayName: string | null; username: string } | null | undefined): string {
   if (!user) return 'Unknown';
