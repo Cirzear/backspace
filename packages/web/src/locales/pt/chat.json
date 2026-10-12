@@ -17,7 +17,8 @@
       "jump": "Ir para a mensagem original"
     },
     "mention": {
-      "unknownUser": "Usuário desconhecido"
+      "unknownUser": "Usuário desconhecido",
+      "unknownRole": "Cargo desconhecido"
     },
     "reactions": {
       "you": "Você",
@@ -205,5 +206,10 @@
     "selectedCount_other": "{{count}} figurinhas selecionadas",
     "dropMore": "Clique ou arraste mais imagens para cá",
     "selectedCount_many": "{{count}} figurinhas selecionadas"
+  },
+  "poke": {
+    "action": "Cutucar",
+    "received": "{{actor}} cutucou {{target}}",
+    "disconnected": "Não foi possível cutucar: sem conexão com o servidor"
   }
 }

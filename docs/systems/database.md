@@ -101,9 +101,14 @@ PK: (spaceId, userId)
 | channelId | text NOT NULL | FK → channels.id CASCADE |
 | userId | text NOT NULL | FK → users.id |
 | replyToId | text | FK → messages.id SET NULL |
-| content | text | |
+| content | text | For a system row, JSON (`channelSystemEvents.ts`) |
+| type | text NOT NULL, default `'user'` | `user` (a member wrote it) or `system` (the instance wrote it; a poke is the only one so far, websocket.md "Channel pokes"). Migration `0029_persistent_channel_pokes` |
 | editedAt | integer | |
 | createdAt | integer NOT NULL | |
+
+A system row's `userId` is the member who acted (the poker). `userWrittenMessages()` in `db/userWrittenMessages.ts` is the one condition for "a message a member wrote": the unread counts, the last message id in `ready`, channel search and the reply target check all take it, so a system row is never unread, never found by a search and never replied to.
+
+Indexes: `idx_messages_channel_id` (channelId); `idx_messages_user_id` (userId); `idx_messages_channel_unread` (channelId, `CAST(id AS INTEGER)`, userId, type), created by migration `0027_unread_count_indexes` and given `type` by `0029_persistent_channel_pokes`. The last one serves the unread counts (websocket.md, "Unread counts"): the messages members wrote in a channel after a read cursor, compared as numbers, without reading the table. SQLite uses an expression index only when the query spells the expression the same way, type name case included, so the count writes `CAST(... AS INTEGER)`; the index names the column unqualified because SQLite refuses a qualified one there.
 
 ### attachments
 | Column | Type | Default | Notes |
@@ -215,6 +220,8 @@ PK: (dmChannelId, userId)
 | encryptionVersion | integer | 0 | |
 | createdAt | integer NOT NULL | | |
 
+Indexes: `idx_dm_messages_dm_channel_id` (dmChannelId); `idx_dm_messages_user_id` (userId); `idx_dm_messages_source_unique` UNIQUE (sourceInstance, sourceMessageId) where sourceInstance is set; `idx_dm_messages_channel_unread` (dmChannelId, `CAST(id AS INTEGER)`, userId), migration `0027_unread_count_indexes`, as `idx_messages_channel_unread` above.
+
 ### dm_reactions
 PK: id
 | Column | Type | Notes |
@@ -313,11 +320,13 @@ A user's notification setting for a space (`channelId` NULL) or for one channel 
 | level | text | | `all` / `mentions` / `nothing`; NULL = not chosen (a channel inherits its space, a space uses `mentions`) |
 | muted | integer NOT NULL | 0 | 1 = muted |
 | mutedUntil | integer | | Epoch ms (server clock) a timed mute ends; NULL with `muted = 1` = until lifted. An ended mute is read as none and dropped at the next write |
+| suppressEveryone | integer NOT NULL | 0 | 1 = `@everyone` and `@here` do not alert on `mentions` (space rows only; migration `0028_mass_mention_preferences`) |
+| suppressRoles | integer NOT NULL | 0 | 1 = role mentions do not alert on `mentions` (space rows only; migration `0028_mass_mention_preferences`) |
 | updatedAt | integer NOT NULL | | Server write time, strictly increasing per row; clients merge last-write-wins on it |
 
 **Indexes:** `idx_notification_settings_space_row` UNIQUE `(user_id, space_id) WHERE channel_id IS NULL` and `idx_notification_settings_channel_row` UNIQUE `(user_id, channel_id) WHERE channel_id IS NOT NULL`: one space row and one row per channel, per user. Two partial indexes because a plain unique index never treats two NULL `channel_id`s as equal. No primary key: the rowid is the row's identity.
 
-A row with nothing chosen (level NULL and not muted) is deleted rather than stored. Rows are kept when the user leaves the space or loses sight of the channel (the list route filters them out), so they apply again on rejoin.
+A row with nothing chosen (level NULL, not muted and neither suppress flag set) is deleted rather than stored. The suppress flags are written only on the space row: the channel route refuses them, so a channel row always holds 0. Rows are kept when the user leaves the space or loses sight of the channel (the list route filters them out), so they apply again on rejoin.
 
 ### space_folders
 | Column | Type | Default | Notes |

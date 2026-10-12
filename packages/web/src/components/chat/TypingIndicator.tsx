@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useChatStore } from '../../stores/chatStore';
 import { useFormatters } from '../../i18n/formatters';
 import { useChannelUser, useSelfIdInChannel, type ChannelUser } from '../../utils/channelUser';
-import { userDisplayName } from '../../utils/identity';
+import { spaceMemberName, userDisplayName } from '../../utils/identity';
 
 interface TypingIndicatorProps {
   channelId: string;
@@ -28,12 +28,13 @@ function nameSlot(index: number): string {
 }
 
 /**
- * The name shown for a typer: their display name as this channel knows them,
+ * The name shown for a typer: their name as this channel knows them (their
+ * nickname in a space channel, see `spaceMemberName`),
  * or, when the typer is not among the channel's people, the base of the
  * username the typing event carried (the event has nothing better).
  */
 function typerName(resolved: ChannelUser | null, wireUsername: string): string {
-  return userDisplayName(resolved ? resolved.user : { username: wireUsername });
+  return resolved ? spaceMemberName(resolved.member, resolved.user) : userDisplayName({ username: wireUsername });
 }
 
 /**

@@ -60,6 +60,7 @@ and after the pass.
 | 12 | ATTACH_FILES | Upload files |
 | 13 | READ_MESSAGE_HISTORY | View message history |
 | 14 | ADD_REACTIONS | Add emoji reactions |
+| 15 | MENTION_EVERYONE | Send `@everyone`, `@here` and role mentions (see "Mass mentions") |
 | 20 | CONNECT | Join voice channels |
 | 21 | SPEAK | Transmit audio |
 | 22 | MUTE_MEMBERS | Space-mute others |
@@ -68,7 +69,7 @@ and after the pass.
 | 25 | STREAM | Screen share |
 | 26 | DISCONNECT_MEMBERS | Disconnect from voice |
 
-**Default @everyone:** VIEW_CHANNEL, SEND_MESSAGES, CREATE_INVITE, CONNECT, SPEAK, ATTACH_FILES, READ_MESSAGE_HISTORY, ADD_REACTIONS, STREAM
+**Default @everyone:** VIEW_CHANNEL, SEND_MESSAGES, CREATE_INVITE, CONNECT, SPEAK, ATTACH_FILES, READ_MESSAGE_HISTORY, ADD_REACTIONS, STREAM. MENTION_EVERYONE is not a default: it is granted per role.
 
 ---
 
@@ -162,7 +163,7 @@ Moderating another member needs a strictly higher rank than theirs:
 |---|---|
 | Nobody acts on the space owner | kick, ban, role changes, voice moderation |
 | The owner and instance admins (`isAdmin`) are exempt | everything below |
-| Actor's rank > target's rank | kick (`DELETE /members/:uid`, not leaving), ban, `PATCH /members/:uid`, `POST`/`DELETE /members/:uid/roles`, WS `voice_space_mute`, `voice_space_deafen`, `voice_move`, `voice_disconnect` |
+| Actor's rank > target's rank | kick (`DELETE /members/:uid`, not leaving), ban, `PATCH /members/:uid` (roles, and another member's nickname), `POST`/`DELETE /members/:uid/roles`, WS `voice_space_mute`, `voice_space_deafen`, `voice_move`, `voice_disconnect` |
 | Role position < actor's rank | assigning or removing that role (each role a `PATCH /members/:uid` adds or removes), editing or deleting it, moving it or moving another role to that position, creating a role (new roles start at 1), writing or deleting a channel or category override on that role (`PUT`/`DELETE /channels/:id/overrides`, `/categories/:id/overrides`; @everyone is position 0) |
 | Actor's rank > target's rank | writing or deleting a channel or category override on another member (an override on oneself is not moderation) |
 
@@ -487,7 +488,7 @@ channel-scoped for editing or deleting one channel. The current split:
 
 | Scope | Actions |
 |---|---|
-| Channel | view, send, attach, react, read history, manage messages; connect, speak, stream; edit or delete the channel (`MANAGE_CHANNELS`); mute, deafen, move, disconnect a voice user (checked on the channel the target is in) |
+| Channel | view, send, attach, react, read history, manage messages, mention everyone, poke (VIEW_CHANNEL and SEND_MESSAGES); connect, speak, stream; edit or delete the channel (`MANAGE_CHANNELS`); mute, deafen, move, disconnect a voice user (checked on the channel the target is in) |
 | Space | create a channel; reorder channels and categories; create, rename or delete a category; read or write any channel or category override (`MANAGE_ROLES`); invites, kick, ban, space settings |
 
 Member and role actions also follow the role hierarchy and the held-bits
@@ -496,6 +497,7 @@ rule (above). Every gated surface:
 | Surface | File | Gating |
 |---|---|---|
 | Members list: kick and ban | `spaceSettingsPanels/MembersPanel.tsx` | hidden for members ranked at or above the viewer |
+| Member list right-click menu | `layout/memberMenu/useMemberContextMenu.tsx` | Change nickname: always for oneself; for another member with MANAGE_SPACE when they are not the owner and rank below the viewer. Roles submenu: `viewerCanEditMemberRoles`, listing the roles below the viewer's top role. Kick and Ban: KICK_MEMBERS / BAN_MEMBERS, not oneself or the owner, member ranked below the viewer |
 | Members list: role checkboxes | `spaceSettingsPanels/MembersPanel.tsx` | roles at or above the viewer's top role disabled (`settings.members.rolesAboveYou`); a role the member does not have yet and that carries a bit the viewer does not hold disabled (`settings.members.rolesUnheld`); each reason shown under the list with a lock, and as the row's title; the editor does not open for members ranked at or above the viewer |
 | Profile card: Edit Roles | `ui/UserProfilePopout.tsx` | desktop only; offered for a member of the loaded space when `viewerCanEditMemberRoles` holds: the viewer holds MANAGE_ROLES, the member is neither the viewer (by their id on the space's instance) nor the owner and ranks below the viewer, and some role other than @everyone ranks below the viewer; opens the member role editor |
 | Member role editor: role checkboxes | `modals/MemberRolesModal.tsx` | the Members list rule: roles at or above the viewer's top role disabled (`settings.members.rolesAboveYou`); a role the member does not have yet and that carries a bit the viewer does not hold disabled (`settings.members.rolesUnheld`); each reason shown under the list with a lock, and as the checkbox's title |
@@ -510,6 +512,7 @@ rule (above). Every gated surface:
 | Channel and category overrides: toggles | `ui/OverrideEntry.tsx` via `ui/PermissionsEditor.tsx` | a tri-state toggle for a bit the viewer does not hold is locked, shows its state and a lock, and the `permissions.unheldLocked` note says why |
 | Channel and category overrides: remove | `ui/OverrideEntry.tsx` via `ui/PermissionsEditor.tsx` | disabled for a saved override that sets a bit the viewer does not hold (`permissions.removeUnheld`); a row added in the same edit can always be dropped |
 | Voice user menu: mute, deafen, move, disconnect | `voice/voiceMenuItems.tsx` | no moderation items for members ranked at or above the viewer |
+| Message author right-click: Poke | `chat/useChannelPokeMenu.ts` via `chat/Message.tsx` | only for a sent message in a space channel where the viewer holds SEND_MESSAGES (`channelPermissions`) and the space's instance offered pokes in its `ready`; otherwise the right click opens the message menu. The server also needs the target to be a member with VIEW_CHANNEL (websocket.md, "Channel pokes") |
 | Voice drag-to-move | `hooks/useDragManager.ts` via `layout/ChannelSidebar.tsx` | not draggable for members ranked at or above the viewer |
 
 The helpers in `web/src/utils/roleHierarchy.ts` are the surface every role
@@ -570,6 +573,7 @@ role, `memberRolesView` a member row's roles. Every send site goes through it:
 | `POST /api/spaces/:id/roles`, `PATCH /api/spaces/:id/roles/:rid` answers | the actor | `roleView`, with the actor's permissions after the change (an actor who switched off their own `MANAGE_ROLES` gets no bits back) |
 | `GET /channels/:id/overrides`, `GET /categories/:id/overrides` | managers | refused unless `viewerReadsPermissionData` |
 | `member_joined` | the space | a new member has no roles: `roles: []` |
+| `member_updated` | the space | `memberRolesView`, the same row the `PATCH /members/:uid` answer carries |
 | `space_access_changed` | the space; after an instance admin change, that user alone | carries only `spaceId` |
 | `GET /api/spaces/explore`, `GET /api/spaces/invite/:code/preview`, `GET /api/directory/spaces` | anyone | carry no role or override data |
 
@@ -616,7 +620,7 @@ Space membership and channel access are not the same thing, so the two
 | Helper | Recipients | Carries |
 |--------|-----------|---------|
 | `sendToSpace(spaceId, event)` | every member of the space | space-level facts: `space_updated`, `member_joined`, `member_left`, `category_created` / `category_updated` / `category_deleted`, voice presence |
-| `sendToChannel(spaceId, channelId, event)` | members whose `computePermissions` grants `VIEW_CHANNEL` on that channel | anything scoped to one channel: `message_created`, `message_updated`, `message_deleted`, `typing`, `reaction_added`, `reaction_removed`, `embeds_resolved` |
+| `sendToChannel(spaceId, channelId, event)` | members whose `computePermissions` grants `VIEW_CHANNEL` on that channel | anything scoped to one channel: `message_created`, `message_updated`, `message_deleted`, `typing`, `reaction_added`, `reaction_removed`, `embeds_resolved`, `channel_poke` |
 
 Anything naming a channel or carrying its content goes through `sendToChannel`.
 A message edit ships the full `MessageWithUser` (content, author, attachments), a
@@ -638,9 +642,96 @@ the space-wide `category_created` are unaffected.
 
 ---
 
+## Mass mentions
+
+Three tokens address a group rather than one user, and all three need
+MENTION_EVERYONE (bit 15):
+
+| Token | Reaches |
+|---|---|
+| `@everyone` | every member who can see the channel |
+| `@here` | the same members as `@everyone`. Backspace has no "online only" audience when it decides an alert; each member's own settings decide |
+| `<@&roleId>` | every member holding that role in the channel's space |
+
+A token inside inline code or a fenced block is text. `@everyone` and `@here`
+count only on their own: not inside a word or an address (`a@everyone`), not
+after another `@`, not followed by a word character or `-`
+(`@everyone-else`). The one scan is `splitMentions` in
+`packages/shared/src/mentions.ts`; the server gate, the server's stamp, the
+renderer, the reply preview, the composer, the highlight and the alert rule
+all read tokens through it.
+
+**Sending.** The permission is checked at channel scope
+(`hasPermission(userId, spaceId, MENTION_EVERYONE, channelId)`), so channel and
+category overrides apply. A message with a mass mention from an author without
+it is refused, not sent as plain text: `POST /api/channels/:id/messages`
+answers `403 missing_permission` with `details.permission` =
+`MENTION_EVERYONE`, the WebSocket `message_create` sends an `error` with the
+same code and details, and nothing is stored. The web client keeps the draft
+and shows the reason. An edit (`PATCH /api/messages/:id`, WS `message_edit`)
+is refused the same way only when it adds a mass mention the stored message
+did not have (`addsMassMention`): keeping the ones it already has needs no
+permission, so a member who lost the bit, or wrote `@everyone` before the
+permission existed, can still fix the rest of the text. Edits never alert.
+DMs have no roles and no settings to suppress; their tokens are not checked
+and change nothing, since every DM message alerts anyway.
+
+**The stamp.** Every channel message the server sends (`buildMessageWithUser`,
+the WebSocket `getMessageWithUser`) carries `mentionEveryone` and
+`mentionRoleIds` (`storedMassMentionFields`), read from the stored content. Since
+the server stores a new mass mention only from an author with the
+permission, the stamp says the space allowed it. A system message (a poke)
+is stamped empty whatever its content holds: it records names members chose,
+and a nickname of `@everyone` is not a mention. Clients alert on mass
+mentions from the stamp alone, never from the text (sounds.md, "Which
+messages alert"). Messages stored before this version are stamped from their
+text too; that matters only for the highlight, since only `message_created`
+alerts.
+
+**Federation.** A space lives on one instance, and a member from another
+instance reads its channels from that instance directly with their
+replicated id there (client-federation.md). The permission is resolved there
+for that id, and the stamp comes from there. Role mentions are matched
+against the reader's roles on that instance (`myRoleIds` on the client's
+space entry, keyed by origin), never against a home id. No server-to-server
+route carries channel messages, so a peer cannot add a stamp.
+
+**Mixed versions.**
+
+| Case | Behaviour |
+|---|---|
+| 1.9.x client on this server | it sends `@everyone` as before and gets the coded refusal when the author lacks the bit; it ignores the stamp and alerts only on `<@id>`, as before |
+| this client on a 1.9.x server | that server sends no stamp, so its `@everyone` and role tokens render as badges but never alert; the suppress switches answer `400` there and the save shows as failed |
+| this client's role editor on a 1.9.x server | the bit can be switched and is stored, and that server ignores it |
+
+**Existing spaces.** No role gains the bit on upgrade: only the owner,
+instance admins and `ADMINISTRATOR` holders can send mass mentions until the
+owner grants MENTION_EVERYONE to a role. A member without it who used to type
+`@everyone` as plain text now gets the refusal. New roles start from the
+@everyone defaults, which do not include it. The held-bits rule applies as to
+every bit: a `MANAGE_ROLES` holder can switch it only if they hold it.
+
+**Editors.** The role editor (`utils/permissionGroups.ts`, text group), the
+member role editor, and the text channel and category override editors list
+it as "Mention @everyone, @here and Roles"
+(`spaces:permissions.names.mentionEveryone`).
+
+**Not yet offered.** The mention picker in the composer lists members only;
+roles, `@everyone` and `@here` are typed. The composer shows a known role
+token as `@RoleName` and paints `@everyone` and `@here`, as the sent message
+does.
+
+Covered by `routes/messages.massMentions.test.ts`,
+`utils/notificationFilters.test.ts`, `utils/mentionTokens.test.ts`,
+`chat/composerMentions.test.ts`, `chat/MassMentionBadge.test.tsx` and
+`stores/spaceStore.reducedRoles.test.ts`.
+
+---
+
 ## Reply-target confinement
 
-A message's `replyToId` must name a message in the **same channel**. Both create
+A message's `replyToId` must name a message in the **same channel**, and one a
+member wrote: a system row such as a poke takes no replies. Both create
 paths enforce it (`POST /api/channels/:id/messages` and the WebSocket
 `message_create` handler) via `isReplyTargetInChannel`, answering
 `400 Invalid reply target` / a WS `error` event without inserting anything. Every

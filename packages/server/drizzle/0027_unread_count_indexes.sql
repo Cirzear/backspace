@@ -1,0 +1,2 @@
+CREATE INDEX `idx_dm_messages_channel_unread` ON `dm_messages` (`dm_channel_id`,CAST(id AS INTEGER),`user_id`);--> statement-breakpoint
+CREATE INDEX `idx_messages_channel_unread` ON `messages` (`channel_id`,CAST(id AS INTEGER),`user_id`);

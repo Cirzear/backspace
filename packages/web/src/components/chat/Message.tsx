@@ -1,5 +1,6 @@
 import { stickerUrl } from '@backspace/shared/src/stickers';
 import { StickerMessage } from './StickerMessage';
+import { useChannelPokeMenu } from './useChannelPokeMenu';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -13,7 +14,7 @@ import { useContextMenuStore } from '../../stores/contextMenuStore';
 import { buildMessageMenuItems } from './messageMenuItems';
 import { useAuthStore, useSelfIdentity } from '../../stores/authStore';
 import { useChatStore } from '../../stores/chatStore';
-import { useSpaceStore } from '../../stores/spaceStore';
+import { selectMyRoleIdsInChannel, useSpaceStore } from '../../stores/spaceStore';
 import { useUIStore } from '../../stores/uiStore';
 import { AttachmentRenderer, attUrlOf } from './AttachmentRenderer';
 import { AttachmentProgress } from './AttachmentProgress';
@@ -25,10 +26,10 @@ import { MobilePickerSheet } from './MobilePickerSheet';
 import { ReactionPickerPopover } from './ReactionPickerPopover';
 import { hasPermissionBit, PermissionBits } from '../../utils/permissions';
 import { isDeletedPartnerDm } from '../../utils/dmFormatters';
-import { isFederationGlobeApplicable, isMine, userDisplayName } from '../../utils/identity';
+import { isFederationGlobeApplicable, isMine, spaceMemberName } from '../../utils/identity';
 import { useCanonicalUserView } from '../../utils/userViewLookup';
 import { useSelfIdInChannel } from '../../utils/channelUser';
-import { contentMentionsAny } from '../../utils/mentionTokens';
+import { mentionsReader } from '../../utils/notificationFilters';
 import {
   isPendingMessage,
   usePendingMessageStore,
@@ -214,6 +215,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
   // The channel whose origin issued this message's ids; mentions resolve there.
   const mentionChannelId = channelKey || null;
   const selfIdHere = useSelfIdInChannel(mentionChannelId);
+  const myRoleIdsHere = useSpaceStore((s) => (mentionChannelId ? selectMyRoleIdsInChannel(s, mentionChannelId) : undefined));
   const startEditing = () => {
     setEditContent(message.content ?? '');
     setEditingMessage(message.id);
@@ -408,15 +410,20 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     ? currentUser
     : (_rawMsgUser ? _canonicalMsgUser : message.user);
   const displayOrigin = isAuthor && currentUser ? '' : messageOrigin;
-  const displayName = userDisplayName(displayIdentity);
 
   const spaces = useSpaceStore((s) => s.spaces);
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId);
   const ownerId = spaces.find(s => s.id === currentSpaceId)?.ownerId;
 
+  // The author's row in the space's roster: it gives the name colour and the
+  // nickname. message.userId is the id on the space's instance, the id the
+  // loaded member list carries. A DM has no roster.
+  const spaceMemberOf = (userId: string) => (isDmMessage ? undefined : members.find(m => m.userId === userId));
+  const displayName = spaceMemberName(spaceMemberOf(message.userId), displayIdentity);
+
   const getMemberDisplayColor = (userId: string) => {
     if (isDmMessage) return { color: '#d8d8de' };
-    const member = members.find(m => m.userId === userId);
+    const member = spaceMemberOf(userId);
     return { color: memberNameColor(member ?? { userId, roles: [] }, ownerId) ?? '#d8d8de' };
   };
 
@@ -429,6 +436,9 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     ? { spaceId: currentSpaceId, userId: message.userId }
     : undefined;
 
+  const handleAuthorMenu = useChannelPokeMenu({ channelId: channelKey, targetUserId: message.userId,
+    origin: messageOrigin, enabled: canSendMessages && !isDmMessage && !pending });
+
   const handleUsernameClick = (e: React.MouseEvent) => {
     if (!message.user) return;
     e.stopPropagation();
@@ -437,10 +447,20 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
 
   const replyRoleColor = (msg: { userId: string }) => getMemberDisplayColor(msg.userId);
 
-  // Self-mention highlighting. A token carries an id on the channel's origin,
-  // so "me" is my id there, not my home id (#332). Tokens inside code are not
-  // mentions (the shared scan in utils/mentionTokens.ts).
-  const isMentioned = !!selfIdHere && !!message.content && contentMentionsAny(message.content, new Set([selfIdHere]));
+  // Mention highlighting, by the rule the alert uses (`messageMentions`): a
+  // `<@id>` token for my id on the channel's origin, not my home id (#332),
+  // or a mass mention the space's instance stamped that reaches me
+  // (`@everyone`, `@here`, a role I hold there). Tokens inside code are not
+  // mentions (the shared scan in utils/mentionTokens.ts). A pending message
+  // has no stamps yet.
+  const stamped = isPendingMessage(message) ? undefined : message;
+  const isMentioned = mentionsReader({
+    myId: selfIdHere,
+    myRoleIds: myRoleIdsHere,
+    content: message.content,
+    mentionEveryone: stamped?.mentionEveryone,
+    mentionRoleIds: stamped?.mentionRoleIds,
+  });
 
   const content = (
     <div
@@ -470,7 +490,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
       {/* Avatar or timestamp column */}
       <div className="w-10 flex-shrink-0 flex items-start justify-start">
         {isFirstInGroup || message.replyTo ? (
-          <div className="mt-0.5">
+          <div className="mt-0.5 relative" data-poke-user={message.userId} onContextMenu={handleAuthorMenu}>
             <ProfileAvatar
               src={displayIdentity.avatar}
               name={displayName}
@@ -495,7 +515,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
           const replyIdentity = isMine(replyTo.user, messageOrigin, self) && currentUser
             ? currentUser
             : (_rawReplyUser ? _canonicalReplyUser : replyTo.user);
-          const replyDisplayName = userDisplayName(replyIdentity);
+          const replyDisplayName = spaceMemberName(spaceMemberOf(replyTo.userId), replyIdentity);
           const preview = (
             <>
               <Avatar src={replyIdentity.avatar} name={replyDisplayName} size={16} user={replyIdentity} />
@@ -528,7 +548,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
 
         {(isFirstInGroup || message.replyTo) && (
           <div className="flex items-baseline gap-2 mb-0.5">
-            <span onClick={handleUsernameClick}>
+            <span onClick={handleUsernameClick} onContextMenu={handleAuthorMenu}>
               <PersonName
                 name={displayName}
                 person={displayIdentity}

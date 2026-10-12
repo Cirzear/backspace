@@ -117,6 +117,7 @@ export const messages = sqliteTable('messages', {
   userId: text('user_id').notNull().references(() => users.id),
   replyToId: text('reply_to_id'),
   content: text('content'),
+  type: text('type', { enum: ['user', 'system'] }).notNull().default('user'),
   editedAt: integer('edited_at'),
   createdAt: integer('created_at').notNull(),
 }, (table) => ({
@@ -126,6 +127,13 @@ export const messages = sqliteTable('messages', {
   }).onDelete('set null'),
   channelIdx: index('idx_messages_channel_id').on(table.channelId),
   userIdx: index('idx_messages_user_id').on(table.userId),
+  // Unread counts (ws/channelUnreadCounts.ts): the messages of a channel after
+  // a read cursor, compared as numbers, with the author to leave out the
+  // reader's own and the type to leave out system rows, so a count reads the
+  // index alone. The expression is unqualified because SQLite refuses a
+  // qualified column in an index expression, and the query must spell it
+  // `CAST(... AS INTEGER)` in this case for the planner to match it.
+  unreadIdx: index('idx_messages_channel_unread').on(table.channelId, sql`CAST(id AS INTEGER)`, table.userId, table.type),
 }));
 
 export const attachments = sqliteTable('attachments', {
@@ -224,6 +232,8 @@ export const dmMessages = sqliteTable('dm_messages', {
   }).onDelete('set null'),
   channelIdx: index('idx_dm_messages_dm_channel_id').on(table.dmChannelId),
   userIdx: index('idx_dm_messages_user_id').on(table.userId),
+  // Unread counts, as idx_messages_channel_unread above.
+  unreadIdx: index('idx_dm_messages_channel_unread').on(table.dmChannelId, sql`CAST(id AS INTEGER)`, table.userId),
   sourceUniqueIdx: uniqueIndex('idx_dm_messages_source_unique')
     .on(table.sourceInstance, table.sourceMessageId)
     .where(sql`source_instance IS NOT NULL`),
@@ -345,6 +355,8 @@ export const notificationSettings = sqliteTable('notification_settings', {
   level: text('level'),
   muted: integer('muted').notNull().default(0),
   mutedUntil: integer('muted_until'),
+  suppressEveryone: integer('suppress_everyone').notNull().default(0),
+  suppressRoles: integer('suppress_roles').notNull().default(0),
   updatedAt: integer('updated_at').notNull(),
 }, (table) => ({
   // One space-wide row and one row per channel, per user. Two partial

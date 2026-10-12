@@ -183,6 +183,7 @@ export const ERROR_CODES = [
   'join_request_not_found',
   'join_request_decided',
   // spaces
+  'member_nickname_invalid',
   'space_name_required',
   'space_name_length',
   'space_create_failed',
@@ -251,6 +252,7 @@ export const ERROR_CODES = [
   'system_message_immutable',
   'message_edit_not_author',
   'message_delete_forbidden',
+  'poke_target_no_access',
   'paging_cursor_conflict',
   'internal_error',
   // misc

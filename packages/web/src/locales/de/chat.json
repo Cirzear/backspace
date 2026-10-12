@@ -17,7 +17,8 @@
       "jump": "Zur ursprünglichen Nachricht springen"
     },
     "mention": {
-      "unknownUser": "Unbekannter Nutzer"
+      "unknownUser": "Unbekannter Nutzer",
+      "unknownRole": "Unbekannte Rolle"
     },
     "reactions": {
       "you": "Du",
@@ -200,5 +201,10 @@
     "selectedCount_one": "{{count}} Sticker ausgewählt",
     "selectedCount_other": "{{count}} Sticker ausgewählt",
     "dropMore": "Klicken oder weitere Bilder hierher ziehen"
+  },
+  "poke": {
+    "action": "Anstupsen",
+    "received": "{{actor}} hat {{target}} angestupst",
+    "disconnected": "Verbindung getrennt. Anstupsen wurde nicht gesendet."
   }
 }

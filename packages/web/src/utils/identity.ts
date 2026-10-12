@@ -21,6 +21,21 @@ export function userDisplayName(user: { displayName?: string | null; username: s
   return user.displayName || parseFederatedUsername(user.username).baseName;
 }
 
+/**
+ * The name a person is shown by inside one space: their nickname in that
+ * space when they set one, else `userDisplayName`. Every surface that names a
+ * member of a space uses it (the member lists, a space message's author and
+ * reply line, mentions, the mention picker, the typing line). DMs, friends and
+ * the profile's name and username name the account, never a nickname.
+ * `member` is the row of that space's roster, or null outside a space.
+ */
+export function spaceMemberName(
+  member: { nickname?: string | null } | null | undefined,
+  user: { displayName?: string | null; username: string },
+): string {
+  return member?.nickname || userDisplayName(user);
+}
+
 // ─── Hosts and identities across instances ──────────────────────────────────
 // Origins are `''` for the page's own instance and full URLs for the others;
 // `users.home_instance` is a bare host. Two hosts are compared only through

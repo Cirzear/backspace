@@ -209,6 +209,7 @@
   "message_empty": "Eine Nachricht braucht Text oder einen Anhang.",
   "message_edit_not_author": "Du kannst nur deine eigenen Nachrichten bearbeiten.",
   "message_delete_forbidden": "Du kannst diese Nachricht nicht löschen.",
+  "poke_target_no_access": "Dieses Mitglied kann diesen Kanal nicht sehen und kann hier nicht angestupst werden.",
   "paging_cursor_conflict": "Nachrichten können vor oder nach einer Nachricht geladen werden, nicht beides gleichzeitig.",
   "internal_error": "Auf dem Server ist etwas schiefgelaufen. Versuche es erneut.",
   "voice_disabled": "Sprach- und Videochat sind auf dieser Instanz nicht eingerichtet.",
@@ -219,5 +220,6 @@
   "directory_disabled": "Diese Instanz ist mit keinem Verzeichnis verbunden.",
   "directory_unreachable": "Der Äußere Space ist gerade nicht erreichbar. Der Innere Space funktioniert weiterhin.",
   "directory_private_space": "Stell den Space auf „Öffentlich“ oder „Auf Anfrage“, bevor du ihn eintragen lässt.",
-  "directory_requires_discovery": "Schalte zuerst das Entdecken von Spaces ein."
+  "directory_requires_discovery": "Schalte zuerst das Entdecken von Spaces ein.",
+  "member_nickname_invalid": "Spitznamen dürfen höchstens {{max}} Zeichen in einer Zeile haben, mindestens ein sichtbares Zeichen und keine Steuerzeichen."
 }
