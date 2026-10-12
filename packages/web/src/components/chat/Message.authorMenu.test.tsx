@@ -110,7 +110,7 @@ describe('Message author context menu', () => {
 
     rightClickAvatar(container, bob.id);
     expect(menuLabels()).toEqual(['@Bob']);
-    fireEvent.click(screen.getByRole('button', { name: '@Bob' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '@Bob' }));
     await nextFrame();
 
     expect(useComposerStore.getState().get(dm.id).draftText).toBe('hey <@bob-host> ');
@@ -128,7 +128,7 @@ describe('Message author context menu', () => {
 
     fireEvent.contextMenu(screen.getAllByText('Bobby')[0]!, { clientX: 20, clientY: 30 });
     expect(menuLabels()).toEqual(['@Bobby', 'Poke']);
-    fireEvent.click(screen.getByRole('button', { name: '@Bobby' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '@Bobby' }));
     await nextFrame();
 
     expect(useComposerStore.getState().get('space-ch-1').draftText).toBe('<@bob-host> ');
@@ -153,6 +153,50 @@ describe('Message author context menu', () => {
     rightClickAvatar(container, meOnHost.id);
     const labels = menuLabels();
     expect(labels.length).toBeGreaterThan(0);
+    expect(labels).not.toContain('@Alice');
+  });
+
+  it('opens the author menu from the keyboard on the focused name, under the name', () => {
+    useChannelPokeStore.getState().setHost(HOST, true);
+    renderChannel('space-ch-1', makeMessage('space-ch-1', false));
+    const name = screen.getByRole('button', { name: 'Bobby' });
+    name.getBoundingClientRect = () => ({ left: 100, right: 150, top: 40, bottom: 60, width: 50, height: 20, x: 100, y: 40, toJSON: () => ({}) });
+    name.focus();
+    expect(name).toHaveFocus();
+
+    fireEvent.keyDown(name, { key: 'F10', shiftKey: true });
+    expect(menuLabels()).toEqual(['@Bobby', 'Poke']);
+    expect(useContextMenuStore.getState().menu?.position).toEqual({ x: 116, y: 60 });
+    expect(screen.getByRole('menuitem', { name: '@Bobby' }).closest('[role="menu"]')).toHaveFocus();
+
+    act(() => useContextMenuStore.getState().close());
+    fireEvent.keyDown(name, { key: 'ContextMenu' });
+    expect(menuLabels()).toEqual(['@Bobby', 'Poke']);
+
+    act(() => useContextMenuStore.getState().close());
+    fireEvent.keyDown(name, { key: 'F10' });
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('opens the profile card with Enter or Space on the focused name', () => {
+    renderChannel('space-ch-1', makeMessage('space-ch-1', false));
+    const name = screen.getByRole('button', { name: 'Bobby' });
+    for (const key of ['Enter', ' ']) {
+      act(() => useUIStore.getState().closeUserProfile());
+      fireEvent.keyDown(name, { key });
+      expect(useUIStore.getState().userProfilePopout?.user.id).toBe(bob.id);
+    }
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it("opens the message menu on the viewer's own space message, even where the host offers pokes", () => {
+    useChannelPokeStore.getState().setHost(HOST, true);
+    const { container } = renderChannel('space-ch-1', makeMessage('space-ch-1', false, meOnHost));
+
+    rightClickAvatar(container, meOnHost.id);
+    const labels = menuLabels();
+    expect(labels.length).toBeGreaterThan(0);
+    expect(labels).not.toContain('Poke');
     expect(labels).not.toContain('@Alice');
   });
 });

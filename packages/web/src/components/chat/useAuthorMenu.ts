@@ -1,7 +1,7 @@
-import type { MouseEvent } from 'react';
+import type { KeyboardEvent, MouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useChannelPokeStore } from '../../stores/channelPokeStore';
-import { useContextMenuStore, type ContextMenuItem } from '../../stores/contextMenuStore';
+import { menuPositionFor, useContextMenuStore, type ContextMenuItem } from '../../stores/contextMenuStore';
 import { useUIStore } from '../../stores/uiStore';
 import { wsSend } from '../../hooks/useWebSocket';
 import { resolveChannelUser } from '../../utils/channelUser';
@@ -27,15 +27,17 @@ interface Options {
 }
 
 /**
- * The right-click handler of a message author's avatar and name: a menu of
- * what the viewer can do with the author, kept apart from the message menu.
+ * The right-click handler of a message author's avatar and name, also run for
+ * the menu key or Shift+F10 on the focused name: a menu of what the viewer
+ * can do with the author, kept apart from the message menu. The viewer's own
+ * message has neither item.
  *
  * - Mention (`@name`): adds a `<@id>` token for the author to the channel's
  *   composer. The id is the message's `userId`, the channel origin's id, which
  *   is the id the mention picker inserts and the sent message's badge
  *   resolves. Offered when the author is one of the channel's people as
  *   `utils/channelUser` knows them, so the composer and the sent message can
- *   name them, and never for the viewer's own message.
+ *   name them.
  * - Poke: space channels only, where the space's instance offered pokes in
  *   its `ready`.
  *
@@ -45,10 +47,10 @@ interface Options {
 export function useAuthorMenu({ channelId, authorId, origin, isDm, canSend, isAuthor }: Options) {
   const { t } = useTranslation('chat');
   const pokeSupported = useChannelPokeStore(s => s.hosts[origin] === true);
-  return (event: MouseEvent) => {
-    if (!canSend || !channelId) return;
+  return (event: MouseEvent | KeyboardEvent) => {
+    if (!canSend || !channelId || isAuthor) return;
     const items: ContextMenuItem[] = [];
-    const author = isAuthor ? null : resolveChannelUser(channelId, authorId);
+    const author = resolveChannelUser(channelId, authorId);
     if (author) {
       items.push({
         type: 'action', key: 'mention-author', label: '@' + spaceMemberName(author.member, author.user),
@@ -68,6 +70,6 @@ export function useAuthorMenu({ channelId, authorId, origin, isDm, canSend, isAu
     if (items.length === 0) return;
     event.preventDefault();
     event.stopPropagation();
-    useContextMenuStore.getState().open({ x: event.clientX, y: event.clientY }, items);
+    useContextMenuStore.getState().open(menuPositionFor(event), items);
   };
 }

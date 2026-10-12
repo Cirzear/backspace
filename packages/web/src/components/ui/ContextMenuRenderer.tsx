@@ -15,10 +15,11 @@ import { usePortalContainer } from '../../hooks/usePortalContainer';
 
 // ── Desktop item button ──────────────────────────────────────────────────────
 
+// An item the arrow keys moved to looks like a hovered one.
 const ITEM_CLASS =
-  'w-full text-left px-2 py-1.5 mx-1.5 text-sm rounded-sm flex items-center gap-2 text-txt-secondary hover:bg-accent-primary hover:text-white';
+  'w-full text-left px-2 py-1.5 mx-1.5 text-sm rounded-sm flex items-center gap-2 text-txt-secondary hover:bg-accent-primary hover:text-white outline-none focus-visible:bg-accent-primary focus-visible:text-white';
 const ITEM_DANGER_CLASS =
-  'w-full text-left px-2 py-1.5 mx-1.5 text-sm rounded-sm flex items-center gap-2 text-txt-danger hover:bg-accent-rose hover:text-white';
+  'w-full text-left px-2 py-1.5 mx-1.5 text-sm rounded-sm flex items-center gap-2 text-txt-danger hover:bg-accent-rose hover:text-white outline-none focus-visible:bg-accent-rose focus-visible:text-white';
 const ITEM_DISABLED_CLASS =
   'w-full text-left px-2 py-1.5 mx-1.5 text-sm rounded-sm flex items-center gap-2 text-txt-secondary opacity-50 cursor-default';
 const ITEM_STYLE: React.CSSProperties = { width: 'calc(100% - 12px)' };
@@ -64,6 +65,7 @@ function ReactiveCheckboxItem({ item, isMobile }: ReactiveCheckboxItemProps) {
 
   return (
     <button
+      type="button"
       className={className}
       style={isMobile ? undefined : ITEM_STYLE}
       role="menuitemcheckbox"
@@ -102,6 +104,16 @@ function handleMenuNavigation(event: React.KeyboardEvent, container: HTMLElement
 }
 
 // ── Desktop submenu flyout ───────────────────────────────────────────────────
+
+/**
+ * Keeps the browser's own menu from opening over ours. Chromium fires a
+ * `contextmenu` event on keyup of the Menu key, after our keydown has already
+ * opened the menu and moved focus into it, so that event lands on the panel.
+ * A right-click on the panel lands here too.
+ */
+function suppressNativeMenu(event: React.MouseEvent): void {
+  event.preventDefault();
+}
 
 interface SubmenuFlyoutProps {
   submenu: ContextMenuSubmenu;
@@ -168,6 +180,7 @@ function SubmenuFlyout({ submenu, triggerRef, onMouseEnter, onMouseLeave, close 
       role="menu"
       aria-label={submenu.label}
       onKeyDown={handleKeyDown}
+      onContextMenu={suppressNativeMenu}
       className="fixed z-[210] glass rounded-md py-1.5 min-w-[160px] overflow-y-auto scrollbar-thin animate-fade-in"
       style={{ left: -9999, top: -9999 }}
       onMouseEnter={onMouseEnter}
@@ -192,10 +205,10 @@ interface DesktopLeafItemProps {
 function DesktopLeafItem({ item, close }: DesktopLeafItemProps) {
   switch (item.type) {
     case 'separator':
-      return <div className="h-px bg-white/[0.06] my-1 mx-1.5" />; // i18n-check: allow-literal (the check reads the following `case` as JSX text)
+      return <div role="separator" className="h-px bg-white/[0.06] my-1 mx-1.5" />; // i18n-check: allow-literal (the check reads the following `case` as JSX text)
 
     case 'custom':
-      return <div>{item.render(close)}</div>; // i18n-check: allow-literal (the check reads the following `case` as JSX text)
+      return <div role="group">{item.render(close)}</div>; // i18n-check: allow-literal (the check reads the following `case` as JSX text)
 
     case 'checkbox':
       return <ReactiveCheckboxItem item={item} />;
@@ -208,6 +221,8 @@ function DesktopLeafItem({ item, close }: DesktopLeafItemProps) {
           : ITEM_CLASS;
       return (
         <button
+          type="button"
+          role="menuitem"
           className={className}
           style={ITEM_STYLE}
           disabled={item.disabled}
@@ -287,6 +302,8 @@ function DesktopSubmenuItem({ item, close }: DesktopSubmenuItemProps) {
     <>
       <button
         ref={triggerRef}
+        type="button"
+        role="menuitem"
         aria-haspopup="menu"
         aria-expanded={isOpen}
         onClick={() => setOpenSubmenu(isOpen ? null : item.key)}
@@ -424,6 +441,7 @@ function DesktopMenu({ items, position, close, closeGuard }: DesktopMenuProps) {
         className="fixed z-[200] min-w-[180px] py-1.5 glass rounded-md animate-fade-in max-h-[calc(calc(100*var(--app-vh))-16px)] overflow-y-auto scrollbar-thin outline-none"
         style={{ left: position.x, top: position.y }}
         onKeyDown={handleKeyDown}
+        onContextMenu={suppressNativeMenu}
         onMouseDown={(e) => e.stopPropagation()}
       >
         {items.map((item) => (
@@ -445,10 +463,10 @@ interface MobileLeafItemProps {
 function MobileLeafItem({ item, close }: MobileLeafItemProps) {
   switch (item.type) {
     case 'separator':
-      return <div className="h-px bg-white/[0.06] my-1 mx-1.5" />; // i18n-check: allow-literal (the check reads the following `case` as JSX text)
+      return <div role="separator" className="h-px bg-white/[0.06] my-1 mx-1.5" />; // i18n-check: allow-literal (the check reads the following `case` as JSX text)
 
     case 'custom':
-      return <div>{item.render(close)}</div>; // i18n-check: allow-literal (the check reads the following `case` as JSX text)
+      return <div role="group">{item.render(close)}</div>; // i18n-check: allow-literal (the check reads the following `case` as JSX text)
 
     case 'checkbox':
       return <ReactiveCheckboxItem item={item} isMobile />;
@@ -457,6 +475,8 @@ function MobileLeafItem({ item, close }: MobileLeafItemProps) {
       const colorClass = item.danger ? 'text-txt-danger' : 'text-txt-primary';
       return (
         <button
+          type="button"
+          role="menuitem"
           className={`${MOBILE_ITEM_CLASS} ${colorClass} ${item.disabled ? 'opacity-50' : ''}`}
           disabled={item.disabled}
           onClick={(e) => {
@@ -508,13 +528,17 @@ function MobileMenu({ items, close }: MobileMenuProps) {
       <div className="fixed inset-0 z-[300] bg-black/50" onClick={close} />
       {/* Bottom sheet */}
       <div
+        role="menu"
+        aria-label={submenuStack?.label}
         className="fixed bottom-0 left-0 right-0 z-[301] rounded-t-2xl glass-bubble animate-slide-up-sheet"
         style={{ paddingBottom: 'var(--safe-bottom)' }}
       >
-        <div className="w-10 h-1 bg-txt-tertiary/30 rounded-full mx-auto mt-2 mb-1" />
+        <div aria-hidden="true" className="w-10 h-1 bg-txt-tertiary/30 rounded-full mx-auto mt-2 mb-1" />
         {/* Back button for submenu */}
         {submenuStack && (
           <button
+            type="button"
+            role="menuitem"
             className={`${MOBILE_ITEM_CLASS} text-txt-secondary`}
             onClick={() => setSubmenuStack(null)}
           >
@@ -524,7 +548,7 @@ function MobileMenu({ items, close }: MobileMenuProps) {
             <span>{t('actions.back')}</span>
           </button>
         )}
-        <div className="py-1">
+        <div role="none" className="py-1">
           {currentItems.map((item) => {
             if (item.type === 'submenu') {
               // Render submenu trigger as a button that switches sheet content
@@ -532,6 +556,9 @@ function MobileMenu({ items, close }: MobileMenuProps) {
               return (
                 <button
                   key={item.key}
+                  type="button"
+                  role="menuitem"
+                  aria-haspopup="menu"
                   className={`${MOBILE_ITEM_CLASS} ${colorClass}`}
                   onClick={(e) => {
                     e.stopPropagation();
