@@ -1,5 +1,5 @@
 import type { WebSocket } from 'ws';
-import { hasMassMention } from '@backspace/shared/src/mentions.js';
+import { addsMassMention, hasMassMention, massMentionFields } from '@backspace/shared/src/mentions.js';
 import { eq, inArray, and } from 'drizzle-orm';
 import { getDb, schema } from '../db/index.js';
 import { generateSnowflake } from '../utils/snowflake.js';
@@ -122,6 +122,7 @@ function getMessageWithUser(messageId: string): MessageWithUser | null {
     content: message.content,
     editedAt: message.editedAt,
     createdAt: message.createdAt,
+    ...massMentionFields(message.content),
     user: sanitizeUser(user),
     attachments,
     embeds: embedRows.map(e => embedRowToEmbed(e)),
@@ -235,6 +236,12 @@ export function handleClientEvent(
   }
 }
 
+/** The coded refusal of a mass mention without MENTION_EVERYONE, as REST answers it. */
+function sendMissingMentionEveryone(userId: string): void {
+  const details = { permission: 'MENTION_EVERYONE' };
+  connectionManager.sendToUser(userId, { type: 'error', message: errorText('missing_permission', details), code: 'missing_permission', details });
+}
+
 function handleMessageCreate(event: Record<string, unknown>, userId: string): void {
   const channelId = event.channelId as string;
   const content = event.content as string;
@@ -267,7 +274,7 @@ function handleMessageCreate(event: Record<string, unknown>, userId: string): vo
   }
 
   if (hasMassMention(content) && !hasPermission(userId, spaceId, PermissionBits.MENTION_EVERYONE, channelId)) {
-    connectionManager.sendToUser(userId, { type: 'error', message: 'Missing MENTION_EVERYONE permission' });
+    sendMissingMentionEveryone(userId);
     return;
   }
 
@@ -336,10 +343,11 @@ function handleMessageEdit(event: Record<string, unknown>, userId: string): void
     return;
   }
 
-  // The transport and edit path must enforce the same permission as REST creation.
+  // The same rule as PATCH /api/messages/:id: adding a mass mention needs
+  // MENTION_EVERYONE, keeping one the message already has does not.
   const mentionSpaceId = getChannelSpaceId(message.channelId);
-  if (hasMassMention(content) && (!mentionSpaceId || !hasPermission(userId, mentionSpaceId, PermissionBits.MENTION_EVERYONE, message.channelId))) {
-    connectionManager.sendToUser(userId, { type: 'error', message: 'Missing MENTION_EVERYONE permission' });
+  if (addsMassMention(message.content, content) && (!mentionSpaceId || !hasPermission(userId, mentionSpaceId, PermissionBits.MENTION_EVERYONE, message.channelId))) {
+    sendMissingMentionEveryone(userId);
     return;
   }
 

@@ -96,9 +96,9 @@ afterEach(async () => { await app.close(); sqlite.close(); });
 function grantMassMentions(): void {
   testDb.update(schema.roles).set({ permissions: permissionsToString(DEFAULT_EVERYONE_PERMISSIONS | PermissionBits.MENTION_EVERYONE) }).where(eq(schema.roles.id, SPACE)).run();
 }
-function seedMessage(): string {
+function seedMessage(content = 'before'): string {
   const id = generateSnowflake();
-  testDb.insert(schema.messages).values({ id, channelId: CHANNEL, userId: 'member', content: 'before', createdAt: NOW }).run();
+  testDb.insert(schema.messages).values({ id, channelId: CHANNEL, userId: 'member', content, createdAt: NOW }).run();
   return id;
 }
 async function ws(event: Record<string, unknown>): Promise<void> {
@@ -116,7 +116,9 @@ describe('mass mention authorization across transports and edits', () => {
   it.each(['@everyone', '@here', '<@&role>'])('refuses WS creation of %s without the bit', async content => {
     await ws({ type: 'message_create', channelId: CHANNEL, content });
     expect(testDb.select().from(schema.messages).all()).toEqual([]);
-    expect(sendToUser).toHaveBeenCalledWith('member', expect.objectContaining({ type: 'error', message: expect.stringContaining('MENTION_EVERYONE') }));
+    expect(sendToUser).toHaveBeenCalledWith('member', expect.objectContaining({
+      type: 'error', code: 'missing_permission', details: { permission: 'MENTION_EVERYONE' }, message: expect.stringContaining('MENTION_EVERYONE'),
+    }));
   });
   it('cannot acquire a mass mention by editing over REST or WS', async () => {
     const id = seedMessage();
@@ -124,6 +126,32 @@ describe('mass mention authorization across transports and edits', () => {
     expect(res.statusCode).toBe(403);
     await ws({ type: 'message_edit', messageId: id, content: '<@&role>' });
     expect(testDb.select().from(schema.messages).get()?.content).toBe('before');
+  });
+  it('lets an edit keep the mass mentions a message already has without the bit', async () => {
+    const id = seedMessage('@everyone <@&role> meeting at 5');
+    const res = await app.inject({ method: 'PATCH', url: '/api/messages/' + id, payload: { content: '@everyone <@&role> meeting at 6' } });
+    expect(res.statusCode).toBe(200);
+    await ws({ type: 'message_edit', messageId: id, content: '@here <@&role> meeting at 7' });
+    expect(testDb.select().from(schema.messages).get()?.content).toBe('@here <@&role> meeting at 7');
+    const added = await app.inject({ method: 'PATCH', url: '/api/messages/' + id, payload: { content: '@here <@&role> <@&other> meeting at 7' } });
+    expect(added.statusCode).toBe(403);
+  });
+  it('stamps the stored mass mentions on created, broadcast and edited messages', async () => {
+    grantMassMentions();
+    const created = await app.inject({ method: 'POST', url: '/api/channels/' + CHANNEL + '/messages', payload: { content: '@here <@&role> \x60<@&code>\x60' } });
+    expect(created.json()).toMatchObject({ mentionEveryone: true, mentionRoleIds: ['role'] });
+    expect(sendToChannel).toHaveBeenCalledWith(SPACE, CHANNEL, expect.objectContaining({
+      type: 'message_created', message: expect.objectContaining({ mentionEveryone: true, mentionRoleIds: ['role'] }),
+    }));
+    const edited = await app.inject({ method: 'PATCH', url: '/api/messages/' + created.json().id, payload: { content: 'plain' } });
+    expect(edited.json()).toMatchObject({ mentionEveryone: false, mentionRoleIds: [] });
+    sendToChannel.mockClear();
+    await ws({ type: 'message_create', channelId: CHANNEL, content: '@everyone' });
+    expect(sendToChannel).toHaveBeenCalledWith(SPACE, CHANNEL, expect.objectContaining({
+      type: 'message_created', message: expect.objectContaining({ mentionEveryone: true, mentionRoleIds: [] }),
+    }));
+    const history = await app.inject({ method: 'GET', url: '/api/channels/' + CHANNEL + '/messages' });
+    expect(history.json().map((m: { mentionEveryone: boolean }) => m.mentionEveryone).sort()).toEqual([false, true]);
   });
   it.each(['hello <@member>', '\x60@everyone\x60', '\x60\x60\x60<@&role>\x60\x60\x60', 'email@everyone', '@everyone-else'])('allows non-mass content %s', async content => {
     const res = await app.inject({ method: 'POST', url: '/api/channels/' + CHANNEL + '/messages', payload: { content } });

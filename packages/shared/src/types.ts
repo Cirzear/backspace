@@ -470,6 +470,16 @@ export interface Message {
   type?: 'user' | 'system';
   editedAt: number | null;
   createdAt: number;
+  /**
+   * Space channel messages only, set by the instance hosting the space
+   * (`massMentionFields` in `mentions.ts`): the content has `@everyone` or
+   * `@here`, and the role ids it mentions. That instance stores a new mass
+   * mention only from an author holding MENTION_EVERYONE, so a client alerts
+   * on mass mentions from these fields alone. Absent from instances before
+   * MENTION_EVERYONE, whose mass mentions therefore never alert.
+   */
+  mentionEveryone?: boolean;
+  mentionRoleIds?: string[];
 }
 
 export interface MessageWithUser extends Message {
