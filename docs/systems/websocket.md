@@ -23,8 +23,8 @@ Source: `packages/server/src/ws/handler.ts`, `packages/server/src/ws/events.ts`
 ### Messages
 | type | fields | notes |
 |------|--------|-------|
-| `message_create` | channelId, content, replyToId? | SEND_MESSAGES perm; `replyToId` must name a message in the same channel |
-| `message_edit` | messageId, content | author only |
+| `message_create` | channelId, content, replyToId? | SEND_MESSAGES perm; MENTION_EVERYONE for content with `@everyone`, `@here` or a role token (permissions.md, "Mass mentions"); `replyToId` must name a message in the same channel |
+| `message_edit` | messageId, content | author only; MENTION_EVERYONE when the edit adds a mass mention the message did not have |
 | `message_delete` | messageId | author or MANAGE_MESSAGES |
 | `typing_start` | channelId | 5s auto-expire |
 
@@ -101,7 +101,7 @@ All four also need the actor to outrank the target (permissions.md, "Role hierar
 ### Messages
 | type | fields | scope |
 |------|--------|-------|
-| `message_created` | message: MessageWithUser | channel (VIEW_CHANNEL) |
+| `message_created` | message: MessageWithUser | channel (VIEW_CHANNEL). The message carries `mentionEveryone` and `mentionRoleIds`, the mass mentions the space allowed (permissions.md, "Mass mentions"); clients alert on mass mentions from these alone |
 | `message_updated` | message: MessageWithUser | channel (VIEW_CHANNEL) |
 | `message_deleted` | messageId, channelId | channel (VIEW_CHANNEL) |
 | `typing` | channelId, userId, username | channel (VIEW_CHANNEL, excludes sender) |
@@ -130,6 +130,72 @@ handler alike, so both paths reach the same audience. (`reaction_added` and
 |------|--------|-------|
 | `channel_ack` | channelId, messageId | user (multi-tab sync) |
 | `mark_unread` | channelId, messageId | user (multi-tab sync) |
+| `channel_unread_count` | counts: Record<channelId, number> | user; follows the event that moved the count, on the same socket (see "Unread counts") |
+
+#### Unread counts
+
+The sidebar badges show how many messages are unread, not how many
+channels. The instance that hosts a channel or DM counts it, and the client
+keeps the counts per origin (`stores/unreadCountStore.ts`).
+
+**What is counted.** Messages after the user's persisted read cursor
+(`read_states`), leaving out the user's own. Ids are compared as numbers
+(`CAST(id AS INTEGER)`), because snowflakes grew a digit in late 2024 and
+grow another in 2031. A space channel is counted only when the user has
+VIEW_CHANNEL and READ_MESSAGE_HISTORY there (or ADMINISTRATOR); a DM only
+while the user is an open member of a conversation that is not deleted.
+Deleted messages are gone from the table and drop out of the next count.
+DM system messages count like any other message, as they do for the
+unread dot.
+
+**The cap.** A count stops at 100, which reads "100 or more". The badges
+show anything above 99 as "99+", and a sum of capped counts reaches 100
+exactly when the real sum does. The cap also bounds the work: a count
+walks at most 100 entries of `idx_messages_channel_unread` or
+`idx_dm_messages_channel_unread` (database.md), however long the channel.
+
+**Snapshot.** `ready.unreadCounts` holds an entry for every countable space
+channel and open DM in the payload, zero included. The client replaces that
+origin's counts with it on every `ready`. It reuses the permissions and read
+states the payload already loaded.
+
+**Follow-ups.** `ConnectionManager.sendToUser` sends a `channel_unread_count`
+with the user's new count right after these events, on the same sockets, so
+the count never runs ahead of or behind the event it belongs to
+(`unreadCountFollowUp`, `ws/channelUnreadCounts.ts`):
+
+| Event | Why the count moved |
+|-------|---------------------|
+| `message_created`, `message_deleted` | a message after the cursor came or went |
+| `dm_message_created`, `dm_message_deleted` | the same, in a DM |
+| `channel_ack`, `mark_unread` | the cursor moved, here or relayed from a peer as `read_state_update` |
+| `channel_updated` | the user's access may have changed |
+| `dm_channel_created` | a DM opened or reopened with messages already in it |
+
+A channel fan-out (`sendToChannel`, the visibility broadcast in
+`routes/channels.ts`) passes the permissions it computed to choose the
+audience, so a follow-up costs one read-state lookup and one bounded count
+per recipient. `sendToSpace` events are never followed. A new channel has
+nothing to count, and a deleted channel or closed DM leaves the sidebar
+with its row, so neither is followed.
+
+**Client.** `SpaceUnreadBadge` sums the counts of the space's channels
+from the space's own origin; `DmUnreadBadge` sums the pinned copy of each
+conversation from the origin that serves it (`channelOriginMap`), so a
+conversation mirrored on several instances counts once. Both sum only
+channels in `chatStore.unreadChannels`, so the badge and the unread dot
+agree. A muted space keeps its badge in a quieter colour (sounds.md,
+"Notification settings").
+
+**Older releases.** An instance on 1.9.1 or earlier sends no
+`unreadCounts`; the client then holds no counts for that origin and shows
+the unread dot alone. A client on 1.9.1 or earlier ignores
+`channel_unread_count` and the extra `ready` field. Federation is unchanged: each instance counts its own
+copies.
+
+**Known limits.** A channel that becomes visible through a role change
+(`space_access_changed`) or a space joined mid-session has no count until
+its next follow-up or the next `ready`; its unread dot shows meanwhile.
 
 ### Presence & Activity
 | type | fields | scope |
@@ -142,6 +208,7 @@ handler alike, so both paths reach the same audience. (`reaction_added` and
 |------|--------|-------|
 | `space_updated` | space | space |
 | `member_joined` | spaceId, member: MemberWithUser | space |
+| `member_updated` | spaceId, member: MemberWithUser | space |
 | `member_left` | spaceId, userId | space |
 | `member_banned` | spaceId, reason | user (banned) |
 | `channel_created` | channel, spaceId | space |
@@ -162,11 +229,23 @@ settings"), including to the socket of the session that made the change. It
 names the instance's own ids; the client files it under the origin of the
 socket that delivered it, which is the instance that hosts the space
 (`notificationSettingsStore.apply`), and keeps the newer `updatedAt` when
-several sources disagree. A setting with `level` null and `muted` false was
-cleared. Clients load the full list with `GET /users/@me/notification-settings`
+several sources disagree. A setting with `level` null, `muted` false and no suppress flag was
+cleared. Space settings carry `suppressEveryone` and `suppressRoles`;
+an old client ignores them. Clients load the full list with `GET /users/@me/notification-settings`
 when each instance's `ready` arrives; the `ready` payload itself does not
 carry it. Mixed versions: an old client ignores the event; a new client on an
 old server gets a 404 from the list route, logs it and uses the defaults.
+
+`member_updated` follows every successful `PATCH /spaces/:id/members/:uid`
+(a nickname, a role set or both) and carries the member row the route
+answered: `nickname`, and `roles` with display fields only (permissions.md,
+"Who receives role and override data"). The client applies it only when the
+space with that id and the origin of the socket that delivered it is the
+loaded space (`applySpaceMemberUpdate` in `stores/spaceMemberUpdates.ts`), and
+takes only `nickname` and `roles` from it; the user row and presence have
+their own events. The HTTP answer goes through the same function. Mixed
+versions: an older client ignores the event; an older server does not send
+it, and its role changes still arrive through `space_access_changed`.
 
 `space_access_changed` follows any change to the space's roles or to a
 member's roles: `POST`, `PATCH`, `DELETE /spaces/:id/roles[/:rid]`,
@@ -290,6 +369,7 @@ reason: `'displaced'` (new tab) | `'session_closed'`
   voiceUserStates?: Record<string, { isMuted, isDeafened, isCameraOn, isScreenSharing }>,
   spaceVoiceStates?: Record<string, { spaceMuted, spaceDeafened, permissionMuted }>,
   readStates?: ReadState[],
+  unreadCounts?: Record<channelId, number>, // unread messages per countable space channel and open DM, capped at 100 (see "Unread counts")
   activeCalls?: ActiveCallInfo[],  // includes federatedCallHost?, livekitUrl?, livekitToken? for federated calls
   userActivities?: Record<userId, Activity[]>,  // space members, DM members and friends; keys are this instance's row ids
   userActivityIdentities?: Record<userId, { homeUserId: string | null, homeInstance: string | null }>,  // identity of each userActivities key; null pair = native row

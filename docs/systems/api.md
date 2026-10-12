@@ -130,9 +130,10 @@ PATCH  /spaces/:id/transfer-ownership  { newOwnerId }                          �
 ### Members
 ```
 GET    /spaces/:id/members                               → { members[] }
-PATCH  /spaces/:id/members/:uid  { roleIds }             → { member }  [MANAGE_ROLES]
+PATCH  /spaces/:id/members/:uid  { roleIds?, nickname? } → { member }  [roleIds: MANAGE_ROLES; nickname: self, or MANAGE_SPACE]
 DELETE /spaces/:id/members/:uid                          → { success }  [KICK_MEMBERS|self]
 ```
+`PATCH /members/:uid` takes `roleIds`, `nickname` or both; a body with neither, or one that is not an object, answers `400 validation_failed`. Every field is checked before anything is written, and both are written in one transaction, so a refused field leaves the other unchanged too. `nickname` is the member's name in this space (`space_members.nickname`); the account name is not touched. Anyone may set their own. Setting another member's needs `MANAGE_SPACE` (`403 missing_permission`), never reaches the owner (`403 space_owner_only`) and needs a higher rank (`403 role_hierarchy`). The value goes through `normalizeMemberNickname` (`packages/shared/src/constants.ts`): `null` or a string that trims to nothing clears it; otherwise it is trimmed and refused with `400 member_nickname_invalid` (`details: { max }`) when longer than `MAX_MEMBER_NICKNAME_LENGTH` (32 UTF-16 code units), when it holds a control character, a line or paragraph separator or a bidirectional control, or when it has no visible character. The answer is followed by `member_updated` to the space (websocket.md); a role change is also followed by `space_access_changed`. Instances up to 1.9.x read only `roleIds` and refuse a nickname-only body (`role_ids_invalid`, `cannot_change_own_roles` or `missing_permission`).
 
 ### Bans
 ```
@@ -189,11 +190,13 @@ DELETE /categories/:id/overrides/:tt/:tid  ?version=        → { success }  [MA
 ## Messages (`routes/messages.ts`) — auth required
 ```
 GET    /channels/:id/messages  ?before=|after=&limit=50 (1-100) → MessageWithUser[]  [VIEW_CHANNEL+READ_MESSAGE_HISTORY]
-POST   /channels/:id/messages  { content, attachments?, replyToId? } → { message }  [SEND_MESSAGES, +ATTACH_FILES]
-PATCH  /messages/:id           { content }                → { message }  [author]
+POST   /channels/:id/messages  { content, attachments?, replyToId? } → { message }  [SEND_MESSAGES, +ATTACH_FILES, +MENTION_EVERYONE]
+PATCH  /messages/:id           { content }                → { message }  [author, +MENTION_EVERYONE]
 DELETE /messages/:id                                      → { success }  [author|MANAGE_MESSAGES]
 ```
 `replyToId` on POST must name a message in the same channel, otherwise `400 Invalid reply target` and nothing is inserted. See permissions.md, "Reply-target confinement".
+
+Content with `@everyone`, `@here` or a role token (`<@&roleId>`) outside code needs MENTION_EVERYONE on the channel: without it POST answers `403 missing_permission` (`details.permission` = `MENTION_EVERYONE`) and nothing is stored. PATCH refuses the same way only when the edit adds a mass mention the stored message did not have. Every channel message the server returns or broadcasts carries `mentionEveryone: boolean` and `mentionRoleIds: string[]`, read from its content. See permissions.md, "Mass mentions".
 
 ### Message history paging
 
@@ -389,14 +392,14 @@ PATCH /settings/instance     (admin)       { instanceName?, registrationOpen?, f
 ## Notification settings (`routes/notificationSettings.ts`) — auth required
 ```
 GET   /users/@me/notification-settings                 → { settings: NotificationSetting[] }
-PATCH /spaces/:spaceId/notification-settings     { level?, mute? } → NotificationSetting
+PATCH /spaces/:spaceId/notification-settings     { level?, mute?, suppressEveryone?, suppressRoles? } → NotificationSetting
 PATCH /channels/:channelId/notification-settings { level?, mute? } → NotificationSetting
 ```
 The signed-in user's per-space and per-channel notification settings on **this** instance, for the spaces it hosts. Keyed by the caller's row here, so a federated member uses their account on the space's instance: the client sends these to the space's origin (`getApiForOrigin`), never to its home. What the settings do is in [sounds.md](sounds.md) ("Notification settings"); the table is `notification_settings` ([database.md](database.md)).
 
-`NotificationSetting` is `{ spaceId, channelId: string | null, level: 'all' | 'mentions' | 'nothing' | null, muted, mutedUntil: number | null, updatedAt }`. `channelId` null is the space-wide setting. `level` null is "not chosen": a channel inherits its space, a space uses `mentions`. `muted` with `mutedUntil` null lasts until lifted; a timed mute ends at `mutedUntil` (epoch ms, server clock). `updatedAt` is the server's write time and is always later than the stored one, so clients merge last-write-wins.
+`NotificationSetting` is `{ spaceId, channelId: string | null, level: 'all' | 'mentions' | 'nothing' | null, muted, mutedUntil: number | null, suppressEveryone, suppressRoles, updatedAt }`. The two suppress flags (booleans, false by default, sent by servers since MENTION_EVERYONE and absent before) belong to the space setting; a channel setting always has them false. `channelId` null is the space-wide setting. `level` null is "not chosen": a channel inherits its space, a space uses `mentions`. `muted` with `mutedUntil` null lasts until lifted; a timed mute ends at `mutedUntil` (epoch ms, server clock). `updatedAt` is the server's write time and is always later than the stored one, so clients merge last-write-wins.
 
-The PATCH body changes only the fields it carries, and needs at least one: `level` is a level or null (clear), `mute` is `'1h' | '8h' | '24h' | 'indefinite'` or null (lift). The server computes `mutedUntil` from the duration with its own clock; a mute that already ended is read as none. A write that leaves nothing chosen (level null, not muted) deletes the row and answers the setting with level null and not muted. Every successful write is pushed as `notification_settings_updated` to all of the user's sockets on this instance ([websocket.md](websocket.md)).
+The PATCH body changes only the fields it carries, and needs at least one: `level` is a level or null (clear), `mute` is `'1h' | '8h' | '24h' | 'indefinite'` or null (lift), and on the space route only `suppressEveryone` and `suppressRoles` are booleans. A suppress field on the channel route, or a field of the wrong type, is `400 validation_failed` and nothing changes. The server computes `mutedUntil` from the duration with its own clock; a mute that already ended is read as none. A write that leaves nothing chosen (level null, not muted, no suppress flag) deletes the row and answers the setting with level null, not muted and both flags false. A server from before MENTION_EVERYONE refuses a body with only suppress fields (`400 validation_failed`), and the client then shows the save as failed. Every successful write is pushed as `notification_settings_updated` to all of the user's sockets on this instance ([websocket.md](websocket.md)).
 
 GET lists only rows of spaces the caller is a member of, and channel rows of channels they can see (`VIEW_CHANNEL` or `ADMINISTRATOR`). Rows outlive leaving a space or losing a channel: they come back if the user rejoins or regains it, and go with the user, space or channel row (cascade).
 

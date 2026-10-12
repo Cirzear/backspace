@@ -194,8 +194,22 @@
     {
       "idx": 27,
       "version": "6",
-      "when": 1791519354639,
-      "tag": "0027_personal_stickers",
+      "when": 1791751492187,
+      "tag": "0027_unread_count_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "6",
+      "when": 1791753591416,
+      "tag": "0028_mass_mention_preferences",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1791753591420,
+      "tag": "0029_personal_stickers",
       "breakpoints": true
     }
   ]

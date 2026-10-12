@@ -15,7 +15,7 @@ it('adds only sticker tables when upgrading an existing upstream database', asyn
     const journal = JSON.parse(await readFile('drizzle/meta/_journal.json', 'utf8')) as {
       entries: { tag: string }[];
     };
-    expect(journal.entries.at(-1)?.tag).toBe('0027_personal_stickers');
+    expect(journal.entries.at(-1)?.tag).toBe('0029_personal_stickers');
     // Reproduce the actual pre-feature migration history, not a hand-written schema fixture.
     journal.entries.pop();
     await mkdir(path.join(previous, 'meta'));

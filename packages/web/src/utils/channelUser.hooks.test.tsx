@@ -1,6 +1,6 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Channel, MemberWithUser, User } from '@backspace/shared';
+import type { Channel, DmChannel, MemberWithUser, User } from '@backspace/shared';
 // The store graph reaches the audio engine, which needs Web Audio at import.
 vi.mock('../audio/AudioManager', () => ({
   AudioManager: {
@@ -10,7 +10,7 @@ vi.mock('../audio/AudioManager', () => ({
 
 import { useAuthStore } from '../stores/authStore';
 import { useSpaceStore } from '../stores/spaceStore';
-import { useChannelMentionCandidates, useChannelUser, useSelfIdInChannel } from './channelUser';
+import { useChannelMentionCandidates, useChannelUser, useChannelUserResolver, useSelfIdInChannel } from './channelUser';
 
 function makeUser(id: string, username: string, displayName: string | null): User {
   return {
@@ -72,5 +72,52 @@ describe('channelUser hooks and in-place lookup map updates', () => {
     act(() => useSpaceStore.getState().upsertChannel(channel('chan-orbit', 'space-9'), 'space-9', ORBIT));
 
     expect(result.current).toBe(meOnOrbit.id);
+  });
+});
+
+describe('useChannelUserResolver', () => {
+  it("answers for the channel's own people, as useChannelUser does, and nobody else", () => {
+    const zed = makeUser('zed', 'zed', null);
+    useSpaceStore.setState({
+      channelToSpaceMap: new Map([['chan-1', 'space-1'], ['chan-2', 'space-2']]),
+      members: [member('space-1', kai)],
+    });
+    const { result } = renderHook(() => ({
+      resolve: useChannelUserResolver('chan-1'),
+      single: useChannelUser('chan-1', kai.id),
+      other: useChannelUserResolver('chan-2'),
+    }));
+    expect(result.current.resolve(kai.id)).toEqual(result.current.single);
+    expect(result.current.resolve(zed.id)).toBeNull();
+    // The roster loaded is space-1's; chan-2's people are not known.
+    expect(result.current.other(kai.id)).toBeNull();
+  });
+
+  it("reads a remote DM's ids in its origin's id space, the signed-in user included", () => {
+    const kaiOnOrbit = makeUser('kai-orbit', 'kai', 'Kai');
+    const orbitDm = { id: 'dm-orbit', ownerId: null, createdAt: 1, members: [meOnOrbit, kaiOnOrbit], lastMessage: null } as unknown as DmChannel;
+    useAuthStore.setState({ user: me });
+    useAuthStore.getState().recordMyRow(ORBIT, meOnOrbit.id);
+    useSpaceStore.setState({ dmChannels: [orbitDm], channelOriginMap: new Map([[orbitDm.id, ORBIT]]), members: [member('space-1', kai)] });
+    const { result } = renderHook(() => useChannelUserResolver(orbitDm.id));
+    expect(result.current(kaiOnOrbit.id)?.origin).toBe(ORBIT);
+    expect(result.current(meOnOrbit.id)?.user.displayName).toBe('Alice');
+    // A home id names nobody in a DM whose ids are orbit's.
+    expect(result.current(me.id)).toBeNull();
+    expect(result.current(kai.id)).toBeNull();
+  });
+
+  it('gives a new lookup with the better view once the user-view cache learns one', () => {
+    const stub = { ...makeUser('stub', '1234567890123456789@friend.example', null), homeUserId: '999', homeInstance: 'friend.example' };
+    const dm = { id: 'dm-1', ownerId: null, createdAt: 1, members: [me, stub], lastMessage: null } as unknown as DmChannel;
+    useSpaceStore.setState({ dmChannels: [dm] });
+    const { result } = renderHook(() => useChannelUserResolver(dm.id));
+    expect(result.current(stub.id)?.user.displayName).toBeNull();
+
+    const home = { ...makeUser('999', 'quinn', 'Quinn'), homeUserId: '999', homeInstance: 'friend.example' };
+    act(() => useSpaceStore.getState().upsertUserView(home, 'https://friend.example'));
+
+    expect(result.current(stub.id)?.user.displayName).toBe('Quinn');
+    expect(result.current(stub.id)?.userId).toBe(stub.id);
   });
 });
