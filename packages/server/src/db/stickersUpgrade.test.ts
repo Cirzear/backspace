@@ -1,56 +1,70 @@
-import { mkdtemp, mkdir, readFile, copyFile, writeFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
+import { describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
-import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
-import { expect, it } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-it('adds only sticker tables when upgrading an existing upstream database', async () => {
-  const previous = await mkdtemp(path.join(tmpdir(), 'backspace-before-stickers-'));
-  const sqlite = new Database(':memory:');
-  try {
-    sqlite.pragma('foreign_keys = ON');
-    const db = drizzle(sqlite);
-    const journal = JSON.parse(await readFile('drizzle/meta/_journal.json', 'utf8')) as {
-      entries: { tag: string }[];
-    };
-    expect(journal.entries.at(-1)?.tag).toBe('0027_personal_stickers');
-    // Reproduce the actual pre-feature migration history, not a hand-written schema fixture.
-    journal.entries.pop();
-    await mkdir(path.join(previous, 'meta'));
-    await writeFile(path.join(previous, 'meta/_journal.json'), JSON.stringify(journal));
-    for (const { tag } of journal.entries) {
-      await copyFile(path.join('drizzle', tag + '.sql'), path.join(previous, tag + '.sql'));
-    }
-    migrate(db, { migrationsFolder: previous });
-    sqlite.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)')
-      .run('existing-user', 'alice', 'test-hash', 1);
-    const tables = () => sqlite.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' ORDER BY name")
-      .all() as { name: string; sql: string }[];
-    const before = tables();
-    expect(before.map(row => row.name)).not.toContain('sticker_assets');
+/**
+ * Migration 0031 adds the two sticker tables to an existing database and
+ * changes nothing that was there. The files are found by name, so a later
+ * migration does not move what this test applies.
+ */
 
-    migrate(db, { migrationsFolder: path.resolve('drizzle') });
-    const after = tables();
-    const added = after.filter(row => !before.some(old => old.name === row.name));
-    expect(added.map(row => row.name)).toEqual(['personal_stickers', 'sticker_assets']);
-    expect(after.filter(row => before.some(old => old.name === row.name))).toEqual(before);
-    expect(sqlite.prepare('SELECT username FROM users WHERE id = ?').get('existing-user')).toEqual({ username: 'alice' });
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const MIGRATIONS_DIR = path.resolve(__dirname, '../../drizzle');
+const TAG = '0031_personal_stickers';
 
-    const id = 'a'.repeat(64);
-    sqlite.prepare('INSERT INTO sticker_assets (id, created_at) VALUES (?, ?)').run(id, 2);
-    const collect = sqlite.prepare('INSERT INTO personal_stickers (user_id, sticker_id, name, created_at) VALUES (?, ?, ?, ?)');
-    collect.run('existing-user', id, 'Happy', 2);
-    expect(() => collect.run('missing-user', id, 'Happy', 2)).toThrow(/FOREIGN KEY/);
-    expect(() => collect.run('existing-user', 'missing-asset', 'Happy', 2)).toThrow(/FOREIGN KEY/);
-    expect(() => collect.run('existing-user', id, 'Happy', 2)).toThrow(/UNIQUE/);
-    sqlite.prepare('DELETE FROM users WHERE id = ?').run('existing-user');
-    expect(sqlite.prepare('SELECT * FROM personal_stickers').all()).toEqual([]);
-    expect(sqlite.prepare('SELECT id FROM sticker_assets').all()).toEqual([{ id }]);
-    expect(sqlite.pragma('foreign_key_check')).toEqual([]);
-  } finally {
-    sqlite.close();
-    await rm(previous, { recursive: true, force: true });
+function statementsOf(file: string): string[] {
+  return fs.readFileSync(path.join(MIGRATIONS_DIR, file), 'utf8')
+    .split(/-->\s*statement-breakpoint/)
+    .map(statement => statement.trim())
+    .filter(statement => statement.length > 0);
+}
+
+/** Every migration before the one under test, so an older database can be seeded first. */
+function applyUpTo(db: Database.Database, tag: string): void {
+  for (const file of fs.readdirSync(MIGRATIONS_DIR).filter(name => name.endsWith('.sql')).sort()) {
+    if (file.startsWith(tag)) return;
+    for (const statement of statementsOf(file)) db.exec(statement);
   }
+  throw new Error(`migration ${tag} not found`);
+}
+
+function tables(db: Database.Database): { name: string; sql: string }[] {
+  return db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as { name: string; sql: string }[];
+}
+
+describe(TAG, () => {
+  it('adds only the sticker tables to an existing database', () => {
+    const db = new Database(':memory:');
+    try {
+      db.pragma('foreign_keys = ON');
+      applyUpTo(db, TAG);
+      db.prepare("INSERT INTO users (id, username, password_hash, created_at) VALUES ('existing-user', 'alice', 'test-hash', 1)").run();
+      const before = tables(db);
+      expect(before.map(row => row.name)).not.toContain('sticker_assets');
+
+      for (const statement of statementsOf(`${TAG}.sql`)) db.exec(statement);
+
+      const after = tables(db);
+      expect(after.filter(row => !before.some(old => old.name === row.name)).map(row => row.name))
+        .toEqual(['personal_stickers', 'sticker_assets']);
+      expect(after.filter(row => before.some(old => old.name === row.name))).toEqual(before);
+      expect(db.prepare("SELECT username FROM users WHERE id = 'existing-user'").get()).toEqual({ username: 'alice' });
+
+      const id = 'a'.repeat(64);
+      db.prepare('INSERT INTO sticker_assets (id, created_at) VALUES (?, 2)').run(id);
+      const collect = db.prepare('INSERT INTO personal_stickers (user_id, sticker_id, name, created_at) VALUES (?, ?, ?, 2)');
+      collect.run('existing-user', id, 'Happy');
+      expect(() => collect.run('missing-user', id, 'Happy')).toThrow(/FOREIGN KEY/);
+      expect(() => collect.run('existing-user', 'missing-asset', 'Happy')).toThrow(/FOREIGN KEY/);
+      expect(() => collect.run('existing-user', id, 'Happy')).toThrow(/UNIQUE/);
+      db.prepare("DELETE FROM users WHERE id = 'existing-user'").run();
+      expect(db.prepare('SELECT * FROM personal_stickers').all()).toEqual([]);
+      expect(db.prepare('SELECT id FROM sticker_assets').all()).toEqual([{ id }]);
+      expect(db.pragma('foreign_key_check')).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
 });

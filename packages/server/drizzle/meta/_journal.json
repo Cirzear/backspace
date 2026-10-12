@@ -218,6 +218,13 @@
       "when": 1791771387548,
       "tag": "0030_space_owner_title",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1791785539220,
+      "tag": "0031_personal_stickers",
+      "breakpoints": true
     }
   ]
 }
