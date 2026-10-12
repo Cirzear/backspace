@@ -3,6 +3,7 @@ import type { RefObject } from 'react';
 import { useComposerStore } from '../../stores/composerStore';
 
 const EVENT = 'composer-mention';
+
 export function insertComposerMention(channelId: string, userId: string): void {
   // Keep the wire ID in the draft; the composer's mirror renders the display name.
   const store = useComposerStore.getState();
@@ -24,6 +25,9 @@ export function useComposerMention(channelId: string, textareaRef: RefObject<HTM
       });
     };
     window.addEventListener(EVENT, focus);
-    return () => { window.removeEventListener(EVENT, focus); cancelAnimationFrame(frame); };
+    return () => {
+      window.removeEventListener(EVENT, focus);
+      cancelAnimationFrame(frame);
+    };
   }, [channelId, textareaRef]);
 }

@@ -7,7 +7,6 @@ import { StickerMessage } from './StickerMessage';
 import { insertComposerMention } from './useComposerMention';
 import { useChannelPokeStore } from '../../stores/channelPokeStore';
 import { wsSend } from '../../hooks/useWebSocket';
-import { layoutRect, layoutPixels } from '../../platform/interfaceScale';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -456,22 +455,24 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     : undefined;
 
   const supportsPoke = useChannelPokeStore((s) => s.hosts[messageOrigin] === true);
-  const authorMenuItems = (): import('../../stores/contextMenuStore').ContextMenuItem[] => {
+  const handleAuthorMenu = (e: React.MouseEvent) => {
+    if (isDmMessage || pending || !message.user || !canSendMessages) return;
+    // Do not bubble into the message menu: author actions are a separate interaction.
+    e.preventDefault();
+    e.stopPropagation();
     const items: import('../../stores/contextMenuStore').ContextMenuItem[] = [
       {
         type: 'action',
         key: 'mention-author',
         label: '@' + displayName,
-        disabled: !canSendMessages || isDeadDmThread,
         onClick: () => insertComposerMention(channelKey, message.userId),
       },
     ];
-    if (!isDmMessage && supportsPoke) {
+    if (supportsPoke) {
       items.push({
         type: 'action',
         key: 'poke-author',
         label: t('chat:poke.action'),
-        disabled: !canSendMessages,
         onClick: () => {
           if (!wsSend({ type: 'channel_poke', channelId: channelKey, targetUserId: message.userId }, messageOrigin)) {
             useUIStore.getState().addToast(t('chat:poke.disconnected'), 'warning');
@@ -479,14 +480,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
         },
       });
     }
-    return items;
-  };
-  const handleAuthorMenu = (e: React.MouseEvent) => {
-    // Do not bubble into the message menu: author actions are a separate interaction.
-    e.preventDefault();
-    e.stopPropagation();
-    if (pending || !message.user) return;
-    useContextMenuStore.getState().open({ x: e.clientX, y: e.clientY }, authorMenuItems());
+    useContextMenuStore.getState().open({ x: e.clientX, y: e.clientY }, items);
   };
 
   const handleUsernameClick = (e: React.MouseEvent) => {

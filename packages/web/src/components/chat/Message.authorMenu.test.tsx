@@ -6,6 +6,7 @@ import { useSpaceStore } from '../../stores/spaceStore';
 import { useComposerStore } from '../../stores/composerStore';
 import { useChannelPokeStore } from '../../stores/channelPokeStore';
 import { useContextMenuStore, type ContextMenuItem } from '../../stores/contextMenuStore';
+import { PermissionBits } from '../../utils/permissions';
 import { Message } from './Message';
 
 vi.mock('../../hooks/useWebSocket', () => ({ wsSend: vi.fn().mockReturnValue(true) }));
@@ -61,9 +62,9 @@ describe('Message author context menu', () => {
       spaces: [space],
       dmChannels: [dm],
       channelOriginMap: new Map([['space-ch-1', 'https://host.test'], ['dm-1', '']]),
-      channelPermissions: new Map([['space-ch-1', 2048n]]), // SEND_MESSAGES
+      channelPermissions: new Map([['space-ch-1', PermissionBits.SEND_MESSAGES]]),
     });
-    useComposerStore.getState().reset?.() || useComposerStore.getState().setDraft('dm-1', '');
+    useComposerStore.setState({ states: new Map() });
     useChannelPokeStore.getState().reset();
   });
 
@@ -71,7 +72,7 @@ describe('Message author context menu', () => {
     useContextMenuStore.getState().close();
   });
 
-  it('opens an author menu with mention action on DM author right-click', () => {
+  it('does not open author context menu on DM author right-click', () => {
     const openSpy = vi.spyOn(useContextMenuStore.getState(), 'open');
     const msg = makeMessage('dm-1', true);
     const { container } = render(
@@ -84,15 +85,8 @@ describe('Message author context menu', () => {
 
     expect(openSpy).toHaveBeenCalled();
     const items = openSpy.mock.calls[0]![1] as ContextMenuItem[];
-    expect(items.some((i) => i.key === 'mention-author' && i.label === '@Bob')).toBe(true);
-    expect(items.some((i) => i.key === 'poke-author')).toBe(false);
-
-    // Clicking mention-author inserts mention token in composer
-    const mentionAction = items.find((i) => i.key === 'mention-author');
-    if (mentionAction?.type === 'action') {
-      mentionAction.onClick();
-      expect(useComposerStore.getState().get('dm-1').draftText).toContain('<@bob>');
-    }
+    // DM author right-click bubbles to message menu, and does not contain author actions
+    expect(items.some((i) => i.key === 'mention-author' || i.key === 'poke-author')).toBe(false);
   });
 
   it('includes both mention and poke in space channel when poke is supported', () => {
@@ -111,11 +105,18 @@ describe('Message author context menu', () => {
 
     expect(openSpy).toHaveBeenCalled();
     const items = openSpy.mock.calls[0]![1] as ContextMenuItem[];
-    expect(items.some((i) => i.key === 'mention-author')).toBe(true);
+    expect(items.some((i) => i.key === 'mention-author' && i.label === '@Bob')).toBe(true);
     expect(items.some((i) => i.key === 'poke-author')).toBe(true);
+
+    // Clicking mention-author inserts mention token in composer
+    const mentionAction = items.find((i) => i.key === 'mention-author');
+    if (mentionAction?.type === 'action') {
+      mentionAction.onClick();
+      expect(useComposerStore.getState().get('space-ch-1').draftText).toContain('<@bob>');
+    }
   });
 
-  it('triggers author menu on author name right-click and respects permissions', () => {
+  it('does not open author menu without send permissions', () => {
     // Revoke send permissions
     useSpaceStore.setState({ channelPermissions: new Map([['space-ch-1', 0n]]) });
     const openSpy = vi.spyOn(useContextMenuStore.getState(), 'open');
@@ -129,7 +130,6 @@ describe('Message author context menu', () => {
 
     expect(openSpy).toHaveBeenCalled();
     const items = openSpy.mock.calls[0]![1] as ContextMenuItem[];
-    const mentionAction = items.find((i) => i.key === 'mention-author');
-    expect(mentionAction?.disabled).toBe(true);
+    expect(items.some((i) => i.key === 'mention-author' || i.key === 'poke-author')).toBe(false);
   });
 });
