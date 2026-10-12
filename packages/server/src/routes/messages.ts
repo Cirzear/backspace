@@ -15,6 +15,7 @@ import {
   type Embed,
 } from '@backspace/shared';
 import { sanitizeUser } from '../utils/sanitize.js';
+import { userWrittenMessages } from '../db/userWrittenMessages.js';
 import { addsMassMention, hasMassMention, massMentionFields } from '@backspace/shared/src/mentions.js';
 import { deleteAttachmentFiles } from '../utils/fileCleanup.js';
 import { sendError } from '../utils/httpErrors.js';
@@ -153,7 +154,8 @@ export function fetchReplyToMessages(
 }
 
 /**
- * True when `replyToId` names an existing message inside `channelId`.
+ * True when `replyToId` names an existing message a member wrote inside
+ * `channelId` (a system row such as a poke takes no replies).
  *
  * Used by both channel message-create paths (REST and WebSocket) so a reply can
  * only ever point at the channel it is posted into. Author permissions are not
@@ -168,6 +170,7 @@ export function isReplyTargetInChannel(channelId: string, replyToId: string): bo
     .where(and(
       eq(schema.messages.id, replyToId),
       eq(schema.messages.channelId, channelId),
+      userWrittenMessages(),
     ))
     .get();
   return target !== undefined;

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "e136209d-fff3-4f1e-acb6-7e85d166ce9e",
+  "id": "5ceff7dc-da49-4150-9227-a95807fa5726",
   "prevId": "4b498e74-96f0-4186-b044-b7df65f453a6",
   "tables": {
     "attachments": {
@@ -3040,7 +3040,8 @@
           "columns": [
             "channel_id",
             "CAST(id AS INTEGER)",
-            "user_id"
+            "user_id",
+            "type"
           ],
           "isUnique": false
         }
