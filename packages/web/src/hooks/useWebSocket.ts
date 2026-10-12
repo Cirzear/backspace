@@ -1,5 +1,7 @@
 import { receiveChannelPoke } from '../components/chat/channelPoke';
 import { useChannelPokeStore } from '../components/chat/channelPokeStore';
+import { applySpaceMemberUpdate } from '../stores/spaceMemberUpdates';
+import { useUnreadCountStore } from '../stores/unreadCountStore';
 import React, { useEffect, useRef } from 'react';
 import { isMyIdentity, useAuthStore } from '../stores/authStore';
 import { useSpaceStore, getChannelOrigin, getMyUserIdForOrigin } from '../stores/spaceStore';
@@ -264,6 +266,9 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
     case 'channel_poke':
       receiveChannelPoke(origin, event);
       break;
+    case 'channel_unread_count':
+      useUnreadCountStore.getState().updateCounts(origin, event.counts);
+      break;
     case 'ready':
       useChannelPokeStore.getState().setHost(origin, event.supportsPoke === true);
       // This instance names the signed-in user's row there (the home's is the
@@ -376,6 +381,7 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
         }
       }
 
+      useUnreadCountStore.getState().hydrate(origin, event.unreadCounts);
       // Initialize/update unread tracking for this origin (home or remote)
       if (event.readStates) {
         const { channelLastMessageIds, channelOriginMap } = useSpaceStore.getState();
@@ -837,6 +843,9 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
       if (isLoadedRosterSpace(event.spaceId, origin)) addMember(event.spaceId, event.member);
       break;
 
+    case 'member_updated':
+      if (event.spaceId === event.member.spaceId) applySpaceMemberUpdate(origin, event.member);
+      break;
     case 'member_left':
       if (isLoadedRosterSpace(event.spaceId, origin)) removeMember(event.spaceId, event.userId);
       break;

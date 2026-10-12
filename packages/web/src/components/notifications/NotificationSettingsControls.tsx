@@ -9,6 +9,7 @@ import {
   type UpdateNotificationSettingRequest,
 } from '@backspace/shared';
 import { describeCodedError } from '../../i18n/errors';
+import { Toggle } from '../ui/Toggle';
 import { useFormatters } from '../../i18n/formatters';
 import { useUIStore } from '../../stores/uiStore';
 import {
@@ -205,6 +206,29 @@ export function NotificationSettingsControls({ origin, spaceId, channelId }: Not
           <p className="px-2.5 pt-1.5 text-[12px] text-accent-amber">{t('spaces:notifications.spaceMuted')}</p>
         )}
       </div>
+
+      {!isChannel && (
+        <>
+          <div className="h-px bg-glass-border" />
+          <div>
+            <div className="px-1 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-txt-tertiary">
+              {t('spaces:notifications.massHeading')}
+            </div>
+            {(['suppressEveryone', 'suppressRoles'] as const).map((field) => (
+              <div key={field} className="flex items-center justify-between gap-3 px-2.5 h-9">
+                <span className="text-[14px] text-txt-secondary min-w-0 truncate">{t(`spaces:notifications.${field}`)}</span>
+                <Toggle
+                  enabled={own?.[field] === true}
+                  disabled={saving}
+                  onChange={(enabled) => void save({ [field]: enabled })}
+                  ariaLabel={t(`spaces:notifications.${field}`)}
+                />
+              </div>
+            ))}
+            <p className="px-2.5 pt-1 text-[12px] text-txt-tertiary">{t('spaces:notifications.massNote')}</p>
+          </div>
+        </>
+      )}
 
       <p className="px-1 text-[12px] text-txt-tertiary">{t('spaces:notifications.dmNote')}</p>
     </div>

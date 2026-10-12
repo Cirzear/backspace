@@ -15,6 +15,7 @@ import {
   type Embed,
 } from '@backspace/shared';
 import { sanitizeUser } from '../utils/sanitize.js';
+import { addsMassMention, hasMassMention, massMentionFields } from '@backspace/shared/src/mentions.js';
 import { deleteAttachmentFiles } from '../utils/fileCleanup.js';
 import { sendError } from '../utils/httpErrors.js';
 import { parseHistoryPage, selectHistoryPage, markHistoryPageHonoured } from '../utils/messagePaging.js';
@@ -189,6 +190,7 @@ export function buildMessageWithUser(
     type: message.type,
     editedAt: message.editedAt,
     createdAt: message.createdAt,
+    ...massMentionFields(message.content),
     user: sanitizeUser(user),
     attachments: attachmentRows.map(a => ({
       id: a.id,
@@ -337,6 +339,12 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
       return sendError(reply, 400, 'content_too_long', { max: MAX_MESSAGE_LENGTH });
     }
 
+    // @everyone, @here and role mentions alert many people; only MENTION_EVERYONE
+    // may send them (permissions.md, "Mass mentions").
+    if (hasMassMention(content) && !hasPermission(request.userId, spaceId, PermissionBits.MENTION_EVERYONE, id)) {
+      return sendError(reply, 403, 'missing_permission', { permission: 'MENTION_EVERYONE' });
+    }
+
     // A reply may only target a message in the channel it is posted into.
     if (replyToId && !isReplyTargetInChannel(id, replyToId)) {
       return sendError(reply, 400, 'reply_target_invalid');
@@ -444,6 +452,13 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
     // System payloads are authored by the host, not editable by the actor.
     if (message.type === 'system' || message.userId !== request.userId) {
       return sendError(reply, 403, 'message_edit_not_author');
+    }
+
+    // An edit that adds a mass mention needs the same permission as sending
+    // one. Keeping the ones the message already has does not.
+    const mentionSpaceId = getChannelSpaceId(message.channelId);
+    if (addsMassMention(message.content, content) && (!mentionSpaceId || !hasPermission(request.userId, mentionSpaceId, PermissionBits.MENTION_EVERYONE, message.channelId))) {
+      return sendError(reply, 403, 'missing_permission', { permission: 'MENTION_EVERYONE' });
     }
 
     const now = Date.now();

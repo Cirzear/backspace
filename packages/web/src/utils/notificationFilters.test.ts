@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isAlertAllowed, isMessageAlert, type MessageAlertInput } from './notificationFilters';
+import { isAlertAllowed, isMessageAlert, mentionsReader, messageMentions, type MessageAlertInput } from './notificationFilters';
 
 /** A space channel nobody configured: mentions, not muted. */
 const DEFAULT_POLICY: MessageAlertInput['notification'] = { level: 'mentions', muted: false };
@@ -237,5 +237,49 @@ describe('isAlertAllowed (Do Not Disturb gate)', () => {
   it('allows alerts while the status is not known yet (no user loaded)', () => {
     expect(isAlertAllowed('message', null)).toBe(true);
     expect(isAlertAllowed('message', undefined)).toBe(true);
+  });
+});
+
+
+describe('mass mentions', () => {
+  // The hosting instance stamps the mass mentions it let through; the text alone never alerts.
+  const input: MessageAlertInput = { authoredBySelf: false, myId: 'me', myRoleIds: ['role'], isDmChannel: false,
+    content: null, allChannels: false, notification: DEFAULT_POLICY };
+  const everyone = { content: '@everyone', mentionEveryone: true, mentionRoleIds: [] };
+  const role = { content: '<@&role>', mentionEveryone: false, mentionRoleIds: ['role'] };
+  it('alerts for a stamped @everyone / @here and a stamped role the reader holds', () => {
+    expect(isMessageAlert({ ...input, ...everyone })).toBe(true);
+    expect(isMessageAlert({ ...input, ...role })).toBe(true);
+  });
+  it('does not alert for a stamped role the reader does not hold', () => {
+    expect(isMessageAlert({ ...input, content: '<@&other>', mentionEveryone: false, mentionRoleIds: ['other'] })).toBe(false);
+  });
+  it('does not alert for mass mention text without stamps (an instance that does not check MENTION_EVERYONE)', () => {
+    for (const content of ['@everyone', '@here', '<@&role>']) {
+      expect(isMessageAlert({ ...input, content })).toBe(false);
+    }
+  });
+  it('suppresses only the selected mass mention kinds, never direct mentions', () => {
+    const notification = { ...DEFAULT_POLICY, suppressEveryone: true, suppressRoles: true };
+    expect(isMessageAlert({ ...input, notification, content: '@everyone <@&role>', mentionEveryone: true, mentionRoleIds: ['role'] })).toBe(false);
+    expect(isMessageAlert({ ...input, notification, content: '@everyone <@me>', mentionEveryone: true, mentionRoleIds: [] })).toBe(true);
+    expect(isMessageAlert({ ...input, notification: { ...notification, suppressRoles: false }, ...role })).toBe(true);
+    expect(isMessageAlert({ ...input, notification: { ...notification, suppressEveryone: false }, ...everyone })).toBe(true);
+  });
+  it('keeps mute, nothing, self, DM and all-message policies unchanged', () => {
+    expect(isMessageAlert({ ...input, ...everyone, notification: { level: 'nothing', muted: false } })).toBe(false);
+    expect(isMessageAlert({ ...input, ...everyone, notification: { level: 'mentions', muted: true } })).toBe(false);
+    expect(isMessageAlert({ ...input, ...everyone, authoredBySelf: true })).toBe(false);
+    expect(isMessageAlert({ ...input, ...everyone, isDmChannel: true, notification: { level: 'nothing', muted: true } })).toBe(true);
+    expect(isMessageAlert({ ...input, ...everyone, notification: { level: 'all', muted: false, suppressEveryone: true } })).toBe(true);
+  });
+});
+
+describe('messageMentions (the highlight and the alert share it)', () => {
+  it('reports each way a message mentions the reader', () => {
+    expect(messageMentions({ myId: 'me', myRoleIds: ['r'], content: '<@me> `<@me>`', mentionEveryone: true, mentionRoleIds: ['r'] }))
+      .toEqual({ direct: true, everyone: true, role: true });
+    expect(messageMentions({ myId: 'me', content: '`<@me>` @everyone' })).toEqual({ direct: false, everyone: false, role: false });
+    expect(mentionsReader({ myId: undefined, content: '<@me>', mentionRoleIds: ['r'] })).toBe(false);
   });
 });

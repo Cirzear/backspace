@@ -3,10 +3,11 @@ import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Highlight, themes } from 'prism-react-renderer';
 import type { Components } from 'react-markdown';
+import { MassMentionBadge } from './MassMentionBadge';
 import { MentionBadge } from './MentionBadge';
 import { remarkEmojiShortcodes } from '../../utils/remarkEmojiShortcodes';
 import { useEmojiShortcodeNames } from '../../utils/emojiShortcodes';
-import { replaceMentionTokens } from '../../utils/mentionTokens';
+import { splitMentions } from '../../utils/mentionTokens';
 
 // ─── Remark Plugin: Tag Bare Fenced Blocks ─────────────────────────────────
 // react-markdown v9 removed the `inline` prop from <code>. Fenced blocks
@@ -41,21 +42,29 @@ function walkTree(node: MdastNode) {
 // remark-parse mangles <@userId> (treats as autolink or escapes the angle
 // brackets) before remark plugins can see the text nodes. We solve this by
 // converting mention tokens to standard markdown links BEFORE the parser
-// runs. The `a` component override then detects the mention:// scheme.
-// Code spans and fenced blocks are kept as-is by the shared token scan
+// runs. The `a` component override then detects the mention:// scheme (a
+// user) and the mass-mention:// scheme (`everyone`, `here`, or `&` and a role
+// id). Code spans and fenced blocks are kept as-is by the shared token scan
 // (utils/mentionTokens.ts), the same scan the reply preview, the mention
-// highlight and the alert rule use.
+// highlight, the composer and the alert rule use.
 
 function preprocessMentions(raw: string): string {
-  return replaceMentionTokens(raw, (userId) => `[@${userId}](mention://${userId})`);
+  return splitMentions(raw).map((part) => {
+    switch (part.kind) {
+      case 'text': return part.text;
+      case 'user': return `[@${part.userId}](mention://${part.userId})`;
+      case 'role': return `[@&${part.roleId}](mass-mention://&${part.roleId})`;
+      case 'everyone': return `[@${part.keyword}](mass-mention://${part.keyword})`;
+    }
+  }).join('');
 }
 
 // ─── URL Transform: Allow mention:// Scheme ─────────────────────────────────
 // react-markdown's defaultUrlTransform strips URLs with unknown protocols.
-// We whitelist mention:// so the `a` component override receives the full href.
+// Internal mention schemes reach the badge renderer; neither opens an external URL.
 
 function urlTransform(url: string): string {
-  if (url.startsWith('mention://')) return url;
+  if (url.startsWith('mention://') || url.startsWith('mass-mention://')) return url;
   return defaultUrlTransform(url);
 }
 
@@ -117,6 +126,14 @@ const MemoizedCodeBlock = React.memo(CodeBlock);
 
 const MentionChannelContext = createContext<string | null>(null);
 
+/** A `mass-mention://` target: `everyone`, `here`, or `&` and a role id. */
+function ChannelMassMentionBadge({ target }: { target: string }) {
+  const channelId = useContext(MentionChannelContext);
+  if (target.startsWith('&')) return <MassMentionBadge roleId={target.slice(1)} channelId={channelId} />;
+  if (target === 'everyone' || target === 'here') return <MassMentionBadge keyword={target} channelId={channelId} />;
+  return <>{'@' + target}</>;
+}
+
 function ChannelMentionBadge({ userId }: { userId: string }) {
   const channelId = useContext(MentionChannelContext);
   return <MentionBadge userId={userId} channelId={channelId} />;
@@ -131,6 +148,9 @@ function buildComponents(): Components {
     // remark-parse autolinks <@userId> into mailto:@userId before plugins run,
     // so we intercept that pattern here instead of using a remark plugin.
     a: ({ href, children }) => {
+      if (href?.startsWith('mass-mention://')) {
+        return <ChannelMassMentionBadge target={href.slice('mass-mention://'.length)} />;
+      }
       if (href?.startsWith('mention://')) {
         return <ChannelMentionBadge userId={href.slice('mention://'.length)} />;
       }

@@ -17,7 +17,8 @@
       "jump": "Ir para a mensagem original"
     },
     "mention": {
-      "unknownUser": "Usuário desconhecido"
+      "unknownUser": "Usuário desconhecido",
+      "unknownRole": "Cargo desconhecido"
     },
     "reactions": {
       "you": "Você",

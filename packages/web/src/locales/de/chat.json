@@ -17,7 +17,8 @@
       "jump": "Zur ursprünglichen Nachricht springen"
     },
     "mention": {
-      "unknownUser": "Unbekannter Nutzer"
+      "unknownUser": "Unbekannter Nutzer",
+      "unknownRole": "Unbekannte Rolle"
     },
     "reactions": {
       "you": "Du",
