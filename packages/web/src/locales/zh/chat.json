@@ -195,7 +195,9 @@
     "removeNamed": "移除 {{name}}",
     "addMore": "添加更多",
     "selectedCount_other": "已选择 {{count}} 个表情",
-    "dropMore": "点击或拖入更多图片"
+    "dropMore": "点击或拖入更多图片",
+    "sticker": "表情",
+    "downloadFailed": "无法加载该图片。"
   },
   "poke": {
     "action": "戳一戳",

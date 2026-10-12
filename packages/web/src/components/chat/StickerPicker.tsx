@@ -4,6 +4,7 @@ import { stickerUrl, type PersonalSticker } from '@backspace/shared/src/stickers
 import { api } from '../../api/client';
 import { useAuthStore } from '../../stores/authStore';
 import { StickerUploadForm } from './StickerUploadForm';
+import { describeError } from '../../i18n/errors';
 import './stickers.css';
 
 export function StickerPicker({ onSelect, mobile = false }: { onSelect: (token: string) => void; mobile?: boolean }) {
@@ -26,7 +27,7 @@ export function StickerPicker({ onSelect, mobile = false }: { onSelect: (token: 
     setUploading(false);
     setManaging(false);
     api.stickers.list().then(rows => { if (active) setItems(rows); })
-      .catch((err: Error) => { if (active) setError(err.message); })
+      .catch((err: unknown) => { if (active) setError(describeError(err)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [userId]);
@@ -38,7 +39,7 @@ export function StickerPicker({ onSelect, mobile = false }: { onSelect: (token: 
     try {
       await api.stickers.remove(id);
       setItems(rows => rows.filter(row => row.id !== id));
-    } catch (err) { setError((err as Error).message); }
+    } catch (err) { setError(describeError(err)); }
     finally { setRemoving(null); }
   };
 

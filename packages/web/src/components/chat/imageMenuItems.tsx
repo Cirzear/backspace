@@ -5,6 +5,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { api } from '../../api/client';
 import i18n from '../../i18n';
 import { uploadSticker, readStickerImage } from './stickerUpload';
+import { describeError } from '../../i18n/errors';
 
 interface ImageMenuParams {
   imageUrl?: string | null;
@@ -34,14 +35,14 @@ function collectStickerItem(source: string, name: string): ContextMenuAction | n
       try {
         if (sticker) {
           // The server validates its canonical origin; the browser's development origin may differ.
-          await api.stickers.collect({ id: url.pathname.split('/').pop()!.replace('.webp', ''), token: source });
+          await api.stickers.collect({ id: url.pathname.split('/').pop()!.replace('.webp', ''), token: source, name });
         } else {
           const response = await fetch(url.href);
           await uploadSticker(await readStickerImage(response), name);
         }
         addToast(i18n.t('chat:stickers.saved'), 'success');
       } catch (err) {
-        addToast((err as Error).message, 'warning');
+        addToast(describeError(err), 'warning');
       }
     },
   };
@@ -50,7 +51,7 @@ function collectStickerItem(source: string, name: string): ContextMenuAction | n
 export function buildImageMenuItems({ imageUrl, sourceUrl, stickerSource, stickerName }: ImageMenuParams): ContextMenuItem[] {
   if (!imageUrl) return [];
   const items: ContextMenuItem[] = [];
-  const collect = stickerSource ? collectStickerItem(stickerSource, stickerName || i18n.t('chat:stickers.title')) : null;
+  const collect = stickerSource ? collectStickerItem(stickerSource, stickerName || i18n.t('chat:stickers.sticker')) : null;
   if (collect) items.push(collect);
   items.push({
     key: 'save-image', type: 'action', label: i18n.t('chat:menu.saveImage'),

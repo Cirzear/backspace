@@ -267,6 +267,11 @@ export const ERROR_CODES = [
   'directory_unreachable',
   'directory_private_space',
   'directory_requires_discovery',
+
+  // Personal stickers
+  'sticker_invalid_image',
+  'sticker_not_local',
+  'sticker_not_found',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

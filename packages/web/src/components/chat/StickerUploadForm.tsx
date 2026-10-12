@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { MAX_STICKER_BYTES, type PersonalSticker } from '@backspace/shared/src/stickers';
 import { uploadSticker } from './stickerUpload';
+import { describeError } from '../../i18n/errors';
 
 interface StickerUploadFormProps {
   onAdded: (stickers: PersonalSticker | PersonalSticker[]) => void;
@@ -130,7 +131,7 @@ export function StickerUploadForm({ onAdded, onCancel }: StickerUploadFormProps)
         onAdded(results.length === 1 ? results[0]! : results);
       }
     } catch (err) {
-      if (active.current) setError((err as Error).message);
+      if (active.current) setError(describeError(err));
     } finally {
       submitting.current = false;
       if (active.current) setBusy(false);

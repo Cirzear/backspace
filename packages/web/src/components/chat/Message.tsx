@@ -331,7 +331,8 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     const imageUrl = isContentImage ? imgEl.src : null;
     // Attachment previews may be thumbnails; collection always uses the original source.
     const stickerSource = isContentImage ? imgEl.dataset.stickerSource : null;
-    const stickerName = isContentImage ? imgEl.alt : undefined;
+    // An attachment's alt is its file name; the collection keeps it without the extension.
+    const stickerName = isContentImage ? imgEl.alt.replace(/\.[^.]+$/, '').slice(0, 100) : undefined;
 
     // Detect right-click on a video/audio element and resolve its underlying attachment.
     // `message` is the persisted form here — pending messages return early above.

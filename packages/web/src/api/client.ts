@@ -442,7 +442,7 @@ export class BackspaceApiClient {
   stickers: {
     list: () => Promise<PersonalSticker[]>;
     upload: (data: { name: string; image: string }) => Promise<PersonalSticker>;
-    collect: (data: { id: string; token: string }) => Promise<PersonalSticker>;
+    collect: (data: { id: string; token: string; name: string }) => Promise<PersonalSticker>;
     remove: (id: string) => Promise<{ success: boolean }>;
   };
 
@@ -531,7 +531,7 @@ export class BackspaceApiClient {
     this.stickers = {
       list: () => request('GET', '/stickers'),
       upload: (data) => request('POST', '/stickers', data),
-      collect: ({ id, token }) => request('POST', `/stickers/${encodeURIComponent(id)}/collect`, { token }),
+      collect: ({ id, token, name }) => request('POST', `/stickers/${encodeURIComponent(id)}/collect`, { token, name }),
       remove: (id) => request('DELETE', `/stickers/${encodeURIComponent(id)}`),
     };
 

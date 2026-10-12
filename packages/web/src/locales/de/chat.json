@@ -200,7 +200,9 @@
     "addMore": "Mehr hinzufügen",
     "selectedCount_one": "{{count}} Sticker ausgewählt",
     "selectedCount_other": "{{count}} Sticker ausgewählt",
-    "dropMore": "Klicken oder weitere Bilder hierher ziehen"
+    "dropMore": "Klicken oder weitere Bilder hierher ziehen",
+    "sticker": "Sticker",
+    "downloadFailed": "Das Bild konnte nicht geladen werden."
   },
   "poke": {
     "action": "Anstupsen",

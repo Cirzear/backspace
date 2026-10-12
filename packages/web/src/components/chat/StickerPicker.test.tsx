@@ -5,7 +5,10 @@ import { StickerMessage } from './StickerMessage';
 import { api } from '../../api/client';
 import { uploadSticker } from './stickerUpload';
 
-vi.mock('../../api/client', () => ({ api: { stickers: { list: vi.fn(), remove: vi.fn(), collect: vi.fn() } } }));
+vi.mock('../../api/client', async importOriginal => ({
+  ...await importOriginal<typeof import('../../api/client')>(),
+  api: { stickers: { list: vi.fn(), remove: vi.fn(), collect: vi.fn() } },
+}));
 vi.mock('./stickerUpload', () => ({ uploadSticker: vi.fn() }));
 vi.mock('../../stores/authStore', () => ({ useAuthStore: (selector: (s: unknown) => unknown) => selector({ user: { id: 'alice' } }) }));
 const preview = vi.hoisted(() => vi.fn());

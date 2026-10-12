@@ -67,10 +67,11 @@ describe('personal stickers', () => {
     const list = (user: string) => app.inject({ url: '/api/stickers', headers: { authorization: user } });
     expect((await list('alice')).json()).toHaveLength(1);
     expect((await list('bob')).json()).toEqual([]);
-    const collect = () => app.inject({ method: 'POST', url: `/api/stickers/${sticker.id}/collect`, headers: { authorization: 'bob' }, payload: { token: sticker.token } });
+    const collect = () => app.inject({ method: 'POST', url: `/api/stickers/${sticker.id}/collect`, headers: { authorization: 'bob' }, payload: { token: sticker.token, name: 'Collected' } });
     expect((await collect()).statusCode).toBe(200);
     await collect();
     expect((await list('bob')).json()).toHaveLength(1);
+    expect((await list('bob')).json()[0]).toMatchObject({ id: sticker.id, name: 'Collected' });
     await app.inject({ method: 'DELETE', url: `/api/stickers/${sticker.id}`, headers: { authorization: 'alice' } });
     expect((await list('alice')).json()).toEqual([]);
     expect((await list('bob')).json()).toHaveLength(1);
@@ -86,9 +87,13 @@ describe('personal stickers', () => {
       const response = await app.inject({ method: 'POST', url: '/api/stickers', headers: { authorization: 'alice' },
         payload: { name: 'bad', image: Buffer.from(value).toString('base64') } });
       expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({ code: 'sticker_invalid_image', details: { maxMb: 5 } });
     }
     const invalid = await app.inject({ method: 'POST', url: '/api/stickers', headers: { authorization: 'alice' }, payload: { name: 'bad', image: '!!!!' } });
     expect(invalid.statusCode).toBe(400);
+    expect(invalid.json()).toMatchObject({ code: 'validation_failed' });
+    const blank = await app.inject({ method: 'POST', url: '/api/stickers', headers: { authorization: 'alice' }, payload: { name: '   ', image: 'eA==' } });
+    expect(blank.json()).toMatchObject({ code: 'validation_failed' });
     await expect(encodeSticker(Buffer.alloc(MAX_STICKER_BYTES + 1))).rejects.toThrow();
     const tooLarge = await app.inject({ method: 'POST', url: '/api/stickers', headers: { authorization: 'alice' },
       payload: { name: 'large', image: Buffer.alloc(MAX_STICKER_BYTES + 4096).toString('base64') } });
@@ -96,10 +101,14 @@ describe('personal stickers', () => {
   });
 
   it('does not accept remote sources or unknown asset IDs', async () => {
-    expect((await app.inject({ method: 'POST', url: `/api/stickers/${'0'.repeat(64)}/collect`, headers: { authorization: 'alice' }, payload: { token: `sticker:https://chat.test/api/stickers/assets/${'0'.repeat(64)}.webp` } })).statusCode).toBe(404);
-    expect((await app.inject({ url: '/api/stickers/assets/not-a-hash.webp' })).statusCode).toBe(404);
+    const unknown = await app.inject({ method: 'POST', url: `/api/stickers/${'0'.repeat(64)}/collect`, headers: { authorization: 'alice' }, payload: { token: `sticker:https://chat.test/api/stickers/assets/${'0'.repeat(64)}.webp`, name: 'Unknown' } });
+    expect(unknown.statusCode).toBe(404);
+    expect(unknown.json()).toMatchObject({ code: 'sticker_not_found' });
+    expect((await app.inject({ url: '/api/stickers/assets/not-a-hash.webp' })).json()).toMatchObject({ code: 'sticker_not_found' });
     const local = (await upload()).json();
-    expect((await app.inject({ method: 'POST', url: `/api/stickers/${local.id}/collect`, headers: { authorization: 'bob' }, payload: { token: local.token.replace('chat.test', 'remote.test') } })).statusCode).toBe(400);
+    const remote = await app.inject({ method: 'POST', url: `/api/stickers/${local.id}/collect`, headers: { authorization: 'bob' }, payload: { token: local.token.replace('chat.test', 'remote.test'), name: 'Remote' } });
+    expect(remote.statusCode).toBe(400);
+    expect(remote.json()).toMatchObject({ code: 'sticker_not_local' });
     expect((await app.inject({ method: 'POST', url: '/api/stickers', headers: { authorization: 'alice' }, payload: { name: 'remote', url: 'https://example.com/x.png' } })).statusCode).toBe(400);
   });
 

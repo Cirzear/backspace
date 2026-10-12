@@ -205,7 +205,9 @@
     "selectedCount_one": "{{count}} figurinha selecionada",
     "selectedCount_other": "{{count}} figurinhas selecionadas",
     "dropMore": "Clique ou arraste mais imagens para cá",
-    "selectedCount_many": "{{count}} figurinhas selecionadas"
+    "selectedCount_many": "{{count}} figurinhas selecionadas",
+    "sticker": "Figurinha",
+    "downloadFailed": "Não foi possível carregar a imagem."
   },
   "poke": {
     "action": "Cutucar",

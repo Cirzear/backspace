@@ -193,12 +193,12 @@ it('offers collection only in the sticker context menu and keeps existing messag
   const stickerMessage = { ...ownMessage, channelId: '', dmChannelId: 'dm-1', content: token };
   render(<Message message={stickerMessage} isCompact={false} isFirstInGroup previousMessageId={null} />);
   expect(screen.queryByRole('button', { name: 'Add to my stickers' })).not.toBeInTheDocument();
-  fireEvent.contextMenu(screen.getByAltText('My stickers'));
+  fireEvent.contextMenu(screen.getByAltText('Sticker'));
   const items = useContextMenuStore.getState().menu!.items;
   expect(items.map(item => item.key)).toEqual(expect.arrayContaining(['collect-sticker', 'save-image', 'copy-image', 'reply', 'delete']));
   const item = items.find(item => item.key === 'collect-sticker');
   await act(async () => { if (item?.type === 'action') await item.onClick(); });
-  expect(collect).toHaveBeenCalledWith({ id: 'a'.repeat(64), token });
+  expect(collect).toHaveBeenCalledWith({ id: 'a'.repeat(64), token, name: 'Sticker' });
 });
 
 describe('MessageInput mention display', () => {

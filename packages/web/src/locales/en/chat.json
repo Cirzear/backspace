@@ -200,7 +200,9 @@
     "addMore": "Add more",
     "selectedCount_one": "{{count}} sticker selected",
     "selectedCount_other": "{{count}} stickers selected",
-    "dropMore": "Click or drop more images here"
+    "dropMore": "Click or drop more images here",
+    "sticker": "Sticker",
+    "downloadFailed": "The image could not be loaded."
   },
   "poke": {
     "action": "Poke",

@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { buildImageMenuItems } from './imageMenuItems';
-import { api } from '../../api/client';
+import { api, HttpError } from '../../api/client';
 import { uploadSticker } from './stickerUpload';
 
-vi.mock('../../api/client', () => ({ api: { stickers: { collect: vi.fn() } } }));
+vi.mock('../../api/client', async importOriginal => ({
+  ...await importOriginal<typeof import('../../api/client')>(),
+  api: { stickers: { collect: vi.fn() } },
+}));
 const toast = vi.hoisted(() => vi.fn());
 vi.mock('../../stores/uiStore', () => ({ useUIStore: { getState: () => ({ addToast: toast }) } }));
 vi.mock('../../utils/imageActions', () => ({ saveImage: vi.fn(), copyImageToClipboard: vi.fn() }));
@@ -22,7 +25,7 @@ it('collects a token from the menu, including after it was removed from the coll
   expect(item).toMatchObject({ key: 'collect-sticker', label: 'Add to my stickers' });
   if (item.type !== 'action') throw new Error('Expected action');
   await item.onClick();
-  expect(api.stickers.collect).toHaveBeenCalledWith({ id: 'a'.repeat(64), token });
+  expect(api.stickers.collect).toHaveBeenCalledWith({ id: 'a'.repeat(64), token, name: 'Happy' });
   expect(toast).toHaveBeenLastCalledWith('Added to my stickers', 'success');
   await item.onClick();
   expect(api.stickers.collect).toHaveBeenCalledTimes(2);
@@ -55,4 +58,14 @@ it('keeps failures visible and never reports a false success', async () => {
   await item.onClick();
   expect(toast).toHaveBeenLastCalledWith('Collection unavailable', 'warning');
   expect(toast).not.toHaveBeenCalledWith('Added to my stickers', 'success');
+});
+
+it('shows the localized text for a coded refusal', async () => {
+  vi.mocked(api.stickers.collect).mockRejectedValueOnce(
+    new HttpError(400, 'Only stickers from this instance can be added to a collection', undefined, 'sticker_not_local'),
+  );
+  const item = menu(token)[0]!;
+  if (item.type !== 'action') throw new Error('Expected action');
+  await item.onClick();
+  expect(toast).toHaveBeenLastCalledWith('Stickers from another server cannot be added to your collection yet.', 'warning');
 });
