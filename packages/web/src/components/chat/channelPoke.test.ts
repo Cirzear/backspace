@@ -4,8 +4,13 @@ vi.mock('../../stores/authStore', () => ({ useAuthStore: { getState: () => ({}) 
 vi.mock('../../stores/chatStore', () => ({ useChatStore: { getState: () => ({ currentChannelId: state.current }) } }));
 vi.mock('../../stores/spaceStore', () => ({ getChannelOrigin: () => '' }));
 vi.mock('../../hooks/useNotificationSettings', () => ({ getChannelNotificationPolicy: () => state }));
+import type { MessageWithUser } from '@backspace/shared';
 import { receiveChannelPoke } from './channelPoke';
-const event = { type: 'channel_poke', channelId: 'chat', userId: 'actor', targetUserId: 'target', username: 'Actor', targetUsername: 'Target' } as const;
+const event = {
+  id: '1', channelId: 'chat', userId: 'actor', type: 'system', replyToId: null, editedAt: null, createdAt: 1,
+  content: JSON.stringify({ event: 'channel_poke', targetUserId: 'target', username: 'Actor', targetUsername: 'Target' }),
+  attachments: [], embeds: [], reactions: [],
+} as unknown as MessageWithUser;
 const animate = vi.fn(() => ({ onfinish: null }));
 const originalAnimate = Element.prototype.animate;
 beforeEach(() => {
@@ -24,6 +29,10 @@ describe('server-confirmed poke cue', () => {
     const fingerAnimation = animate.mock.results[1]!.value as { onfinish: () => void };
     fingerAnimation.onfinish();
     expect(document.body).not.toHaveTextContent('👈');
+  });
+  it('ignores a system row that is not a poke', () => {
+    receiveChannelPoke('', { ...event, content: JSON.stringify({ event: 'something_else', targetUserId: 'target' }) });
+    expect(animate).not.toHaveBeenCalled();
   });
   it('does not animate reduced-motion, unrelated channels or origins', () => {
     receiveChannelPoke('https://other.example', event);

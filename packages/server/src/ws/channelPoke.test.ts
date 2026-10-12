@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as schema from '../db/schema.js';
 import { setWorkerId } from '../utils/snowflake.js';
+import { parseChannelSystemEvent } from '@backspace/shared/src/channelSystemEvents.js';
 import { DEFAULT_EVERYONE_PERMISSIONS, PermissionBits, permissionsToString } from '@backspace/shared/src/permissions.js';
 
 setWorkerId(3);
@@ -134,8 +135,28 @@ describe('a channel poke', () => {
     poke({ channelId: CHANNEL, targetUserId: 'target' });
     const row = testDb.select().from(schema.messages).where(eq(schema.messages.channelId, CHANNEL)).get();
     expect(row).toMatchObject({ type: 'system', userId: 'actor' });
-    expect(sendToChannel).toHaveBeenCalled();
     expect(refusals()).toEqual([]);
+  });
+
+  it('is sent once, as a channel_poke carrying the stored row, never as a message_created', () => {
+    poke({ channelId: CHANNEL, targetUserId: 'target' });
+    const row = testDb.select().from(schema.messages).get()!;
+    expect(sendToChannel).toHaveBeenCalledTimes(1);
+    expect(sendToChannel).toHaveBeenCalledWith(SPACE, CHANNEL, {
+      type: 'channel_poke',
+      message: expect.objectContaining({
+        id: row.id, channelId: CHANNEL, userId: 'actor', type: 'system', content: row.content,
+        user: expect.objectContaining({ id: 'actor' }), mentionEveryone: false, mentionRoleIds: [],
+      }),
+    });
+    expect(parseChannelSystemEvent(row.content)).toMatchObject({ event: 'channel_poke', targetUserId: 'target' });
+  });
+
+  it('ignores names and ids the client sends beyond the channel and target', () => {
+    poke({ channelId: CHANNEL, targetUserId: 'target', username: 'forged', targetUsername: 'forged', userId: 'owner' });
+    const row = testDb.select().from(schema.messages).get()!;
+    expect(row.userId).toBe('actor');
+    expect(row.content).not.toContain('forged');
   });
 
   it('propagates a storage failure without sending anything', () => {

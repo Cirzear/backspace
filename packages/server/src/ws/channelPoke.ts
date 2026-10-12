@@ -1,7 +1,8 @@
 import type { WebSocket } from 'ws';
 import { eq } from 'drizzle-orm';
 import { generateSnowflake } from '../utils/snowflake.js';
-import { sanitizeUser } from '../utils/sanitize.js';
+import { buildMessageWithUser } from '../routes/messages.js';
+import { channelSystemContent } from '@backspace/shared/src/channelSystemEvents.js';
 import { getDb, schema } from '../db/index.js';
 import { getChannelSpaceId, getMember, hasPermission, PermissionBits } from '../utils/permissions.js';
 import { connectionManager } from './handler.js';
@@ -19,7 +20,14 @@ function refusePoke(ws: WebSocket, code: ErrorCode, details?: ErrorDetails): voi
     : { type: 'error', message: errorText(code), code });
 }
 
-// Persist passive history before broadcasting; the separate poke event only animates live viewers.
+/**
+ * `channel_poke`: the actor pokes a member in a space channel. The instance
+ * hosting the space checks the request, stores a system message and sends
+ * it to everyone who can see the channel in one `channel_poke` event, after
+ * the row is stored. The client adds the row to the timeline without an alert
+ * and plays the poke cue for those viewing the channel (websocket.md,
+ * "Channel pokes").
+ */
 export function handleChannelPoke({ event, userId, ws }: {
   event: Record<string, unknown>; userId: string; ws: WebSocket;
 }): void {
@@ -46,19 +54,19 @@ export function handleChannelPoke({ event, userId, ws }: {
   }
   const username = actor.displayName ?? actor.username;
   const targetUsername = target.displayName ?? target.username;
-  const message = db.insert(schema.messages).values({
+  const row = db.insert(schema.messages).values({
     id: generateSnowflake(), channelId, userId, type: 'system',
-    content: JSON.stringify({ event: 'channel_poke', targetUserId, username, targetUsername }),
+    content: channelSystemContent({ event: 'channel_poke', targetUserId, username, targetUsername }),
     createdAt: Date.now(),
   }).returning().get();
+  // One event carries the stored row. It is not a message_created: a client
+  // from before pokes ignores an event type it does not know, where it would
+  // treat a message_created as a new message (an unread dot, a message sound,
+  // a notification showing the JSON content). It reads the row from history
+  // later as a system message it does not know. No unread count follows it,
+  // since a poke does not count as unread.
   connectionManager.sendToChannel(spaceId, channelId, {
-    type: 'message_created',
-    message: { ...message, user: sanitizeUser(actor), attachments: [], embeds: [], reactions: [] },
-  });
-  // The gateway's per-user limiter applies across tabs before this handler runs.
-  connectionManager.sendToChannel(spaceId, channelId, {
-    type: 'channel_poke', channelId, userId, targetUserId,
-    username: actor.displayName ?? actor.username,
-    targetUsername: target.displayName ?? target.username,
+    type: 'channel_poke',
+    message: buildMessageWithUser(row, actor, []),
   });
 }

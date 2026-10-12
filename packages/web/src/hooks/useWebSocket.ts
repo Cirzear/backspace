@@ -261,7 +261,12 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
 
   switch (event.type) {
     case 'channel_poke':
-      receiveChannelPoke(origin, event);
+      // The stored row joins the timeline as a passive system message (no
+      // unread dot, sound or notification; chatStore keeps channel system
+      // rows out of realtimeMessageEvents), then the cue plays for viewers.
+      if (event.message.user) upsertUserView(event.message.user, origin);
+      addRealtimeMessage(event.message.channelId, event.message);
+      receiveChannelPoke(origin, event.message);
       break;
     case 'channel_unread_count':
       useUnreadCountStore.getState().updateCounts(origin, event.counts);

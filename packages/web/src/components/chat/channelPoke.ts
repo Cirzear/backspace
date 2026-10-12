@@ -1,17 +1,20 @@
-import type { ServerEvent } from '@backspace/shared';
+import type { MessageWithUser } from '@backspace/shared';
+import { parseChannelSystemEvent } from '@backspace/shared/src/channelSystemEvents';
 import { useAuthStore, selectMyChosenStatus, getMyUserIdForOrigin } from '../../stores/authStore';
 import { useChatStore } from '../../stores/chatStore';
 import { getChannelOrigin } from '../../stores/spaceStore';
 import { getChannelNotificationPolicy } from '../../hooks/useNotificationSettings';
 
-type Poke = Extract<ServerEvent, { type: 'channel_poke' }>;
-export function receiveChannelPoke(origin: string, event: Poke): void {
+/** Plays the poke cue for a `channel_poke` row from `origin`, for a viewer of its channel. */
+export function receiveChannelPoke(origin: string, message: MessageWithUser): void {
+  const event = parseChannelSystemEvent(message.content);
+  if (event?.event !== 'channel_poke') return;
   const channelId = useChatStore.getState().currentChannelId;
-  const inChannel = channelId === event.channelId && getChannelOrigin(channelId) === origin;
+  const inChannel = channelId === message.channelId && getChannelOrigin(channelId) === origin;
   if (!inChannel) return;
-  if (event.userId !== getMyUserIdForOrigin(origin)) {
+  if (message.userId !== getMyUserIdForOrigin(origin)) {
     if (selectMyChosenStatus(useAuthStore.getState()) === 'dnd') return;
-    const policy = getChannelNotificationPolicy(event.channelId);
+    const policy = getChannelNotificationPolicy(message.channelId);
     if (policy.muted || policy.level === 'nothing') return;
   }
   // The timeline already confirms the poke; only animate here, without a duplicate toast.
