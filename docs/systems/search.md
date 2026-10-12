@@ -32,7 +32,7 @@ All filters are query string parameters on the search endpoints.
 
 | Parameter | Type | Description | SQL Behavior |
 |-----------|------|-------------|-------------|
-| `q` | string | Text query (trimmed) | `LIKE '%{q}%'` on `content` column — case-insensitive in SQLite by default for ASCII |
+| `q` | string | Text query (trimmed) | `LIKE '%{q}%'` on `content` column, case-insensitive in SQLite by default for ASCII. Content that is a sticker token never matches (`notStickerContent` in `db/stickerContent.ts`): it is not text anyone wrote |
 | `from` | string | Username filter | Exact `LIKE` match on `users.username` (not partial — no wildcards added). If no user found, returns empty results immediately (not 404). |
 | `has` | `file` \| `image` \| `link` | Attachment/content filter | See "has: filter" section below |
 | `before` | string | ISO 8601 date | `createdAt < new Date(before).getTime()` — parsed via `new Date()`, invalid dates silently ignored |
@@ -217,7 +217,7 @@ Each result shows:
 - User avatar (via `<Avatar>` component)
 - Display name (falls back to username, then "Unknown")
 - Timestamp via `formatTime()`: "Today at HH:MM", "Yesterday at HH:MM", or "MM/DD/YYYY HH:MM"
-- Content with query term highlighting (case-insensitive match on the stored text) and `:shortcode:` emoji
+- Content with query term highlighting (case-insensitive match on the stored text) and `:shortcode:` emoji; a sticker shows the word "Sticker" (`messageTextForPreview`), which a search can reach only through `from:`, `before:` or `after:` without text
 - Attachment count badge (paperclip icon) if `msg.attachments.length > 0`
 
 ---

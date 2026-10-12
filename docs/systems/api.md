@@ -18,7 +18,8 @@ a route `preHandler`, so no user is attached to the request yet when the key is
 taken. Nothing in the HTTP limiter is per account; the only per-user budgets in
 the app are the two hand-written upload limits in `routes/files.ts` (30 upload
 creates and 1000 PATCHes per minute per user), which run inside the tus handler
-after auth.
+after auth, and the sticker upload limit in `routes/stickers.ts` (30 per minute
+per account, also counted after auth).
 
 The address comes from Fastify's `trustProxy`, which is a **count of trusted
 hops**: the `TRUSTED_PROXY_HOPS` environment variable, default 1, read in
@@ -338,13 +339,13 @@ Served `Cache-Control: public, max-age=31536000, immutable`: a stored file's nam
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
-| GET | `/api/stickers` | JWT | Current user’s collection: `{id, name, token}[]` |
-| POST | `/api/stickers` | JWT | `{name, image}`; canonical base64 image bytes. Creates/reuses an asset and collects it |
-| POST | `/api/stickers/:id/collect` | JWT | `{token}`; collects an existing local asset |
-| DELETE | `/api/stickers/:id` | JWT | Removes only the current user’s favorite |
+| GET | `/api/stickers` | JWT | Current user's collection, newest first: `{id, name, token}[]` |
+| POST | `/api/stickers` | JWT | `{name, image}`; canonical base64 image bytes. Creates or reuses an asset and collects it |
+| POST | `/api/stickers/:id/collect` | JWT | `{token, name}`; collects an existing local asset under `name` |
+| DELETE | `/api/stickers/:id` | JWT | Removes only the current user's entry |
 | GET | `/api/stickers/assets/:id.webp` | Public | Immutable WebP; anyone holding the link can read it |
 
-Upload and collect return `{id, name, token}`. The id is the SHA-256 of re-encoded WebP bytes; the token is `sticker:<canonical absolute asset URL>`. Names are trimmed, nonblank, and at most 100 characters. Uploads accept PNG/JPEG/WebP/GIF up to 5 MiB with a 16,777,216 decoded-pixel cap across frames; the JSON body limit allows base64 expansion. SVG, malformed images and noncanonical base64 are rejected. Collection requires the exact token for this instance’s canonical origin; remote URLs are never fetched server-side. Collection is idempotent, and removal never deletes a shared asset. See [personal stickers](../features/personal-stickers.md) for retention and cross-instance boundaries.
+Upload and collect return `{id, name, token}`. The id is the SHA-256 of the re-encoded WebP bytes; the token is `sticker:<canonical absolute asset URL>`. Names are trimmed, not blank, and at most 100 characters. Uploads accept PNG, JPEG, WebP and GIF up to 5 MiB with a 16,777,216 decoded-pixel cap across frames, stored within 512 x 512; the JSON body limit allows for base64. Refusals: `400 validation_failed` (blank name, base64 that is not canonical), `400 sticker_invalid_image` (`details.maxMb`), `409 sticker_collection_full` (`details.max`, 200 entries), `429 rate_limited` (30 uploads per account per minute, counted in the route after auth, next to the per-address limit), `400 sticker_not_local` (a collect token that is not this instance's), `404 sticker_not_found` (unknown asset, or a lost file on the asset route). Collection is idempotent, and removal never deletes a shared asset; unused assets are removed by the storage cleanup. Full description: [uploads.md](uploads.md#14-personal-stickers).
 
 ## GIF (`routes/gif.ts`) — auth required
 ```

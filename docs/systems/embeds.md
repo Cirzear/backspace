@@ -255,7 +255,7 @@ interface UrlMetadata {
 
 Main pipeline function. Iterates over extracted URLs, resolves each independently (one URL failure does not block others).
 
-A complete canonical `sticker:<absolute asset URL>` value returns no embeds: `StickerMessage` renders that asset directly, so it must not also be unfurled as an image embed. Other content keeps the normal extraction path. See [personal stickers](../features/personal-stickers.md) for the shared token grammar.
+A complete canonical `sticker:<absolute asset URL>` value returns no embeds (`extractUrls` checks `stickerUrl` first): `StickerMessage` renders that asset directly, so it must not also be unfurled as an image embed. Other content keeps the normal extraction path. An instance older than this check does unfurl a sticker sent to a space it hosts, so the client also draws no embeds for a sticker message. Token grammar: [uploads.md](uploads.md#14-personal-stickers).
 
 ### Per-URL Resolution Logic
 
