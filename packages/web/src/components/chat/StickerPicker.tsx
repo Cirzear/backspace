@@ -56,9 +56,10 @@ export function StickerPicker({ onSelect, mobile = false }: { onSelect: (token: 
       onKeyDown={event => { if (event.key !== 'Escape') event.stopPropagation(); }}>
       {uploading ? <StickerUploadForm key={userId} capacity={Math.max(0, MAX_PERSONAL_STICKERS - items.length)}
         onCancel={() => setUploading(false)} onAdded={(added, complete) => {
+          // Newest first, the order the server lists the collection in.
           setItems(rows => {
             const ids = new Set(added.map(item => item.id));
-            return [...added, ...rows.filter(row => !ids.has(row.id))];
+            return [...[...added].reverse(), ...rows.filter(row => !ids.has(row.id))];
           });
           if (!complete) return;
           setUploading(false);

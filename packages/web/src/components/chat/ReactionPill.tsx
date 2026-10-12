@@ -138,7 +138,7 @@ export function ReactionPill({ emoji, reactions, origin, onToggle }: ReactionPil
             ? 'flex-col w-[224px] max-w-[calc(100*var(--app-vw)-24px)] rounded-xl overflow-hidden'
             : 'rounded-md px-2.5 py-1.5 gap-2 max-w-[360px]'}`}
         >
-          {imageUrl ? <div className="w-full p-4 bg-surface-elevated/50">
+          {imageUrl ? <div className="w-full p-4">
             <img src={imageUrl} alt={t('chat:stickers.preview')} className="w-full h-40 object-contain" />
           </div>
             : <span className="text-[16px] leading-none flex-shrink-0">{emoji}</span>}

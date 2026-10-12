@@ -94,6 +94,9 @@ describe('sticker controls', () => {
     await waitFor(() => expect(uploadSticker).toHaveBeenCalledTimes(2));
     expect(await screen.findByRole('button', { name: 'Happy' })).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: 'Cool' })).toBeInTheDocument();
+    // Newest first, as the server lists the collection after a reload.
+    const tiles = screen.getAllByRole('button').filter(button => ['Happy', 'Cool'].includes(button.getAttribute('aria-label') ?? ''));
+    expect(tiles.map(tile => tile.getAttribute('aria-label'))).toEqual(['Cool', 'Happy']);
   });
 
   it('turns uploading off once the collection is full', async () => {
