@@ -603,6 +603,12 @@
     "groups": {
       "owner": "Dono"
     },
+    "ownerTitle": {
+      "edit": "Editar título do dono",
+      "label": "Título do dono",
+      "hint": "Visível para todos os membros deste espaço. De 1 a {{max}} caracteres; as permissões não mudam.",
+      "reset": "Restaurar título padrão"
+    },
     "menu": {
       "profile": "Ver perfil",
       "nickname": "Alterar apelido no espaço…",

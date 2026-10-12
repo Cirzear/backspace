@@ -130,6 +130,12 @@ export interface Space {
   banner: string | null;
   avatarColor: AvatarColor | null;
   ownerId: string;
+  /**
+   * The owner group's heading in the member list, null for the default
+   * ("Owner"). Absent from instances up to 1.10.0, which do not keep it; the
+   * client reads it through `ownerGroupTitle` and `hostKeepsOwnerTitle`.
+   */
+  ownerTitle: string | null;
   inviteCode: string | null;
   visibility: SpaceVisibility;
   directoryListed: boolean;
@@ -881,6 +887,7 @@ export interface UpdateChannelRequest {
 }
 
 export interface UpdateSpaceRequest {
+  ownerTitle?: string | null;
   name?: string;
   icon?: string;
   banner?: string;
