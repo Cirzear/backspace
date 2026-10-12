@@ -122,7 +122,7 @@ export async function stickerRoutes(app: FastifyInstance): Promise<void> {
     let encoded: Buffer;
     try { encoded = await encodeSticker(bytes); }
     catch (error) {
-      if (error instanceof StickerImageError) return sendError(reply, 400, 'sticker_invalid_image', { maxMb: MAX_STICKER_MB });
+      if (error instanceof StickerImageError) return sendError(reply, 400, 'sticker_invalid_image', { max: MAX_STICKER_MB });
       throw error;
     }
     const id = createHash('sha256').update(encoded).digest('hex');

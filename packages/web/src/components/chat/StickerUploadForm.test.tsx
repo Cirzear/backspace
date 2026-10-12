@@ -154,7 +154,7 @@ it('sends a batch one image at a time and keeps only the refused ones', async ()
   let release!: () => void;
   vi.mocked(uploadSticker)
     .mockImplementationOnce(() => new Promise(resolve => { release = () => resolve(sticker); }))
-    .mockRejectedValueOnce(new HttpError(400, 'Upload a PNG', undefined, 'sticker_invalid_image', { maxMb: 5 }))
+    .mockRejectedValueOnce(new HttpError(400, 'Upload a PNG', undefined, 'sticker_invalid_image', { max: 5 }))
     .mockResolvedValueOnce(second);
   render(<StickerUploadForm onAdded={added} onCancel={vi.fn()} capacity={200} />);
   dropFiles(['First', 'Second', 'Third']);

@@ -90,7 +90,7 @@ describe('personal stickers', () => {
       const response = await app.inject({ method: 'POST', url: '/api/stickers', headers: { authorization: 'alice' },
         payload: { name: 'bad', image: Buffer.from(value).toString('base64') } });
       expect(response.statusCode).toBe(400);
-      expect(response.json()).toMatchObject({ code: 'sticker_invalid_image', details: { maxMb: 5 } });
+      expect(response.json()).toMatchObject({ code: 'sticker_invalid_image', details: { max: 5 } });
     }
     const invalid = await app.inject({ method: 'POST', url: '/api/stickers', headers: { authorization: 'alice' }, payload: { name: 'bad', image: '!!!!' } });
     expect(invalid.statusCode).toBe(400);

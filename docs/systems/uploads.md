@@ -726,7 +726,7 @@ The client reads `isStickerMessage` and `messageTextForPreview` from `utils/stic
 `POST /api/stickers` takes `{ name, image }`, the image as canonical base64 inside the JSON body of the authenticated API client (not tus: stickers are small and are stored once per content hash). The route:
 
 1. refuses a blank name (`validation_failed`, the schema caps it at 100 characters), more than 30 uploads per account per minute (`429 rate_limited`, a fixed window keyed on the row id, so each federated account counts on its own) and a full collection (`409 sticker_collection_full`, 200 entries, `MAX_PERSONAL_STICKERS`);
-2. decodes the bytes with sharp: at most 5 MiB in, at most 16,777,216 decoded pixels across all frames, PNG, JPEG, WebP or GIF only (SVG and anything else is `400 sticker_invalid_image` with `details.maxMb`);
+2. decodes the bytes with sharp: at most 5 MiB in, at most 16,777,216 decoded pixels across all frames, PNG, JPEG, WebP or GIF only (SVG and anything else is `400 sticker_invalid_image` with `details.max`, the limit in MB);
 3. re-encodes to WebP, keeping animation and frame delays, fitting every frame into 512 x 512 without enlarging, and refuses a result larger than 5 MiB. Metadata and any bytes outside the image are dropped;
 4. names the asset by the SHA-256 of the encoded bytes, writes (or makes fresh again) its `sticker_assets` row, writes the file to a temporary name and renames it into place, then adds the collection entry.
 
