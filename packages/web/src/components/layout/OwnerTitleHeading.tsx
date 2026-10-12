@@ -80,8 +80,13 @@ function OwnerTitleEditor({ space, onClose }: { space: TaggedSpace; onClose: () 
   );
 }
 
-/** The heading is cosmetic: only the actual owner sees the editor, regardless of role permissions. */
-export function OwnerTitleHeading({ space, count }: { space: TaggedSpace; count: number }) {
+/**
+ * The owner group's heading in the member list, on desktop and phone. The
+ * heading is cosmetic: only the actual owner sees the editor, regardless of
+ * role permissions. `touch` gives the edit control a 44px tap target for the
+ * phone screen without changing the heading's height.
+ */
+export function OwnerTitleHeading({ space, count, touch = false }: { space: TaggedSpace; count: number; touch?: boolean }) {
   const { t } = useTranslation('spaces');
   const { formatNumber } = useFormatters();
   // The owner id is the owner's row on the space's host, so compare it with
@@ -100,7 +105,7 @@ export function OwnerTitleHeading({ space, count }: { space: TaggedSpace; count:
           {title} — {formatNumber(count)}
         </h3>
         {canEdit && (
-          <button type="button" onClick={() => setEditing(true)} aria-label={t('members.ownerTitle.edit')} title={t('members.ownerTitle.edit')} className="shrink-0 p-1 rounded text-txt-tertiary hover:text-txt-primary hover:bg-interactive-hover">
+          <button type="button" onClick={() => setEditing(true)} aria-label={t('members.ownerTitle.edit')} title={t('members.ownerTitle.edit')} className={`shrink-0 rounded text-txt-tertiary hover:text-txt-primary hover:bg-interactive-hover ${touch ? '-my-4 flex h-11 w-11 items-center justify-center active:bg-interactive-hover' : 'p-1'}`}>
             <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="m16 3 5 5M4 15 16 3l5 5L9 20l-6 1 1-6Z" />
             </svg>
