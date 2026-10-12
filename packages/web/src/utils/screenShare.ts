@@ -10,6 +10,7 @@ import { useUIStore } from '../stores/uiStore';
 import { openScreenShareSetup } from '../stores/screenShareSetupStore';
 import i18n from '../i18n';
 import { isElectron, getElectronAPI } from '../platform/platform';
+import { acquireAppExcludedSystemAudio } from './systemAudioSource';
 import type { InstanceStreamingLimits } from '@backspace/shared';
 import {
   STANDARD_RESOLUTIONS, STANDARD_FRAMERATES, WIDTH_MAP,
@@ -348,7 +349,19 @@ export async function stageScreenCapture(): Promise<MediaStream> {
     throw new DOMException('getDisplayMedia is not available', 'NotSupportedError');
   }
   try {
-    const stream = await navigator.mediaDevices.getDisplayMedia(buildCaptureConstraints(config, opts));
+    // Where the desktop app can build the system audio without Backspace's own
+    // playback, that track stands in for the loopback one.
+    const ownFree = config.shareAudio ? await acquireAppExcludedSystemAudio() : null;
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia(
+        buildCaptureConstraints(ownFree ? { ...config, shareAudio: false } : config, opts),
+      );
+    } catch (err) {
+      ownFree?.stop();
+      throw err;
+    }
+    if (ownFree) stream.addTrack(ownFree);
     const video = stream.getVideoTracks()[0];
     if (video) video.contentHint = opts.contentHint;
     return stream;
@@ -734,6 +747,8 @@ function settleWithin<T>(promise: Promise<T>, ms: number, discard: (late: T) => 
 async function acquireScreenShareAudio(sourceId: string): Promise<MediaStreamTrack> {
   const api = getElectronAPI();
   if (!api?.preselectScreenSource) throw new DOMException('Source preselection is not available', 'NotSupportedError');
+  const ownFree = await acquireAppExcludedSystemAudio();
+  if (ownFree) return ownFree;
   await api.preselectScreenSource(sourceId, true);
   const config = useVoiceStore.getState().screenShareConfig;
   const stream = await navigator.mediaDevices.getDisplayMedia(

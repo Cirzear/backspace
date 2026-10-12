@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { isAppSystemAudioSource } from '../utils/systemAudioSource';
 
 /**
  * Permission state machine for audio device enumeration.
@@ -77,6 +78,8 @@ export function useAudioDevices(): UseAudioDevicesResult {
       const ins: MediaDeviceInfo[] = [];
       const outs: MediaDeviceInfo[] = [];
       for (const d of all) {
+        // The share's own capture device is not a microphone to pick.
+        if (isAppSystemAudioSource(d)) continue;
         if (d.kind === 'audioinput' && !seenIn.has(d.deviceId)) {
           seenIn.add(d.deviceId);
           ins.push(d);

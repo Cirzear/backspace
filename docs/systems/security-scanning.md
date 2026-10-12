@@ -387,6 +387,21 @@ miniflare moves off `0.35.2`, and removing it then is the goal.
 the override and in the two direct `sharp` ranges, by the same reasoning: a patch
 inside the minor whose content is the bundled librsvg going to 2.63.2.
 
+### Removed rather than pinned: cmake-js under venmic
+
+`@vencord/venmic` (an optional, Linux-only dependency of `@backspace/desktop`, see
+`desktop.md`) lists `cmake-js` 7 as a runtime dependency, and `cmake-js` 7 depends
+on `tar` 6, which OSV reports with twelve findings fixed only in 7.5.x. `cmake-js`
+is venmic's build-from-source tool: its `install` script runs it only when no
+prebuilt binary matches, and pnpm does not run that script here (venmic is not in
+`onlyBuiltDependencies`). The package ships prebuilt binaries for Linux x64 and
+arm64 and loads them through `pkg-prebuilds` alone. `"@vencord/venmic>cmake-js": "-"`
+in `pnpm.overrides` therefore removes `cmake-js` and its subtree (`tar` 6, `axios`,
+`npmlog` and others) from the lockfile and from the packaged Linux app, the same way
+`dbus-next>usocket` is removed. If venmic is ever added to `onlyBuiltDependencies`,
+its `install` script still passes on x64 and arm64, because `pkg-prebuilds-verify`
+finds the shipped binary before the build step is reached.
+
 ## Dismissal register
 
 `.trivyignore` and `.github/codeql/codeql-config.yml` are the machine-readable half
