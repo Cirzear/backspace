@@ -11,12 +11,10 @@ import {
 import { getDb, schema } from '../db/index.js';
 import { authenticate } from '../utils/auth.js';
 import { getOurOrigin } from '../utils/federationAuth.js';
-import { config } from '../config.js';
+import { stickerAssetPath as assetPath } from '../utils/stickerAssets.js';
 import { sendError } from '../utils/httpErrors.js';
 import { createFixedWindowLimit } from '../utils/fixedWindowLimit.js';
 
-// Separate from attachment cleanup: favorites and historical messages share immutable assets.
-const assetPath = (id: string) => path.join(config.uploadDir, 'stickers', `${id}.webp`);
 const tokenFor = (id: string) => `${STICKER_PREFIX}${getOurOrigin()}/api/stickers/assets/${id}.webp`;
 const MAX_STICKER_MB = MAX_STICKER_BYTES / (1024 * 1024);
 /** Stored stickers fit this box; the largest place one is shown is a 240 px message row. */
@@ -128,12 +126,17 @@ export async function stickerRoutes(app: FastifyInstance): Promise<void> {
       throw error;
     }
     const id = createHash('sha256').update(encoded).digest('hex');
+    // The row is written, or made fresh again, before the file: the janitor
+    // never removes an asset inside its grace period, so it cannot delete this
+    // file between the write below and the collection entry after it.
+    const now = Date.now();
+    getDb().insert(schema.stickerAssets).values({ id, createdAt: now })
+      .onConflictDoUpdate({ target: schema.stickerAssets.id, set: { createdAt: now } }).run();
     await mkdir(path.dirname(assetPath(id)), { recursive: true });
     // Publish atomically: concurrent duplicate uploads must never expose a truncated image.
     const temporaryPath = `${assetPath(id)}.${randomUUID()}.tmp`;
     await writeFile(temporaryPath, encoded);
     await rename(temporaryPath, assetPath(id));
-    getDb().insert(schema.stickerAssets).values({ id, createdAt: Date.now() }).onConflictDoNothing().run();
     const sticker = collectSticker({ userId: request.userId, id, name: name.trim() });
     if (!sticker) return sendError(reply, 409, 'sticker_collection_full', { max: MAX_PERSONAL_STICKERS });
     return sticker;

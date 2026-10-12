@@ -33,3 +33,10 @@ export function stickerUrl(value: string): string | null {
     return null;
   }
 }
+
+/** The asset id (SHA-256 of the stored WebP) a sticker token names, or null when the value is not a sticker. */
+export function stickerIdOf(value: string): string | null {
+  const url = stickerUrl(value);
+  if (!url) return null;
+  return /\/api\/stickers\/assets\/([a-f0-9]{64})\.webp$/.exec(url)?.[1] ?? null;
+}

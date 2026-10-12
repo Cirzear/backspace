@@ -134,6 +134,14 @@ describe('personal stickers', () => {
     expect(again.json()).toMatchObject({ id: existing.id, name: 'Happy' });
   });
 
+  it('makes an existing asset fresh again when its bytes are uploaded', async () => {
+    const { id } = (await upload()).json();
+    sqlite.prepare('UPDATE sticker_assets SET created_at = 1 WHERE id = ?').run(id);
+    await upload();
+    const row = sqlite.prepare('SELECT created_at AS createdAt FROM sticker_assets WHERE id = ?').get(id) as { createdAt: number };
+    expect(row.createdAt).toBeGreaterThan(1);
+  });
+
   it('limits uploads per account per minute', async () => {
     for (let index = 0; index < STICKER_UPLOADS_PER_MINUTE; index += 1) {
       expect((await upload()).statusCode).toBe(200);

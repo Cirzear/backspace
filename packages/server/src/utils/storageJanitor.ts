@@ -11,6 +11,7 @@ import { MUTATION_LOG_RETENTION_MS } from './federationOutbox.js';
 import { expireOutboxQueues } from './federationOutboxQueue.js';
 import { sweepAppliedEvents } from './federationAppliedEvents.js';
 import { sweepSubjectClocks } from './federationSubjectClock.js';
+import { cleanupUnusedStickerAssets } from './stickerAssets.js';
 import type { StorageStats, StorageBreakdown, OrphanedFile, CleanupResult } from '@backspace/shared';
 
 const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.ico', '.bmp', '.avif']);
@@ -367,6 +368,13 @@ export function cleanupStorage(dryRun: boolean): CleanupResult {
     freedBytes += att.size;
     deletedAttachmentRecords++;
   }
+
+  // Phase 4: Sticker assets no collection, message or reaction on this
+  // instance names any more, past their grace period (utils/stickerAssets.ts).
+  const stickers = cleanupUnusedStickerAssets(dryRun);
+  deletedFiles += stickers.deletedFiles;
+  freedBytes += stickers.freedBytes;
+  errors.push(...stickers.errors);
 
   return {
     dryRun,
@@ -946,7 +954,7 @@ let lastStorageCleanupAt = 0;
  *  - Stale file queue entries
  *  - Soft-deleted DM channels past grace period
  *  - Unused auto-created pending peer rows (cleanupUnusedAutoPendingPeers)
- *  - Once-per-day: cleanupStorage (orphan files + unlinked + dangling)
+ *  - Once-per-day: cleanupStorage (orphan files + unlinked + dangling + unused stickers)
  */
 export async function runFederationJanitor(): Promise<void> {
   try {
