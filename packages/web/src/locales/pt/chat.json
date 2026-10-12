@@ -219,7 +219,11 @@
     "batchFailed_one": "Não foi possível adicionar {{count}} imagem. Ela continua na lista abaixo.",
     "batchFailed_many": "Não foi possível adicionar {{count}} imagens. Elas continuam na lista abaixo.",
     "batchFailed_other": "Não foi possível adicionar {{count}} imagens. Elas continuam na lista abaixo.",
-    "uploadingProgress": "Adicionando {{current}} de {{total}}…"
+    "uploadingProgress": "Adicionando {{current}} de {{total}}…",
+    "rename": "Renomear",
+    "renameTitle": "Renomear figurinha",
+    "search": "Pesquisar figurinhas",
+    "noResults": "Nenhuma figurinha encontrada"
   },
   "poke": {
     "action": "Cutucar",

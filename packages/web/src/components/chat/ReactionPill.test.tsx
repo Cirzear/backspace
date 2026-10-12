@@ -15,6 +15,9 @@ import { ReactionPill } from './ReactionPill';
 import { useAuthStore } from '../../stores/authStore';
 import { useSpaceStore } from '../../stores/spaceStore';
 import { useUIStore } from '../../stores/uiStore';
+import { useContextMenuStore } from '../../stores/contextMenuStore';
+import * as imageMenuItems from './imageMenuItems';
+import * as imageActions from '../../utils/imageActions';
 
 function user(id: string, username: string, displayName: string | null = null, homeInstance: string | null = null): User {
   return { id, username, displayName, avatar: null, createdAt: 1, homeInstance, homeUserId: homeInstance ? `${id}-home` : null } as unknown as User;
@@ -174,4 +177,48 @@ it('shows a sticker preview with reactors and preserves toggle behavior', () => 
   expect(screen.getAllByRole('img')).toHaveLength(2);
   fireEvent.click(screen.getByRole('button'));
   expect(toggle).toHaveBeenCalledOnce();
+});
+
+it('opens context menu on right click for sticker reactions and offers sticker collection', async () => {
+  const token = `sticker:https://remote.test/api/stickers/assets/${'b'.repeat(64)}.webp`;
+  const saveSpy = vi.spyOn(imageMenuItems, 'saveStickerToCollection').mockResolvedValue();
+  const copySpy = vi.spyOn(imageActions, 'copyImageToClipboard').mockResolvedValue();
+  const saveImageSpy = vi.spyOn(imageActions, 'saveImage').mockImplementation(() => {});
+  const toast = vi.fn();
+  useUIStore.setState({ addToast: toast });
+
+  useContextMenuStore.getState().close();
+  render(<ReactionPill emoji={token} origin="" reactions={[{ ...reaction(MIRA, 1), emoji: token }]} onToggle={vi.fn()} />);
+
+  const button = screen.getByRole('button');
+  fireEvent.contextMenu(button, { clientX: 100, clientY: 200 });
+
+  const menu = useContextMenuStore.getState().menu;
+  expect(menu).not.toBeNull();
+  expect(menu?.position).toEqual({ x: 100, y: 200 });
+  const keys = menu?.items.map(i => i.key);
+  expect(keys).toEqual(['collect-sticker', 'copy-image', 'save-image']);
+
+  const collectItem = menu?.items.find(i => i.key === 'collect-sticker');
+  if (collectItem?.type !== 'action') throw new Error('Expected action');
+  await collectItem.onClick();
+  expect(saveSpy).toHaveBeenCalledWith(token, 'Sticker');
+  expect(toast).toHaveBeenCalledWith('Added to my stickers', 'success');
+
+  const copyItem = menu?.items.find(i => i.key === 'copy-image');
+  if (copyItem?.type !== 'action') throw new Error('Expected action');
+  await copyItem.onClick();
+  expect(copySpy).toHaveBeenCalledWith(`https://remote.test/api/stickers/assets/${'b'.repeat(64)}.webp`);
+
+  const saveImgItem = menu?.items.find(i => i.key === 'save-image');
+  if (saveImgItem?.type !== 'action') throw new Error('Expected action');
+  saveImgItem.onClick();
+  expect(saveImageSpy).toHaveBeenCalledWith(`https://remote.test/api/stickers/assets/${'b'.repeat(64)}.webp`);
+});
+
+it('does not open sticker context menu on right click for native emoji reactions', () => {
+  useContextMenuStore.getState().close();
+  const pill = renderPill([reaction(MIRA, 1)]);
+  fireEvent.contextMenu(pill, { clientX: 100, clientY: 200 });
+  expect(useContextMenuStore.getState().menu).toBeNull();
 });

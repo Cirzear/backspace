@@ -734,7 +734,7 @@ The client reads `isStickerMessage` and `messageTextForPreview` from `utils/stic
 
 The upload form takes up to 20 images at once (`MAX_STICKER_BATCH`, fewer when the collection has less room) from the file picker, a drop or a paste. It previews and names them locally and sends nothing until the user confirms. It then uploads them one at a time: each accepted image leaves the form and is added to the picker, each refused one stays with its reason under its name, and the batch stops at the first refusal every later image would meet (`rate_limited`, `sticker_collection_full`). Nothing is rolled back.
 
-Collecting from a message is in the image's context menu ("Add to my stickers"): a sticker message is collected by its token, and a local image attachment (`/api/uploads/...` on the page's own origin) is read by the browser from its original URL, capped at 5 MiB while streaming, and uploaded like a picked file. The server never fetches a URL a client names.
+Collecting from a message or reaction is in the context menu ("Add to my stickers"): a local sticker message or reaction is collected by its token via `POST /api/stickers/:id/collect`, and a local image attachment (`/api/uploads/...` on the page's own origin) is read by the browser from its original URL, capped at 5 MiB while streaming, and uploaded like a picked file. The server never fetches a URL a client names.
 
 ### Serving
 
@@ -752,7 +752,7 @@ A sticker message or reaction crosses instances as its token, through the existi
 
 - A user sends stickers from their home collection (`api.stickers` is the home client). In a space hosted on another instance, the message is stored there and the image still comes from the home instance.
 - The cleanup above counts only rows on its own instance. A sticker used only in a space on another instance stops rendering there once its owner removes it from their collection and no local message or reaction uses it.
-- "Add to my stickers" on another instance's sticker is refused with `sticker_not_local`.
+- "Add to my stickers" on another instance's sticker: `POST /api/stickers/:id/collect` returns `400 sticker_not_local` on the remote token, prompting the client to download the image from the remote token's asset URL (enforcing the 5 MiB cap) and upload it to the user's home server (`POST /api/stickers`), preserving the sticker in their personal collection.
 - What an older version shows: a 1.10.0 or older client shows the token as a line of text with a link, and a sticker reaction as a pill holding that text. A current instance resolves no embed for a token (embeds.md, `extractUrls`). A space hosted on a 1.10.0 or older instance does: a sticker sent there gets an image embed of its asset URL, so that instance's own clients see the text and the image, and a current client hides the embed and draws the sticker once. A relayed DM gets no embed on any version, because the receiving side of the relay resolves none.
 
 ---

@@ -7,6 +7,7 @@
 .sticker-icon-button { @apply w-8 h-8 text-txt-tertiary hover:bg-interactive-hover hover:text-txt-primary; }
 .sticker-tile { @apply rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/60; }
 .sticker-remove-button { @apply absolute top-1 right-1 flex h-6 w-6 items-center justify-center rounded-full border border-accent-rose/30 bg-surface-elevated text-txt-danger hover:bg-accent-rose/20 disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent-rose; }
+.sticker-edit-button { @apply absolute top-1 left-1 flex h-6 w-6 items-center justify-center rounded-full border border-border-soft bg-surface-elevated text-txt-secondary hover:text-txt-primary hover:bg-interactive-hover disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent-primary; }
 .sticker-dropzone { @apply w-full min-h-48 flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border-hard bg-surface-input/40 p-4 transition-colors hover:border-accent-primary/60 hover:bg-accent-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/60 disabled:cursor-wait; }
 .sticker-dropzone-active { @apply border-accent-primary bg-accent-primary/10; }
 /* Subtle checks reveal transparent edges without changing the uploaded image. */

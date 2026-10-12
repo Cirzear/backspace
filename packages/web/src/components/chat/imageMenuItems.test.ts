@@ -60,12 +60,26 @@ it('keeps failures visible and never reports a false success', async () => {
   expect(toast).not.toHaveBeenCalledWith('Added to my stickers', 'success');
 });
 
-it('shows the localized text for a coded refusal', async () => {
+it('collects remote/federated stickers across servers by downloading and uploading', async () => {
+  const fetchImage = vi.fn().mockResolvedValue(new Response(new Blob(['remote-webp'], { type: 'image/webp' })));
+  vi.stubGlobal('fetch', fetchImage);
   vi.mocked(api.stickers.collect).mockRejectedValueOnce(
     new HttpError(400, 'Only stickers from this instance can be added to a collection', undefined, 'sticker_not_local'),
   );
   const item = menu(token)[0]!;
   if (item.type !== 'action') throw new Error('Expected action');
   await item.onClick();
-  expect(toast).toHaveBeenLastCalledWith('Stickers from another server cannot be added to your collection yet.', 'warning');
+  expect(fetchImage).toHaveBeenCalledWith(`https://chat.test/api/stickers/assets/${'a'.repeat(64)}.webp`);
+  expect(uploadSticker).toHaveBeenCalledWith(expect.any(Blob), 'Happy');
+  expect(toast).toHaveBeenLastCalledWith('Added to my stickers', 'success');
+});
+
+it('shows the localized text for a coded refusal such as full collection', async () => {
+  vi.mocked(api.stickers.collect).mockRejectedValueOnce(
+    new HttpError(409, 'Collection is full', undefined, 'sticker_collection_full', { max: 200 }),
+  );
+  const item = menu(token)[0]!;
+  if (item.type !== 'action') throw new Error('Expected action');
+  await item.onClick();
+  expect(toast).toHaveBeenLastCalledWith('Your collection is full at 200 stickers. Remove one to add another.', 'warning');
 });

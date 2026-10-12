@@ -2,7 +2,7 @@ import { stickerIdOf, stickerUrl } from '@backspace/shared/src/stickers';
 import type { ContextMenuAction, ContextMenuItem } from '../../stores/contextMenuStore';
 import { saveImage, copyImageToClipboard } from '../../utils/imageActions';
 import { useUIStore } from '../../stores/uiStore';
-import { api } from '../../api/client';
+import { api, HttpError } from '../../api/client';
 import i18n from '../../i18n';
 import { uploadSticker, readStickerImage } from './stickerUpload';
 import { describeError } from '../../i18n/errors';
@@ -12,6 +12,39 @@ interface ImageMenuParams {
   sourceUrl?: string | null;
   stickerSource?: string | null;
   stickerName?: string;
+}
+
+/**
+ * Add a sticker or eligible image to the user's personal collection.
+ *
+ * Local stickers are collected directly via api.stickers.collect to reuse
+ * storage. If the sticker comes from another federated server (sticker_not_local)
+ * or is missing locally, the client fetches the image from its asset URL and uploads
+ * it to the user's home server so cross-instance stickers are saved.
+ */
+export async function saveStickerToCollection(source: string, name?: string): Promise<void> {
+  const stickerName = name?.trim() || i18n.t('chat:stickers.sticker');
+  const sticker = stickerUrl(source);
+
+  if (sticker) {
+    try {
+      await api.stickers.collect({ id: stickerIdOf(source)!, token: source, name: stickerName });
+      return;
+    } catch (err) {
+      if (err instanceof HttpError && (err.code === 'sticker_not_local' || err.code === 'sticker_not_found')) {
+        const response = await fetch(sticker);
+        const blob = await readStickerImage(response);
+        await uploadSticker(blob, stickerName);
+        return;
+      }
+      throw err;
+    }
+  }
+
+  const url = new URL(source, window.location.origin);
+  const response = await fetch(url.href);
+  const blob = await readStickerImage(response);
+  await uploadSticker(blob, stickerName);
 }
 
 /** Only annotated sticker messages and local original attachments can be collected, never arbitrary embeds. */
@@ -33,13 +66,7 @@ function collectStickerItem(source: string, name: string): ContextMenuAction | n
       const { addToast } = useUIStore.getState();
       addToast(i18n.t('chat:stickers.uploading'), 'info');
       try {
-        if (sticker) {
-          // The server validates its canonical origin; the browser's development origin may differ.
-          await api.stickers.collect({ id: stickerIdOf(source)!, token: source, name });
-        } else {
-          const response = await fetch(url.href);
-          await uploadSticker(await readStickerImage(response), name);
-        }
+        await saveStickerToCollection(source, name);
         addToast(i18n.t('chat:stickers.saved'), 'success');
       } catch (err) {
         addToast(describeError(err), 'warning');

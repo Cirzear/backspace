@@ -13,6 +13,10 @@ import { useDismissOnEscape } from '../../hooks/useDismissOnEscape';
 import { getCanonicalUserView } from '../../utils/userViewLookup';
 import { parseFederatedUsername } from '../../utils/identity';
 import { isOwnReaction, reactionSentence, summarizeReactors } from './reactionSummary';
+import { useContextMenuStore, type ContextMenuItem } from '../../stores/contextMenuStore';
+import { saveImage, copyImageToClipboard } from '../../utils/imageActions';
+import { saveStickerToCollection } from './imageMenuItems';
+import { describeError } from '../../i18n/errors';
 
 interface ReactionPillProps {
   emoji: string;
@@ -103,12 +107,68 @@ export function ReactionPill({ emoji, reactions, origin, onToggle }: ReactionPil
   // and comes back.
   useDismissOnEscape(pending || tooltipOpen, hide);
 
+  const handleContextMenu = (e: React.MouseEvent) => {
+    if (!imageUrl) return;
+    e.preventDefault();
+    e.stopPropagation();
+    hide();
+
+    const items: ContextMenuItem[] = [
+      {
+        key: 'collect-sticker',
+        type: 'action',
+        label: t('chat:stickers.save'),
+        icon: (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+            <rect x="3" y="3" width="18" height="18" rx="5" />
+            <path d="M12 7v10M7 12h10" />
+          </svg>
+        ),
+        onClick: async () => {
+          const { addToast } = useUIStore.getState();
+          addToast(t('chat:stickers.uploading'), 'info');
+          try {
+            await saveStickerToCollection(emoji, t('chat:stickers.sticker'));
+            addToast(t('chat:stickers.saved'), 'success');
+          } catch (err) {
+            addToast(describeError(err), 'warning');
+          }
+        },
+      },
+      {
+        key: 'copy-image',
+        type: 'action',
+        label: t('chat:menu.copyImage'),
+        icon: (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M21 9v10c0 1.1-.9 2-2 2H8c-1.1 0-2-.9-2-2V5c0-1.1.9-2 2-2h7l6 6zm-2 1h-5V4H8v15h11V10zM3 15V3c0-1.1.9-2 2-2h9v2H5v12H3z" />
+          </svg>
+        ),
+        onClick: () => { void copyImageToClipboard(imageUrl); },
+      },
+      {
+        key: 'save-image',
+        type: 'action',
+        label: t('chat:menu.saveImage'),
+        icon: (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
+          </svg>
+        ),
+        onClick: () => saveImage(imageUrl),
+      },
+    ];
+
+    useContextMenuStore.getState().open({ x: e.clientX, y: e.clientY }, items);
+  };
+
   return (
     <>
       <button
         ref={anchorRef}
         type="button"
         onClick={onToggle}
+        onContextMenu={handleContextMenu}
         onMouseEnter={show}
         onMouseLeave={hide}
         onFocus={(e) => {

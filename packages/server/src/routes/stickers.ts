@@ -168,6 +168,35 @@ export async function stickerRoutes(app: FastifyInstance): Promise<void> {
     return { success: true };
   });
 
+  app.patch<{ Params: { id: string }; Body: { name: string } }>('/api/stickers/:id', {
+    preHandler: authenticate,
+    schema: {
+      body: {
+        type: 'object',
+        required: ['name'],
+        additionalProperties: false,
+        properties: { name: { type: 'string', minLength: 1, maxLength: MAX_STICKER_NAME_LENGTH } },
+      },
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: { id: { type: 'string', pattern: STICKER_ID_PATTERN.source } },
+      },
+    },
+  }, async (request, reply) => {
+    const trimmed = request.body.name.trim();
+    if (!trimmed) return sendError(reply, 400, 'validation_failed');
+    const result = getDb().update(schema.personalStickers)
+      .set({ name: trimmed })
+      .where(and(
+        eq(schema.personalStickers.userId, request.userId),
+        eq(schema.personalStickers.stickerId, request.params.id),
+      ))
+      .run();
+    if (!result.changes) return sendError(reply, 404, 'sticker_not_found');
+    return { id: request.params.id, name: trimmed, token: tokenFor(request.params.id) };
+  });
+
   // Same public-link access policy as existing uploads. Never accept a filesystem path or remote URL.
   app.get<{ Params: { filename: string } }>('/api/stickers/assets/:filename', async (request, reply) => {
     const id = request.params.filename.replace(/\.webp$/, '');

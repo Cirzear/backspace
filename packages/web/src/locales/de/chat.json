@@ -248,7 +248,11 @@
     "full": "Deine Sammlung ist voll. Entferne einen Sticker, um einen neuen hinzuzufügen.",
     "batchFailed_one": "{{count}} Bild konnte nicht hinzugefügt werden. Es steht weiter unten in der Liste.",
     "batchFailed_other": "{{count}} Bilder konnten nicht hinzugefügt werden. Sie stehen weiter unten in der Liste.",
-    "uploadingProgress": "{{current}} von {{total}} wird hinzugefügt…"
+    "uploadingProgress": "{{current}} von {{total}} wird hinzugefügt…",
+    "rename": "Umbenennen",
+    "renameTitle": "Sticker umbenennen",
+    "search": "Sticker suchen",
+    "noResults": "Keine Sticker gefunden"
   },
   "poke": {
     "action": "Anstupsen",

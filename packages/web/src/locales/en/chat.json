@@ -248,7 +248,11 @@
     "full": "Your collection is full. Remove a sticker to add another.",
     "batchFailed_one": "{{count}} image could not be added. It is still listed below.",
     "batchFailed_other": "{{count}} images could not be added. They are still listed below.",
-    "uploadingProgress": "Adding {{current}} of {{total}}…"
+    "uploadingProgress": "Adding {{current}} of {{total}}…",
+    "rename": "Rename",
+    "renameTitle": "Rename sticker",
+    "search": "Search stickers",
+    "noResults": "No stickers found"
   },
   "poke": {
     "action": "Poke",
