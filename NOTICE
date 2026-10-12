@@ -60,6 +60,15 @@ The image-processing dependency "sharp" loads libvips, distributed as a
 prebuilt binary under the LGPL-3.0-or-later license; it is used unmodified and
 dynamically, and is not statically linked into Backspace.
 
+The desktop app on Linux optionally depends on "@vencord/venmic"
+(https://github.com/Vencord/venmic), a prebuilt native PipeWire module distributed
+via npm under the Mozilla Public License 2.0 (MPL-2.0). It routes other
+applications' audio into a virtual source for screen sharing (packages/desktop/src/
+systemAudio.ts). It is used unmodified, as a separate file-level component; its
+source code is available at the address above and the license text ships in the
+package's LICENSE file. Its dependencies that are installed, node-addon-api and
+pkg-prebuilds, are MIT; its build tool cmake-js is not installed.
+
 To regenerate the full, current dependency license inventory, run:
 
   pnpm licenses list --prod

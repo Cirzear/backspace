@@ -1,4 +1,5 @@
 import { useMentionComposer } from './useMentionComposer';
+import { useComposerMention } from './useComposerMention';
 import { MentionTextarea } from './MentionTextarea';
 import { useComposerClearance } from './useComposerClearance';
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
@@ -70,6 +71,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useComposerMention(channelId, textareaRef);
   const mentionAnchorRef = useRef<HTMLSpanElement>(null);
 
   // Object URLs for current-session image previews. transferStore doesn't hold
