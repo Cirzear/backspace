@@ -41,7 +41,8 @@ describe('owner title heading', () => {
     expect(screen.getByRole('heading', { name: 'Owner — 1' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Edit owner title' }));
     expect(screen.getByLabelText('Owner title')).toHaveValue('');
-    expect(screen.getByRole('button', { name: 'Reset to default' })).toBeDisabled();
+    // Reset shows only while a title is set, as in the nickname dialog.
+    expect(screen.queryByRole('button', { name: 'Reset to default' })).not.toBeInTheDocument();
   });
 
   it('saves through the API and displays only the confirmed server response', async () => {
@@ -68,6 +69,17 @@ describe('owner title heading', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Database is unavailable');
     expect(screen.getByLabelText('Owner title')).toHaveValue('Captain');
     expect(screen.getByRole('heading', { name: 'Owner — 1' })).toBeInTheDocument();
+  });
+
+  it('closes without a write when the title is unchanged', async () => {
+    useSpaceStore.setState({ spaces: [{ ...space, ownerTitle: 'Captain' }] });
+    const update = vi.spyOn(api.spaces, 'update');
+    render(<Heading />);
+    await userEvent.click(screen.getByRole('button', { name: 'Edit owner title' }));
+    await userEvent.type(screen.getByLabelText('Owner title'), '  ');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(update).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Owner title')).not.toBeInTheDocument();
   });
 
   it('does not save when cancelled', async () => {
