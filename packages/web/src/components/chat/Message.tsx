@@ -455,7 +455,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     : undefined;
 
   const handleAuthorMenu = useChannelPokeMenu({ channelId: channelKey, targetUserId: message.userId,
-    origin: messageOrigin, enabled: canSendMessages && !isDmMessage, pending: !!pending });
+    origin: messageOrigin, enabled: canSendMessages && !isDmMessage && !pending });
 
   const handleUsernameClick = (e: React.MouseEvent) => {
     if (!message.user) return;
