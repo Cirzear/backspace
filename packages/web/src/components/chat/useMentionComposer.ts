@@ -7,7 +7,7 @@ import {
   useChannelUserResolver,
   type ChannelUser,
 } from '../../utils/channelUser';
-import { userDisplayName } from '../../utils/identity';
+import { spaceMemberName } from '../../utils/identity';
 import { composerMentions, type ComposerMentions } from './composerMentions';
 
 interface MentionState {
@@ -47,7 +47,9 @@ export function useMentionComposer({ channelId, draftText, textareaRef }: Option
         value,
         (userId) => {
           const found = resolveUser(userId);
-          return found ? userDisplayName(found.user) : null;
+          // The name the sent message's MentionBadge shows: the space
+          // nickname where there is one.
+          return found ? spaceMemberName(found.member, found.user) : null;
         },
         (roleId) => {
           const role = spaceId === undefined ? undefined : roles.find((r) => r.id === roleId && r.spaceId === spaceId);

@@ -176,3 +176,23 @@ describe('MessageInput mention labels', () => {
     expect(screen.getByRole('textbox')).toHaveValue('hi <@zed>');
   });
 });
+
+describe('MessageInput mention labels in a space channel', () => {
+  it("shows a picked member by their space nickname, as the sent message's badge does", async () => {
+    const mira = makeUser('mira', 'mira', 'Mira');
+    useSpaceStore.setState({
+      dmChannels: [],
+      channelToSpaceMap: new Map([['chan-1', 'space-1']]),
+      channelPermissions: new Map([['chan-1', '1024']]),
+      members: [{ ...member('space-1', mira), nickname: 'Captain' }],
+      currentSpaceId: 'space-1',
+    });
+    render(<MessageInput channelId="chan-1" channelName="general" />);
+
+    const textbox = typeInComposer('hi @cap');
+    await act(async () => { fireEvent.keyDown(textbox, { key: 'Enter' }); });
+
+    expect(useComposerStore.getState().get('chan-1').draftText).toBe('hi <@mira> ');
+    expect(textbox).toHaveValue('hi @Captain ');
+  });
+});
