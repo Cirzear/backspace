@@ -179,7 +179,7 @@
     "manage": "管理",
     "done": "完成",
     "collectionHint": "点击即可发送，把喜欢的表情留在这里。",
-    "removeHint": "仅从收藏中移除，已发送的消息和回应不受影响。",
+    "manageHint": "重命名或移除收藏中的表情，已发送的消息和回应不受影响。",
     "emptyHint": "上传一张图片，让每次聊天都多一点你的风格。",
     "chooseImage": "选择图片",
     "cancel": "取消",
@@ -202,7 +202,12 @@
     "capacityLimit_other": "“我的表情”还可以添加 {{count}} 个。",
     "full": "“我的表情”已满。请先移除一个再添加。",
     "batchFailed_other": "有 {{count}} 张图片未能添加，仍保留在下方列表中。",
-    "uploadingProgress": "正在添加第 {{current}} 个，共 {{total}} 个…"
+    "uploadingProgress": "正在添加第 {{current}} 个，共 {{total}} 个…",
+    "rename": "重命名",
+    "renameNamed": "重命名 {{name}}",
+    "renameTitle": "重命名表情",
+    "search": "搜索表情",
+    "noResults": "未找到匹配的表情"
   },
   "poke": {
     "action": "戳一戳",

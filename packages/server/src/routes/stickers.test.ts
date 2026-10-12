@@ -8,7 +8,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
 import * as schema from '../db/schema.js';
-import { stickerUrl, MAX_STICKER_BYTES, MAX_PERSONAL_STICKERS, STICKER_UPLOADS_PER_MINUTE } from '@backspace/shared/src/stickers.js';
+import {
+  stickerUrl, normalizeStickerName, MAX_STICKER_BYTES, MAX_PERSONAL_STICKERS, MAX_STICKER_NAME_LENGTH, STICKER_UPLOADS_PER_MINUTE,
+} from '@backspace/shared/src/stickers.js';
 
 const settings = vi.hoisted(() => ({ uploadDir: '' }));
 let db: ReturnType<typeof drizzle<typeof schema>>;
@@ -96,7 +98,7 @@ describe('personal stickers', () => {
     expect(invalid.statusCode).toBe(400);
     expect(invalid.json()).toMatchObject({ code: 'validation_failed' });
     const blank = await app.inject({ method: 'POST', url: '/api/stickers', headers: { authorization: 'alice' }, payload: { name: '   ', image: 'eA==' } });
-    expect(blank.json()).toMatchObject({ code: 'validation_failed' });
+    expect(blank.json()).toMatchObject({ code: 'sticker_name_invalid', details: { max: 100 } });
     await expect(encodeSticker(Buffer.alloc(MAX_STICKER_BYTES + 1))).rejects.toThrow();
     const tooLarge = await app.inject({ method: 'POST', url: '/api/stickers', headers: { authorization: 'alice' },
       payload: { name: 'large', image: Buffer.alloc(MAX_STICKER_BYTES + 4096).toString('base64') } });
@@ -191,5 +193,53 @@ describe('personal stickers', () => {
     const metadata = await sharp(await encodeSticker(gif), { animated: true }).metadata();
     expect(metadata.pages).toBe(2);
     expect([metadata.width, metadata.pageHeight]).toEqual([512, 512]);
+  });
+
+  it('renames only the caller\'s own entry and stores the trimmed name', async () => {
+    const uploaded = (await upload()).json();
+    const collected = await app.inject({ method: 'POST', url: `/api/stickers/${uploaded.id}/collect`, headers: { authorization: 'bob' },
+      payload: { token: uploaded.token, name: 'Bob copy' } });
+    expect(collected.statusCode).toBe(200);
+    const rename = (user: string, name: string, id = uploaded.id) =>
+      app.inject({ method: 'PATCH', url: `/api/stickers/${id}`, headers: { authorization: user }, payload: { name } });
+
+    const renamed = await rename('alice', '  Renamed Happy  ');
+    expect(renamed.statusCode).toBe(200);
+    expect(renamed.json()).toEqual({ id: uploaded.id, name: 'Renamed Happy', token: uploaded.token });
+    const aliceList = await app.inject({ url: '/api/stickers', headers: { authorization: 'alice' } });
+    expect(aliceList.json()).toEqual([{ id: uploaded.id, name: 'Renamed Happy', token: uploaded.token }]);
+    // The same asset in another collection keeps that collection's name.
+    const bobList = await app.inject({ url: '/api/stickers', headers: { authorization: 'bob' } });
+    expect(bobList.json()).toEqual([expect.objectContaining({ id: uploaded.id, name: 'Bob copy' })]);
+
+    // An asset that is not in the caller's collection, and an unknown id, are both missing.
+    await app.inject({ method: 'DELETE', url: `/api/stickers/${uploaded.id}`, headers: { authorization: 'bob' } });
+    const notCollected = await rename('bob', 'Mine now');
+    expect(notCollected.statusCode).toBe(404);
+    expect(notCollected.json()).toMatchObject({ code: 'sticker_not_found' });
+    expect((await rename('alice', 'Unknown', '0'.repeat(64))).statusCode).toBe(404);
+    expect((await rename('alice', 'Bad id', 'not-a-hash')).statusCode).toBe(400);
+    expect((await app.inject({ method: 'PATCH', url: `/api/stickers/${uploaded.id}`, payload: { name: 'x' } })).statusCode).toBe(401);
+  });
+
+  it('refuses names that are blank, too long, multi-line or hold control characters', async () => {
+    const uploaded = (await upload()).json();
+    const refused = ['   ', 'two\nlines', 'tab\there', 'bidi\u202Eeman', '\u200B\u200B', ` ${'x'.repeat(MAX_STICKER_NAME_LENGTH + 1)}`];
+    for (const name of refused) {
+      const response = await app.inject({ method: 'PATCH', url: `/api/stickers/${uploaded.id}`, headers: { authorization: 'alice' }, payload: { name } });
+      expect(response.statusCode, JSON.stringify(name)).toBe(400);
+    }
+    const coded = await app.inject({ method: 'PATCH', url: `/api/stickers/${uploaded.id}`, headers: { authorization: 'alice' }, payload: { name: 'two\nlines' } });
+    expect(coded.json()).toMatchObject({ code: 'sticker_name_invalid', details: { max: MAX_STICKER_NAME_LENGTH } });
+    const list = await app.inject({ url: '/api/stickers', headers: { authorization: 'alice' } });
+    expect(list.json()).toEqual([expect.objectContaining({ name: 'Happy' })]);
+
+    // Upload and collect store names by the same rule.
+    const collect = await app.inject({ method: 'POST', url: `/api/stickers/${uploaded.id}/collect`, headers: { authorization: 'bob' },
+      payload: { token: uploaded.token, name: 'line\nbreak' } });
+    expect(collect.json()).toMatchObject({ code: 'sticker_name_invalid' });
+    expect(normalizeStickerName('  Café 🎉  ')).toBe('Café 🎉');
+    expect(normalizeStickerName('\u0007')).toBeUndefined();
+    expect(normalizeStickerName(42)).toBeUndefined();
   });
 });

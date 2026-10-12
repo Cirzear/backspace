@@ -183,7 +183,7 @@
     "manage": "Verwalten",
     "done": "Fertig",
     "collectionHint": "Wähle einen Sticker zum Senden.",
-    "removeHint": "Nur aus deiner Sammlung entfernen. Gesendete Nachrichten bleiben unverändert.",
+    "manageHint": "Sticker in deiner Sammlung umbenennen oder entfernen. Gesendete Nachrichten bleiben unverändert.",
     "emptyHint": "Lade ein Bild hoch und verleihe deinen Antworten eine persönliche Note.",
     "chooseImage": "Bild auswählen",
     "cancel": "Abbrechen",
@@ -210,7 +210,12 @@
     "full": "Deine Sammlung ist voll. Entferne einen Sticker, um einen neuen hinzuzufügen.",
     "batchFailed_one": "{{count}} Bild konnte nicht hinzugefügt werden. Es steht weiter unten in der Liste.",
     "batchFailed_other": "{{count}} Bilder konnten nicht hinzugefügt werden. Sie stehen weiter unten in der Liste.",
-    "uploadingProgress": "{{current}} von {{total}} wird hinzugefügt…"
+    "uploadingProgress": "{{current}} von {{total}} wird hinzugefügt…",
+    "rename": "Umbenennen",
+    "renameNamed": "{{name}} umbenennen",
+    "renameTitle": "Sticker umbenennen",
+    "search": "Sticker suchen",
+    "noResults": "Keine Sticker gefunden"
   },
   "poke": {
     "action": "Anstupsen",

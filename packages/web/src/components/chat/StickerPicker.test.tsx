@@ -1,14 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { StickerPicker } from './StickerPicker';
+import { StickerPicker, filterStickers } from './StickerPicker';
 import { StickerMessage } from './StickerMessage';
-import { api } from '../../api/client';
+import { api, HttpError } from '../../api/client';
 import { uploadSticker } from './stickerUpload';
 import { MAX_PERSONAL_STICKERS } from '@backspace/shared/src/stickers';
+import { useContextMenuStore } from '../../stores/contextMenuStore';
 
 vi.mock('../../api/client', async importOriginal => ({
   ...await importOriginal<typeof import('../../api/client')>(),
-  api: { stickers: { list: vi.fn(), remove: vi.fn(), collect: vi.fn() } },
+  api: { stickers: { list: vi.fn(), remove: vi.fn(), collect: vi.fn(), rename: vi.fn() } },
 }));
 vi.mock('./stickerUpload', () => ({ uploadSticker: vi.fn() }));
 vi.mock('../../stores/authStore', () => ({ useAuthStore: (selector: (s: unknown) => unknown) => selector({ user: { id: 'alice' } }) }));
@@ -25,6 +26,7 @@ beforeEach(() => {
   vi.mocked(api.stickers.list).mockResolvedValue([sticker]);
   vi.mocked(api.stickers.remove).mockResolvedValue({ success: true });
   vi.mocked(api.stickers.collect).mockResolvedValue(sticker);
+  vi.mocked(api.stickers.rename).mockImplementation(async (id, name) => ({ ...sticker, id, name }));
   vi.mocked(uploadSticker).mockResolvedValue(sticker);
 });
 
@@ -114,5 +116,106 @@ describe('sticker controls', () => {
     expect(preview).toHaveBeenCalledWith(sticker.token.slice('sticker:'.length));
     expect(screen.queryByRole('button', { name: 'Add to my stickers' })).not.toBeInTheDocument();
     expect(screen.getByRole('img')).toHaveAttribute('data-sticker-source', sticker.token);
+  });
+
+  it('filters by name, ignoring case, and says so when nothing matches', async () => {
+    const cat = { id: 'b'.repeat(64), name: 'CoolCat', token: `sticker:https://chat.test/api/stickers/assets/${'b'.repeat(64)}.webp` };
+    vi.mocked(api.stickers.list).mockResolvedValue([sticker, cat]);
+    render(<StickerPicker onSelect={vi.fn()} />);
+    await screen.findByRole('button', { name: 'Happy' });
+
+    const search = screen.getByRole('searchbox', { name: 'Search stickers' });
+    fireEvent.change(search, { target: { value: '  cool ' } });
+    expect(screen.getByRole('button', { name: 'CoolCat' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Happy' })).not.toBeInTheDocument();
+
+    fireEvent.change(search, { target: { value: 'nothing' } });
+    expect(screen.getByRole('status')).toHaveTextContent('No stickers found');
+    expect(screen.queryByRole('button', { name: 'CoolCat' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(search).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Happy' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'CoolCat' })).toBeInTheDocument();
+  });
+
+  it('offers no search on an empty collection', async () => {
+    vi.mocked(api.stickers.list).mockResolvedValue([]);
+    render(<StickerPicker onSelect={vi.fn()} />);
+    await screen.findByText('Your sticker collection starts here');
+    expect(screen.queryByRole('searchbox')).not.toBeInTheDocument();
+  });
+
+  it('renames from Manage mode in place of the grid and returns focus to the tile', async () => {
+    render(<StickerPicker onSelect={vi.fn()} />);
+    await screen.findByRole('button', { name: 'Happy' });
+    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
+    expect(screen.getByText(/Rename or remove stickers/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Rename Happy' }));
+
+    const form = screen.getByRole('form', { name: 'Rename sticker' });
+    const input = screen.getByLabelText('Sticker name');
+    expect(input).toHaveValue('Happy');
+    expect(input).toHaveFocus();
+    expect(screen.queryByRole('button', { name: 'Remove Happy' })).not.toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: '  Super Happy ' } });
+    fireEvent.submit(form);
+    await waitFor(() => expect(screen.queryByRole('form')).not.toBeInTheDocument());
+    expect(api.stickers.rename).toHaveBeenCalledWith(sticker.id, 'Super Happy');
+    expect(screen.getByRole('button', { name: 'Rename Super Happy' })).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'Super Happy' })).toBeInTheDocument();
+  });
+
+  it('leaves the form unchanged on Escape or Cancel, and offers no right-click menu on a tile', async () => {
+    render(<StickerPicker onSelect={vi.fn()} />);
+    const tile = await screen.findByRole('button', { name: 'Happy' });
+    fireEvent.contextMenu(tile);
+    expect(useContextMenuStore.getState().menu).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rename Happy' }));
+    fireEvent.keyDown(screen.getByLabelText('Sticker name'), { key: 'Escape' });
+    expect(screen.queryByRole('form')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Rename Happy' })).toHaveFocus();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rename Happy' }));
+    fireEvent.click(screen.getByText('Cancel', { selector: 'button' }));
+    expect(screen.queryByRole('form')).not.toBeInTheDocument();
+    expect(api.stickers.rename).not.toHaveBeenCalled();
+  });
+
+  it('checks the name before sending and keeps a refusal visible', async () => {
+    render(<StickerPicker onSelect={vi.fn()} />);
+    await screen.findByRole('button', { name: 'Happy' });
+    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Rename Happy' }));
+    const input = screen.getByLabelText('Sticker name');
+
+    fireEvent.change(input, { target: { value: 'two\u0007bell' } });
+    fireEvent.submit(screen.getByRole('form'));
+    expect(screen.getByRole('alert')).toHaveTextContent('Sticker names can be 1 to 100 characters on one line');
+    expect(api.stickers.rename).not.toHaveBeenCalled();
+
+    vi.mocked(api.stickers.rename).mockRejectedValueOnce(new HttpError(404, 'Sticker not found', undefined, 'sticker_not_found'));
+    fireEvent.change(input, { target: { value: 'Gone' } });
+    fireEvent.submit(screen.getByRole('form'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('That sticker no longer exists.');
+    expect(screen.getByRole('form', { name: 'Rename sticker' })).toBeInTheDocument();
+
+    // An unchanged name closes the form without a request.
+    vi.mocked(api.stickers.rename).mockClear();
+    fireEvent.change(input, { target: { value: ' Happy ' } });
+    fireEvent.submit(screen.getByRole('form'));
+    expect(screen.queryByRole('form')).not.toBeInTheDocument();
+    expect(api.stickers.rename).not.toHaveBeenCalled();
+  });
+});
+
+describe('filterStickers', () => {
+  it('matches a trimmed query anywhere in the name, ignoring case', () => {
+    expect(filterStickers([sticker], '   ')).toEqual([sticker]);
+    expect(filterStickers([sticker], 'APP')).toEqual([sticker]);
+    expect(filterStickers([sticker], 'sad')).toEqual([]);
   });
 });

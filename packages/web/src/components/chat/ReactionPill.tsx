@@ -13,6 +13,8 @@ import { useDismissOnEscape } from '../../hooks/useDismissOnEscape';
 import { getCanonicalUserView } from '../../utils/userViewLookup';
 import { parseFederatedUsername } from '../../utils/identity';
 import { isOwnReaction, reactionSentence, summarizeReactors } from './reactionSummary';
+import { useContextMenuStore } from '../../stores/contextMenuStore';
+import { buildImageMenuItems } from './imageMenuItems';
 
 interface ReactionPillProps {
   emoji: string;
@@ -103,12 +105,27 @@ export function ReactionPill({ emoji, reactions, origin, onToggle }: ReactionPil
   // and comes back.
   useDismissOnEscape(pending || tooltipOpen, hide);
 
+  // A sticker pill gets the image menu a sticker message gets ("Add to my
+  // stickers", save, copy) instead of the message menu. An emoji pill keeps
+  // the message menu.
+  const handleContextMenu = (e: React.MouseEvent) => {
+    if (!imageUrl) return;
+    e.preventDefault();
+    e.stopPropagation();
+    hide();
+    const items = buildImageMenuItems({
+      imageUrl, sourceUrl: imageUrl, stickerSource: emoji, stickerName: t('chat:stickers.sticker'),
+    });
+    useContextMenuStore.getState().open({ x: e.clientX, y: e.clientY }, items);
+  };
+
   return (
     <>
       <button
         ref={anchorRef}
         type="button"
         onClick={onToggle}
+        onContextMenu={handleContextMenu}
         onMouseEnter={show}
         onMouseLeave={hide}
         onFocus={(e) => {

@@ -1,3 +1,5 @@
+import { isVisibleSingleLine } from './constants.js';
+
 /** Namespaced values reuse message/reaction transport without colliding with native emoji. */
 export const STICKER_PREFIX = 'sticker:';
 export const MAX_STICKER_BYTES = 5 * 1024 * 1024;
@@ -10,6 +12,21 @@ export const MAX_STICKER_BATCH = 20;
 /** Uploads one account may send per minute. */
 export const STICKER_UPLOADS_PER_MINUTE = 30;
 export const STICKER_ID_PATTERN = /^[a-f0-9]{64}$/;
+
+/**
+ * The form a collection name is stored in, or `undefined` when the value is
+ * not one. A name is trimmed and refused when it trims to nothing, is longer
+ * than MAX_STICKER_NAME_LENGTH, or fails the rule nicknames follow (control
+ * characters, line breaks, bidirectional controls, nothing visible). The
+ * server applies it on upload, collect and rename; the rename dialog applies
+ * it before sending.
+ */
+export function normalizeStickerName(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > MAX_STICKER_NAME_LENGTH) return undefined;
+  return isVisibleSingleLine(trimmed) ? trimmed : undefined;
+}
 
 export interface PersonalSticker {
   id: string;

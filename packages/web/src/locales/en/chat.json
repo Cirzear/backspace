@@ -183,7 +183,7 @@
     "manage": "Manage",
     "done": "Done",
     "collectionHint": "Pick a sticker to send. Make this space your own.",
-    "removeHint": "Remove stickers from your collection. Existing messages stay unchanged.",
+    "manageHint": "Rename or remove stickers in your collection. Messages already sent stay unchanged.",
     "emptyHint": "Save your favorite moments as stickers, ready for your next reply.",
     "chooseImage": "Choose image",
     "cancel": "Cancel",
@@ -210,7 +210,12 @@
     "full": "Your collection is full. Remove a sticker to add another.",
     "batchFailed_one": "{{count}} image could not be added. It is still listed below.",
     "batchFailed_other": "{{count}} images could not be added. They are still listed below.",
-    "uploadingProgress": "Adding {{current}} of {{total}}…"
+    "uploadingProgress": "Adding {{current}} of {{total}}…",
+    "rename": "Rename",
+    "renameNamed": "Rename {{name}}",
+    "renameTitle": "Rename sticker",
+    "search": "Search stickers",
+    "noResults": "No stickers found"
   },
   "poke": {
     "action": "Poke",

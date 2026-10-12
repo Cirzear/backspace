@@ -180,6 +180,7 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   sticker_not_local: 'Only stickers from this instance can be added to a collection',
   sticker_not_found: 'Sticker not found',
   sticker_collection_full: 'A sticker collection holds at most {{max}} stickers',
+  sticker_name_invalid: 'Sticker names can be 1 to {{max}} characters on one line, with at least one visible character and no control characters.',
   // spaces
   space_owner_title_invalid: 'Owner titles can be 1 to {{max}} characters on one line, with at least one visible character and no control characters.',
   member_nickname_invalid: 'Nicknames can be at most {{max}} characters on one line, with at least one visible character and no control characters.',
