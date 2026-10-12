@@ -1,13 +1,16 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DmChannel, MessageWithUser, Space, User } from '@backspace/shared';
+import type { DmChannel, MemberWithUser, MessageWithUser, User } from '@backspace/shared';
 import { useAuthStore } from '../../stores/authStore';
 import { useSpaceStore } from '../../stores/spaceStore';
 import { useComposerStore } from '../../stores/composerStore';
 import { useChannelPokeStore } from '../../stores/channelPokeStore';
-import { useContextMenuStore, type ContextMenuItem } from '../../stores/contextMenuStore';
+import { useContextMenuStore } from '../../stores/contextMenuStore';
+import { useUIStore } from '../../stores/uiStore';
 import { PermissionBits } from '../../utils/permissions';
+import { ContextMenuRenderer } from '../ui/ContextMenuRenderer';
 import { Message } from './Message';
+import { MessageInput } from './MessageInput';
 
 vi.mock('../../hooks/useWebSocket', () => ({ wsSend: vi.fn().mockReturnValue(true) }));
 vi.mock('../../audio/AudioManager', () => ({
@@ -27,109 +30,129 @@ function makeUser(id: string, username: string, displayName: string | null): Use
   };
 }
 
+const HOST = 'https://host.test';
 const me = makeUser('me', 'alice', 'Alice');
-const bob = makeUser('bob', 'bob', 'Bob');
-const dm = { id: 'dm-1', ownerId: 'me', name: 'Chat', createdAt: 1, members: [me, bob], lastMessage: null } as unknown as DmChannel;
+// The space and the DM are on HOST: the ids in them are HOST's ids.
+const meOnHost = makeUser('me-host', 'alice@home.example', 'Alice');
+const bob = makeUser('bob-host', 'bob', 'Bob');
+const dm = { id: 'dm-1', ownerId: null, createdAt: 1, members: [meOnHost, bob], lastMessage: null } as unknown as DmChannel;
+const bobMember: MemberWithUser = { spaceId: 'space-1', userId: bob.id, nickname: 'Bobby', joinedAt: 1, user: bob, roles: [] };
 
-const space = {
-  id: 'space-1',
-  name: 'General Space',
-  ownerId: 'me',
-  _instanceOrigin: 'https://host.test',
-} as unknown as Space;
-
-function makeMessage(channelId: string, isDm: boolean): MessageWithUser {
+function makeMessage(channelId: string, isDm: boolean, author: User = bob): MessageWithUser {
   return {
     id: 'msg-1',
     channelId: isDm ? '' : channelId,
     dmChannelId: isDm ? channelId : '',
-    userId: bob.id,
+    userId: author.id,
     content: 'hello',
     createdAt: 1000,
-    user: bob,
+    user: author,
     attachments: [],
     embeds: [],
     reactions: [],
   } as unknown as MessageWithUser;
 }
 
+function renderChannel(channelId: string, message: MessageWithUser) {
+  return render(
+    <>
+      <Message message={message} isCompact={false} isFirstInGroup={true} previousMessageId={null} />
+      <MessageInput channelId={channelId} channelName="general" />
+      <ContextMenuRenderer />
+    </>,
+  );
+}
+
+function rightClickAvatar(container: HTMLElement, userId: string) {
+  const avatar = container.querySelector(`[data-poke-user="${userId}"]`);
+  expect(avatar).not.toBeNull();
+  fireEvent.contextMenu(avatar!, { clientX: 20, clientY: 30 });
+}
+
+function menuLabels(): string[] {
+  return screen.queryAllByRole('menu').flatMap((menu) => Array.from(menu.querySelectorAll('button'), (b) => b.textContent ?? ''));
+}
+
+async function nextFrame() {
+  await act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+}
+
+beforeEach(() => {
+  Element.prototype.scrollIntoView = vi.fn();
+  useAuthStore.setState({ user: me });
+  useAuthStore.getState().recordMyRow(HOST, meOnHost.id);
+  useUIStore.setState({ isMobile: false });
+  useSpaceStore.setState({
+    currentSpaceId: 'space-1',
+    dmChannels: [dm],
+    members: [bobMember],
+    channelToSpaceMap: new Map([['space-ch-1', 'space-1']]),
+    channelOriginMap: new Map([['space-ch-1', HOST], [dm.id, HOST]]),
+    channelPermissions: new Map([['space-ch-1', PermissionBits.SEND_MESSAGES]]),
+  });
+  useComposerStore.setState({ states: new Map() });
+  useChannelPokeStore.getState().reset();
+});
+
+afterEach(() => {
+  act(() => useContextMenuStore.getState().close());
+  useSpaceStore.setState({
+    currentSpaceId: null, dmChannels: [], members: [],
+    channelToSpaceMap: new Map(), channelOriginMap: new Map(), channelPermissions: new Map(),
+  });
+  useAuthStore.setState({ user: null, myRowIds: new Map() });
+});
+
 describe('Message author context menu', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    useAuthStore.setState({ user: me });
-    useSpaceStore.setState({
-      currentSpaceId: null,
-      spaces: [space],
-      dmChannels: [dm],
-      channelOriginMap: new Map([['space-ch-1', 'https://host.test'], ['dm-1', '']]),
-      channelPermissions: new Map([['space-ch-1', PermissionBits.SEND_MESSAGES]]),
-    });
-    useComposerStore.setState({ states: new Map() });
-    useChannelPokeStore.getState().reset();
+  it('mentions a DM author: the token goes into the draft, the composer shows the name, focused with the caret at the end', async () => {
+    useComposerStore.getState().setDraft(dm.id, 'hey');
+    const { container } = renderChannel(dm.id, makeMessage(dm.id, true));
+
+    rightClickAvatar(container, bob.id);
+    expect(menuLabels()).toEqual(['@Bob']);
+    fireEvent.click(screen.getByRole('button', { name: '@Bob' }));
+    await nextFrame();
+
+    expect(useComposerStore.getState().get(dm.id).draftText).toBe('hey <@bob-host> ');
+    const textbox = screen.getByRole('textbox') as HTMLTextAreaElement;
+    expect(textbox).toHaveValue('hey @Bob ');
+    expect(textbox).toHaveFocus();
+    expect(textbox.selectionStart).toBe('hey @Bob '.length);
+    expect(textbox.selectionEnd).toBe('hey @Bob '.length);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 
-  afterEach(() => {
-    useContextMenuStore.getState().close();
+  it('offers Mention by nickname and Poke in a space channel whose host offers pokes, from the name too', async () => {
+    useChannelPokeStore.getState().setHost(HOST, true);
+    renderChannel('space-ch-1', makeMessage('space-ch-1', false));
+
+    fireEvent.contextMenu(screen.getAllByText('Bobby')[0]!, { clientX: 20, clientY: 30 });
+    expect(menuLabels()).toEqual(['@Bobby', 'Poke']);
+    fireEvent.click(screen.getByRole('button', { name: '@Bobby' }));
+    await nextFrame();
+
+    expect(useComposerStore.getState().get('space-ch-1').draftText).toBe('<@bob-host> ');
+    expect(screen.getByRole('textbox')).toHaveValue('@Bobby ');
   });
 
-  it('does not open author context menu on DM author right-click', () => {
-    const openSpy = vi.spyOn(useContextMenuStore.getState(), 'open');
-    const msg = makeMessage('dm-1', true);
-    const { container } = render(
-      <Message message={msg} isCompact={false} isFirstInGroup={true} previousMessageId={null} />
-    );
-
-    const avatar = container.querySelector('[data-poke-user="bob"]');
-    expect(avatar).not.toBeNull();
-    fireEvent.contextMenu(avatar!);
-
-    expect(openSpy).toHaveBeenCalled();
-    const items = openSpy.mock.calls[0]![1] as ContextMenuItem[];
-    // DM author right-click bubbles to message menu, and does not contain author actions
-    expect(items.some((i) => i.key === 'mention-author' || i.key === 'poke-author')).toBe(false);
-  });
-
-  it('includes both mention and poke in space channel when poke is supported', () => {
-    useChannelPokeStore.getState().setHost('https://host.test', true);
-    useSpaceStore.setState({ currentSpaceId: 'space-1' });
-
-    const openSpy = vi.spyOn(useContextMenuStore.getState(), 'open');
-    const msg = makeMessage('space-ch-1', false);
-    const { container } = render(
-      <Message message={msg} isCompact={false} isFirstInGroup={true} previousMessageId={null} />
-    );
-
-    const avatar = container.querySelector('[data-poke-user="bob"]');
-    expect(avatar).not.toBeNull();
-    fireEvent.contextMenu(avatar!);
-
-    expect(openSpy).toHaveBeenCalled();
-    const items = openSpy.mock.calls[0]![1] as ContextMenuItem[];
-    expect(items.some((i) => i.key === 'mention-author' && i.label === '@Bob')).toBe(true);
-    expect(items.some((i) => i.key === 'poke-author')).toBe(true);
-
-    // Clicking mention-author inserts mention token in composer
-    const mentionAction = items.find((i) => i.key === 'mention-author');
-    if (mentionAction?.type === 'action') {
-      mentionAction.onClick();
-      expect(useComposerStore.getState().get('space-ch-1').draftText).toContain('<@bob>');
-    }
-  });
-
-  it('does not open author menu without send permissions', () => {
-    // Revoke send permissions
+  it('opens the message menu instead where the viewer cannot send', () => {
     useSpaceStore.setState({ channelPermissions: new Map([['space-ch-1', 0n]]) });
-    const openSpy = vi.spyOn(useContextMenuStore.getState(), 'open');
-    const msg = makeMessage('space-ch-1', false);
-    render(
-      <Message message={msg} isCompact={false} isFirstInGroup={true} previousMessageId={null} />
-    );
+    useChannelPokeStore.getState().setHost(HOST, true);
+    const { container } = renderChannel('space-ch-1', makeMessage('space-ch-1', false));
 
-    const nameEl = screen.getByText('Bob');
-    fireEvent.contextMenu(nameEl);
+    rightClickAvatar(container, bob.id);
+    const labels = menuLabels();
+    expect(labels.length).toBeGreaterThan(0);
+    expect(labels).not.toContain('@Bobby');
+    expect(labels).not.toContain('Poke');
+  });
 
-    expect(openSpy).toHaveBeenCalled();
-    const items = openSpy.mock.calls[0]![1] as ContextMenuItem[];
-    expect(items.some((i) => i.key === 'mention-author' || i.key === 'poke-author')).toBe(false);
+  it("opens the message menu on the viewer's own DM message", () => {
+    const { container } = renderChannel(dm.id, makeMessage(dm.id, true, meOnHost));
+
+    rightClickAvatar(container, meOnHost.id);
+    const labels = menuLabels();
+    expect(labels.length).toBeGreaterThan(0);
+    expect(labels).not.toContain('@Alice');
   });
 });

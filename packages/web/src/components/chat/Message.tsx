@@ -1,8 +1,6 @@
 import { isStickerMessage } from '../../utils/stickerMessages';
 import { StickerMessage } from './StickerMessage';
-import { insertComposerMention } from './useComposerMention';
-import { useChannelPokeStore } from '../../stores/channelPokeStore';
-import { wsSend } from '../../hooks/useWebSocket';
+import { useAuthorMenu } from './useAuthorMenu';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -443,34 +441,14 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     ? { spaceId: currentSpaceId, userId: message.userId }
     : undefined;
 
-  const supportsPoke = useChannelPokeStore((s) => s.hosts[messageOrigin] === true);
-  const handleAuthorMenu = (e: React.MouseEvent) => {
-    if (isDmMessage || pending || !message.user || !canSendMessages) return;
-    // Do not bubble into the message menu: author actions are a separate interaction.
-    e.preventDefault();
-    e.stopPropagation();
-    const items: import('../../stores/contextMenuStore').ContextMenuItem[] = [
-      {
-        type: 'action',
-        key: 'mention-author',
-        label: '@' + displayName,
-        onClick: () => insertComposerMention(channelKey, message.userId),
-      },
-    ];
-    if (supportsPoke) {
-      items.push({
-        type: 'action',
-        key: 'poke-author',
-        label: t('chat:poke.action'),
-        onClick: () => {
-          if (!wsSend({ type: 'channel_poke', channelId: channelKey, targetUserId: message.userId }, messageOrigin)) {
-            useUIStore.getState().addToast(t('chat:poke.disconnected'), 'warning');
-          }
-        },
-      });
-    }
-    useContextMenuStore.getState().open({ x: e.clientX, y: e.clientY }, items);
-  };
+  const handleAuthorMenu = useAuthorMenu({
+    channelId: channelKey,
+    authorId: message.userId,
+    origin: messageOrigin,
+    isDm: isDmMessage,
+    canSend: canSendMessages && !isDeadDmThread && !pending,
+    isAuthor,
+  });
 
   const handleUsernameClick = (e: React.MouseEvent) => {
     if (!message.user) return;
