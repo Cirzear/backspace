@@ -177,7 +177,21 @@ export async function stickerRoutes(app: FastifyInstance): Promise<void> {
     const asset = getDb().select().from(schema.stickerAssets).where(eq(schema.stickerAssets.id, id)).get();
     // Resolve from the canonical stored key, never from the request path parameter.
     if (!asset || !STICKER_ID_PATTERN.test(asset.id)) return sendError(reply, 404, 'sticker_not_found');
-    return reply.type('image/webp').header('X-Content-Type-Options', 'nosniff')
-      .header('Cache-Control', 'public, max-age=31536000, immutable').send(await readFile(assetPath(asset.id)));
+    let bytes: Buffer;
+    try {
+      bytes = await readFile(assetPath(asset.id));
+    } catch (error) {
+      // A row whose file is gone (removed by hand, or lost with a restore) is a missing sticker, not a server fault.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return sendError(reply, 404, 'sticker_not_found');
+      throw error;
+    }
+    // The same sandbox as a served upload (routes/uploads.ts): the bytes are
+    // always a re-encoded WebP, but the response never runs as a document.
+    return reply.type('image/webp')
+      .header('Cache-Control', 'public, max-age=31536000, immutable')
+      .header('X-Content-Type-Options', 'nosniff')
+      .header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'")
+      .header('X-Frame-Options', 'DENY')
+      .send(bytes);
   });
 }

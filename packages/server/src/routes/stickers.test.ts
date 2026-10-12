@@ -79,6 +79,8 @@ describe('personal stickers', () => {
     const asset = await app.inject({ url: new URL(stickerUrl(sticker.token)!).pathname });
     expect(asset.headers['content-type']).toBe('image/webp');
     expect(asset.headers['x-content-type-options']).toBe('nosniff');
+    expect(asset.headers['content-security-policy']).toBe("default-src 'none'; style-src 'unsafe-inline'; img-src 'self'");
+    expect(asset.headers['x-frame-options']).toBe('DENY');
     expect((await sharp(asset.rawPayload).metadata()).format).toBe('webp');
   });
 
@@ -162,6 +164,14 @@ describe('personal stickers', () => {
     const small = await sharp({ create: { width: 40, height: 20, channels: 4, background: 'green' } }).png().toBuffer();
     const smallMetadata = await sharp(await encodeSticker(small)).metadata();
     expect([smallMetadata.width, smallMetadata.height]).toEqual([40, 20]);
+  });
+
+  it('answers 404 when an asset row has lost its file', async () => {
+    const { id, token } = (await upload()).json();
+    await rm(path.join(settings.uploadDir, 'stickers', `${id}.webp`));
+    const response = await app.inject({ url: new URL(stickerUrl(token)!).pathname });
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({ code: 'sticker_not_found' });
   });
 
   it('preserves animation frames', async () => {
