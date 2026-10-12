@@ -604,9 +604,9 @@
       "owner": "Dono"
     },
     "ownerTitle": {
-      "edit": "Editar título do proprietário",
-      "label": "Título do proprietário",
-      "hint": "Use de 1 a {{max}} caracteres em uma única linha.",
+      "edit": "Editar título do dono",
+      "label": "Título do dono",
+      "hint": "Visível para todos os membros deste espaço. De 1 a {{max}} caracteres; as permissões não mudam.",
       "reset": "Restaurar título padrão"
     },
     "menu": {

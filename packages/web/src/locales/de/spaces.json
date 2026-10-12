@@ -594,9 +594,9 @@
       "owner": "Besitzer"
     },
     "ownerTitle": {
-      "edit": "Inhabertitel bearbeiten",
-      "label": "Inhabertitel",
-      "hint": "Für alle Mitglieder dieses Spaces sichtbar. 1–{{max}} Zeichen; Berechtigungen bleiben unverändert.",
+      "edit": "Besitzertitel bearbeiten",
+      "label": "Besitzertitel",
+      "hint": "Für alle Mitglieder dieses Spaces sichtbar. 1 bis {{max}} Zeichen; Berechtigungen bleiben unverändert.",
       "reset": "Standard wiederherstellen"
     },
     "menu": {
