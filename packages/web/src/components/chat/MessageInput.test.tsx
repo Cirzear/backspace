@@ -196,9 +196,24 @@ it('offers collection only in the sticker context menu and keeps existing messag
   fireEvent.contextMenu(screen.getByAltText('Sticker'));
   const items = useContextMenuStore.getState().menu!.items;
   expect(items.map(item => item.key)).toEqual(expect.arrayContaining(['collect-sticker', 'save-image', 'copy-image', 'reply', 'delete']));
+  // A sticker's content is a token: it cannot be edited or copied as text.
+  expect(items.map(item => item.key)).not.toContain('edit');
+  expect(items.find(item => item.key === 'copy-text')).toMatchObject({ hidden: true });
   const item = items.find(item => item.key === 'collect-sticker');
   await act(async () => { if (item?.type === 'action') await item.onClick(); });
   expect(collect).toHaveBeenCalledWith({ id: 'a'.repeat(64), token, name: 'Sticker' });
+});
+
+it('draws a sticker once even when an older instance unfurled its asset URL', () => {
+  const token = `sticker:https://chat.test/api/stickers/assets/${'a'.repeat(64)}.webp`;
+  const assetUrl = token.slice('sticker:'.length);
+  const embed = {
+    id: 'embed-1', messageId: ownMessage.id, dmMessageId: null, url: assetUrl, embedType: 'image' as const,
+    provider: null, title: null, description: null, image: assetUrl, embedUrl: null, width: 8, height: 8, color: null, createdAt: 1,
+  };
+  const { container } = render(<Message message={{ ...ownMessage, content: token, embeds: [embed] }} isCompact={false} isFirstInGroup previousMessageId={null} />);
+  // querySelectorAll, not getAllByRole: an embed image has an empty alt and so no img role.
+  expect([...container.querySelectorAll('img')].filter(img => img.getAttribute('src') === assetUrl)).toHaveLength(1);
 });
 
 describe('MessageInput mention display', () => {

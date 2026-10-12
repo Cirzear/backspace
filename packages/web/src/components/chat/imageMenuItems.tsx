@@ -1,4 +1,4 @@
-import { stickerUrl } from '@backspace/shared/src/stickers';
+import { stickerIdOf, stickerUrl } from '@backspace/shared/src/stickers';
 import type { ContextMenuAction, ContextMenuItem } from '../../stores/contextMenuStore';
 import { saveImage, copyImageToClipboard } from '../../utils/imageActions';
 import { useUIStore } from '../../stores/uiStore';
@@ -35,7 +35,7 @@ function collectStickerItem(source: string, name: string): ContextMenuAction | n
       try {
         if (sticker) {
           // The server validates its canonical origin; the browser's development origin may differ.
-          await api.stickers.collect({ id: url.pathname.split('/').pop()!.replace('.webp', ''), token: source, name });
+          await api.stickers.collect({ id: stickerIdOf(source)!, token: source, name });
         } else {
           const response = await fetch(url.href);
           await uploadSticker(await readStickerImage(response), name);

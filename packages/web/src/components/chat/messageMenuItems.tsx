@@ -2,6 +2,7 @@ import React from 'react';
 import type { ContextMenuItem } from '../../stores/contextMenuStore';
 import type { MessageWithUser } from '@backspace/shared';
 import { buildImageMenuItems } from './imageMenuItems';
+import { isStickerMessage } from '../../utils/stickerMessages';
 import { useUIStore } from '../../stores/uiStore';
 import { useTransferStore } from '../../stores/transferStore';
 import i18n from '../../i18n';
@@ -190,7 +191,7 @@ export function buildMessageMenuItems(params: MessageMenuParams): ContextMenuIte
     key: 'copy-text',
     type: 'action',
     label: i18n.t('chat:menu.copyText'),
-    hidden: !message.content || !!sourceUrl,
+    hidden: !message.content || !!sourceUrl || isStickerMessage(message.content),
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
         <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" />
@@ -222,8 +223,8 @@ export function buildMessageMenuItems(params: MessageMenuParams): ContextMenuIte
 
   items.push({ key: 'unread-sep', type: 'separator' });
 
-  // ── Edit Message (author only) ──────────────────────────────────────────
-  if (isAuthor) {
+  // ── Edit Message (author only; a sticker's content is a token, not text) ──
+  if (isAuthor && !isStickerMessage(message.content)) {
     items.push({
       key: 'edit',
       type: 'action',

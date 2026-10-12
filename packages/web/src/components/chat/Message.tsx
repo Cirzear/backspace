@@ -1,4 +1,4 @@
-import { stickerUrl } from '@backspace/shared/src/stickers';
+import { isStickerMessage } from '../../utils/stickerMessages';
 import { StickerMessage } from './StickerMessage';
 import { useChannelPokeMenu } from './useChannelPokeMenu';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
@@ -302,6 +302,10 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
   }, []);
 
   const isGifOnly = isGifOnlyMessage(message.content);
+  // A sticker draws its own image: no edit (its content is a token, not
+  // text), and no embed (an older instance unfurls the asset URL into one).
+  const isSticker = isStickerMessage(message.content);
+  const canEdit = isAuthor && !isSticker;
   const imageEmbedSourceUrl = isGifOnly ? null : getImageEmbedSourceUrl(message.content, message.embeds || []);
   // sourceUrl: the original URL for context menu Copy/Open Link actions
   const sourceUrl = isGifOnly
@@ -624,7 +628,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
               <>
                 {message.content && (
                   <div className="text-txt-message text-[15px] leading-[1.5] break-words whitespace-pre-wrap selection:bg-accent-primary/30">
-                    {stickerUrl(message.content)
+                    {isSticker
                       ? <StickerMessage token={message.content} />
                       : <MarkdownRenderer content={message.content} channelId={mentionChannelId} />}
                     {message.editedAt && (
@@ -634,7 +638,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
                 )}
 
                 {/* Embeds */}
-                {!isEditing && message.embeds && message.embeds.length > 0 && (
+                {!isEditing && !isSticker && message.embeds && message.embeds.length > 0 && (
                   <div className="flex flex-col gap-2 mt-1">
                     {message.embeds.map((embed) => (
                       <EmbedRenderer key={embed.id} embed={embed} />
@@ -783,7 +787,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
               <path d="M10 9V5L3 12L10 19V14.9C15 14.9 18.5 16.5 21 20C20 15 17 10 10 9Z" />
             </svg>
           </button>
-          {isAuthor && (
+          {canEdit && (
             <button
               onClick={startEditing}
               className="px-2 h-full text-txt-tertiary hover:text-txt-primary hover:bg-interactive-hover transition-all flex items-center justify-center"
