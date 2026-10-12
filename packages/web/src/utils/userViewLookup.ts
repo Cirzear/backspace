@@ -46,7 +46,19 @@ function viewOf(row: User, entry: UserViewEntry | undefined): User {
  * cache updates.
  */
 export function getCanonicalUserView(row: User, origin: string): User {
-  return viewOf(row, useSpaceStore.getState().userViews.get(userKey(row, origin)));
+  return canonicalUserViewIn(useSpaceStore.getState().userViews, row, origin);
+}
+
+/**
+ * `getCanonicalUserView` against a `userViews` map the caller already holds,
+ * for a memoised lookup that subscribed to the map and must read the same one.
+ */
+export function canonicalUserViewIn(
+  userViews: ReadonlyMap<string, UserViewEntry>,
+  row: User,
+  origin: string,
+): User {
+  return viewOf(row, userViews.get(userKey(row, origin)));
 }
 
 /**

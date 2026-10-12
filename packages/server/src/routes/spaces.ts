@@ -24,7 +24,8 @@ import {
 import { rolesForViewer, memberRolesView } from '../utils/permissionDataView.js';
 import { spaceBanRoutes } from './spaceBans.js';
 import { spaceInviteRoutes } from './spaceInvites.js';
-import { listSpaceMemberRoutes, removeSpaceMemberRoutes, updateSpaceMemberRoutes } from './spaceMembers.js';
+import { listSpaceMemberRoutes, removeSpaceMemberRoutes } from './spaceMembers.js';
+import { updateSpaceMemberRoutes } from './spaceMemberUpdate.js';
 import { spaceRoleRoutes } from './spaceRoles.js';
 import { rowToSpace } from './spaceSerialization.js';
 import { deleteSpaceRoutes, transferSpaceRoutes, updateSpaceRoutes } from './spaceUpdates.js';

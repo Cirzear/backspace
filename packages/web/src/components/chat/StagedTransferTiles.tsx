@@ -1,24 +1,19 @@
-import React from 'react';
 import { useTranslation } from 'react-i18next';
+import { useTransferStore, type Transfer } from '../../stores/transferStore';
 import { AttachmentProgress } from './AttachmentProgress';
-import type { Transfer } from '../../stores/transferStore';
 
 interface StagedTransferTilesProps {
   stagedTransfers: Transfer[];
-  previewUrls: Map<string, string>;
-  onPause: (id: string) => void;
-  onResume: (id: string) => void;
-  onRemove: (id: string) => void;
+  /** In-session image previews. MessageInput creates and revokes these URLs. */
+  previewUrls: ReadonlyMap<string, string>;
+  /** Unstages the transfer, cancelling its upload when it has not finished. */
+  onRemove: (transferId: string) => void;
 }
 
-export function StagedTransferTiles({
-  stagedTransfers,
-  previewUrls,
-  onPause,
-  onResume,
-  onRemove,
-}: StagedTransferTilesProps) {
+export function StagedTransferTiles({ stagedTransfers, previewUrls, onRemove }: StagedTransferTilesProps) {
   const { t } = useTranslation('chat');
+  const pauseUpload = useTransferStore((s) => s.pauseUpload);
+  const resumeUpload = useTransferStore((s) => s.resumeUpload);
 
   if (stagedTransfers.length === 0) return null;
 
@@ -62,23 +57,23 @@ export function StagedTransferTiles({
               </div>
             )}
 
-            {/* Clip the progress overlay, not the completed remove chip that overlaps the tile. */}
+            {/* Clip the overlay, not the remove chip that extends beyond the tile. */}
             {showOverlay && (
-              <div className="absolute inset-0 rounded-inherit overflow-hidden">
+              <div className="absolute inset-0 rounded-lg overflow-hidden">
                 <AttachmentProgress
                   loaded={transfer.progress.loaded}
                   total={transfer.progress.total}
                   state={transfer.state}
                   filename={transfer.file.name}
                   size="tile"
-                  onPause={transfer.state === 'active' ? () => onPause(transfer.id) : undefined}
-                  onResume={transfer.state === 'paused' ? () => void onResume(transfer.id) : undefined}
+                  onPause={transfer.state === 'active' ? () => pauseUpload(transfer.id) : undefined}
+                  onResume={transfer.state === 'paused' ? () => void resumeUpload(transfer.id) : undefined}
                   onAbort={() => onRemove(transfer.id)}
                 />
               </div>
             )}
 
-            {/* Final-state remove button (top-right rose chip) — only when completed */}
+            {/* Remove chip, shown once the upload has completed. */}
             {isFinal && (
               <button
                 onClick={() => onRemove(transfer.id)}

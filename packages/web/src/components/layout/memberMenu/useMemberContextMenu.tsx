@@ -1,4 +1,4 @@
-import { useEffect, useState, type MouseEvent } from 'react';
+import { useEffect, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import type { MemberWithUser, User } from '@backspace/shared';
@@ -6,16 +6,29 @@ import { useContextMenuStore, type ContextMenuItem, type ContextMenuCheckbox } f
 import { getMyUserIdForOrigin, useSpaceStore, type TaggedSpace } from '../../../stores/spaceStore';
 import { useUIStore } from '../../../stores/uiStore';
 import { PermissionBits, hasPermissionBit } from '../../../utils/permissions';
-import { deliveringHost } from '../../../utils/identity';
+import { viewerCanActOn, viewerCanEditMemberRoles, viewerCanManageRoleAt } from '../../../utils/roleHierarchy';
 import { changeMemberRole, getCurrentMember, isRoleWritePending, subscribeMemberRoles, type MemberTarget } from './memberRoleActions';
 import { friendshipMenuItems, runMemberAction, sendMemberMessage } from './memberSocialActions';
 import { MemberNicknameDialog } from './MemberNicknameDialog';
 import { MemberRemovalDialog } from './MemberRemovalDialog';
+import { spaceMemberName, userDisplayName } from '../../../utils/identity';
 
-type MemberDialog = { target: MemberTarget; nickname: string | null; name: string; action: 'nickname' | 'kick' | 'ban' };
+type MemberDialog = {
+  target: MemberTarget;
+  nickname: string | null;
+  /** The member's name in this space (nickname or account name). */
+  name: string;
+  /** The account name, shown when there is no nickname. */
+  accountName: string;
+  self: boolean;
+  action: 'nickname' | 'kick' | 'ban';
+};
 
 function roleMenuItems(target: MemberTarget): ContextMenuCheckbox[] {
-  return useSpaceStore.getState().roles.filter(r => r.id !== target.spaceId).sort((a, b) => b.position - a.position).map(role => ({
+  const { spaces, members, roles } = useSpaceStore.getState();
+  const space = spaces.find((item) => item.id === target.spaceId);
+  // Mirror the upstream hierarchy gate; the server still authorizes every write.
+  return roles.filter(r => r.spaceId === target.spaceId && r.id !== target.spaceId && space && viewerCanManageRoleAt(space, members, r.position)).sort((a, b) => b.position - a.position).map(role => ({
     type: 'checkbox', key: role.id, label: role.name,
     subscribe: subscribeMemberRoles,
     getChecked: () => !!getCurrentMember(target)?.roles?.some(r => r.id === role.id),
@@ -27,36 +40,23 @@ function roleMenuItems(target: MemberTarget): ContextMenuCheckbox[] {
 function memberMenuPermissions(space: TaggedSpace, member: MemberWithUser) {
   const self = getMyUserIdForOrigin(space._instanceOrigin) === member.userId;
   const protectedMember = self || member.userId === space.ownerId;
-  const permissions = useSpaceStore.getState().spacePermissions.get(space.id);
+  const { members, roles, spacePermissions } = useSpaceStore.getState();
+  const permissions = spacePermissions.get(space.id);
+  const canModerate = viewerCanActOn(space, members, member);
   const can = (bit: bigint) => hasPermissionBit(permissions, bit);
   return {
     self,
-    nickname: self || (!protectedMember && can(PermissionBits.MANAGE_SPACE)),
-    roles: !protectedMember && can(PermissionBits.MANAGE_ROLES),
-    kick: !protectedMember && can(PermissionBits.KICK_MEMBERS),
-    ban: !protectedMember && can(PermissionBits.BAN_MEMBERS),
+    // Another member's nickname: MANAGE_SPACE and a higher rank, as the server checks.
+    nickname: self || (!protectedMember && canModerate && can(PermissionBits.MANAGE_SPACE)),
+    roles: viewerCanEditMemberRoles(space, members, roles, permissions, member),
+    kick: !protectedMember && canModerate && can(PermissionBits.KICK_MEMBERS),
+    ban: !protectedMember && canModerate && can(PermissionBits.BAN_MEMBERS),
   };
-}
-
-function memberSocialIdentity(target: MemberTarget, member: MemberWithUser, canonical: User): User {
-  // Management uses the instance-local ID; social actions use the home address.
-  return {
-    ...canonical, id: member.userId, homeUserId: member.user.homeUserId ?? member.userId,
-    homeInstance: member.user.homeInstance || (target.origin ? deliveringHost(target.origin) : null), username: member.user.username
-  };
-}
-
-function useSafeNavigate(): (path: string) => void {
-  try {
-    return useNavigate();
-  } catch {
-    return () => {};
-  }
 }
 
 export function useMemberContextMenu(space: TaggedSpace | undefined) {
   const { t } = useTranslation(['spaces', 'social', 'common']);
-  const navigate = useSafeNavigate();
+  const navigate = useNavigate();
   const [dialog, setDialog] = useState<MemberDialog | null>(null);
   const spaceId = space?.id;
   const origin = space?._instanceOrigin;
@@ -67,18 +67,25 @@ export function useMemberContextMenu(space: TaggedSpace | undefined) {
     return () => { useContextMenuStore.getState().close(); };
   }, [spaceId, origin]);
 
-  const open = (event: MouseEvent, member: MemberWithUser, canonical: User) => {
+  const open = (event: MouseEvent | KeyboardEvent, member: MemberWithUser, canonical: User) => {
     event.preventDefault();
     event.stopPropagation();
     if (!space) return;
     useUIStore.getState().closeUserProfile();
     const anchor = event.currentTarget.getBoundingClientRect();
+    // A right click opens the menu at the pointer. The keyboard (the menu key
+    // or Shift+F10, which some browsers report as a contextmenu event at 0,0)
+    // opens it under the row.
+    const pointer = 'clientX' in event && (event.clientX !== 0 || event.clientY !== 0)
+      ? { x: event.clientX, y: event.clientY }
+      : { x: anchor.left + 16, y: anchor.bottom };
     const target = { origin: space._instanceOrigin, spaceId: space.id, userId: member.userId };
     const allowed = memberMenuPermissions(space, member);
     const showDialog = (action: MemberDialog['action']) => setDialog({
-      target, action, nickname: member.nickname, name: member.nickname ?? canonical.displayName ?? canonical.username,
+      target, action, nickname: member.nickname, self: allowed.self,
+      name: spaceMemberName(member, canonical), accountName: userDisplayName(canonical),
     });
-    const user = memberSocialIdentity(target, member, canonical);
+    const user = member.user;
     const roles = roleMenuItems(target);
     const items: ContextMenuItem[] = [
       {
@@ -88,9 +95,9 @@ export function useMemberContextMenu(space: TaggedSpace | undefined) {
       },
       {
         type: 'action', key: 'message', label: t('social:profile.sendMessage'), hidden: allowed.self,
-        onClick: () => { void runMemberAction(() => sendMemberMessage(user, navigate, target.origin)); }
+        onClick: () => { void runMemberAction(() => sendMemberMessage(user, target.origin, navigate)); }
       },
-      ...(allowed.self ? [] : friendshipMenuItems(user, t)),
+      ...(allowed.self ? [] : friendshipMenuItems(user, target.origin, t)),
       { type: 'separator', key: 'member-separator' },
       {
         type: 'action', key: 'nickname', label: t('spaces:members.menu.nickname'), hidden: !allowed.nickname,
@@ -111,12 +118,15 @@ export function useMemberContextMenu(space: TaggedSpace | undefined) {
         hidden: !allowed.ban, onClick: () => showDialog('ban')
       },
     ];
-    useContextMenuStore.getState().open({ x: event.clientX, y: event.clientY }, items);
+    useContextMenuStore.getState().open(pointer, items);
   };
 
   let dialogs = null;
   if (dialog?.action === 'nickname') {
-    dialogs = <MemberNicknameDialog target={dialog.target} nickname={dialog.nickname} onClose={() => setDialog(null)} />;
+    dialogs = (
+      <MemberNicknameDialog target={dialog.target} nickname={dialog.nickname} accountName={dialog.accountName}
+        self={dialog.self} onClose={() => setDialog(null)} />
+    );
   } else if (dialog) {
     dialogs = <MemberRemovalDialog target={dialog.target} action={dialog.action} name={dialog.name} onClose={() => setDialog(null)} />;
   }

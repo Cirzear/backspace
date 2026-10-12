@@ -8,7 +8,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { Avatar } from '../ui/Avatar';
 import { ActivityCard, hasRichActivity, getActivityAccentClass } from '../ui/ActivityCard';
 import { getPrimaryActivity } from '@backspace/shared/src/activities.js';
-import { parseFederatedUsername, isFederationGlobeApplicable, userDisplayName } from '../../utils/identity';
+import { parseFederatedUsername, isFederationGlobeApplicable, spaceMemberName } from '../../utils/identity';
 import { useSpaceOrigin } from '../../hooks/useSpaceOrigin';
 import { useCanonicalUserView } from '../../utils/userViewLookup';
 import { MobileScreenHeader } from './MobileScreenHeader';
@@ -34,7 +34,7 @@ function MobileMemberRow({
 }) {
   const origin = useSpaceOrigin(member.spaceId);
   const canonical = useCanonicalUserView(member.user, origin);
-  const displayName = userDisplayName(canonical);
+  const displayName = spaceMemberName(member, canonical);
 
   const rowClass = isRichActivity
     ? `flex items-center gap-2.5 px-4 py-2.5 rounded-[10px] mb-1 cursor-pointer transition-colors glass-pill border-l-2 ${accentClass} active:bg-interactive-hover`

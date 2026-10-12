@@ -4,7 +4,7 @@ import { useAuthStore, useSelfIdentity } from '../stores/authStore';
 import { useSpaceStore, type TaggedSpace } from '../stores/spaceStore';
 import { isMine, selfIdentityOf, type SelfIdentity } from './identity';
 import { locateDmChannel } from './dmChannelLookup';
-import { getCanonicalUserView, useCanonicalUserView } from './userViewLookup';
+import { canonicalUserViewIn, getCanonicalUserView, useCanonicalUserView } from './userViewLookup';
 
 /**
  * A user as seen in one channel.
@@ -13,8 +13,9 @@ import { getCanonicalUserView, useCanonicalUserView } from './userViewLookup';
  * `<@id>`" has an answer only in the context of the channel the token was
  * written in. A DM's ids are its pinned origin's ids and its people are
  * `dm.members`; a space channel's ids are its space's origin's ids and its
- * people are that space's roster. Mentions, the mention picker, the typing
- * indicator and the self-mention highlight all answer through this module,
+ * people are that space's roster. Mentions, the mention picker, the
+ * composer's mention labels, the typing indicator and the self-mention
+ * highlight all answer through this module,
  * never through `spaceStore.members` alone: that field is the roster of the
  * space whose detail was loaded last, whatever channel is on screen (#338).
  */
@@ -117,7 +118,10 @@ function findChannelUser(
   channelId: string,
   userId: string,
 ): ChannelUser | null {
-  const roster = rosterOf(sources, facts, channelId);
+  return userInRoster(rosterOf(sources, facts, channelId), userId);
+}
+
+function userInRoster(roster: ChannelRoster, userId: string): ChannelUser | null {
   if (roster.kind === 'dm') {
     const user = roster.people.find((u) => u.id === userId);
     return user ? fromDmUser(user, roster.origin) : null;
@@ -221,7 +225,7 @@ export function isSelfInChannel(channelId: string, userId: string): boolean {
 }
 
 /**
- * Candidates whose shown name or username contains `query`, case-insensitive,
+ * Candidates whose shown name, space nickname or username contains `query`, case-insensitive,
  * at most `limit` of them. Matches the best-known view as well as the row the
  * origin delivered, so a stub whose own row has no display name is found by
  * the name the picker shows for it.
@@ -235,7 +239,8 @@ export function filterMentionCandidates(
   const matches = (user: User): boolean =>
     (user.displayName ?? '').toLowerCase().includes(q) || user.username.toLowerCase().includes(q);
   return candidates
-    .filter((c) => matches(c.user) || matches(getCanonicalUserView(c.user, c.origin)))
+    .filter((c) => (c.member?.nickname ?? '').toLowerCase().includes(q)
+      || matches(c.user) || matches(getCanonicalUserView(c.user, c.origin)))
     .slice(0, limit);
 }
 
@@ -272,6 +277,27 @@ export function useChannelUser(channelId: string | null, userId: string | null):
   );
   const canonical = useCanonicalUserView(found?.user ?? NO_USER, found?.origin ?? '');
   return useMemo(() => (found ? { ...found, user: canonical } : null), [found, canonical]);
+}
+
+/**
+ * Reactive `resolveChannelUser` for any number of ids: a lookup that answers
+ * for every id in `channelId` and is replaced when the channel's people or the
+ * user-view cache change. For a component that learns the ids while rendering
+ * (the composer's mention labels); a component showing one known user uses
+ * `useChannelUser`. Both answer from the same roster and the same view, so the
+ * composer names a `<@id>` exactly as the sent message's `MentionBadge` will.
+ */
+export function useChannelUserResolver(channelId: string): (userId: string) => ChannelUser | null {
+  const sources = useSources();
+  const facts = useFacts(channelId);
+  const userViews = useSpaceStore((s) => s.userViews);
+  return useMemo(() => {
+    const roster = rosterOf(sources, facts, channelId);
+    return (userId: string) => {
+      const found = userInRoster(roster, userId);
+      return found ? { ...found, user: canonicalUserViewIn(userViews, found.user, found.origin) } : null;
+    };
+  }, [sources, facts, channelId, userViews]);
 }
 
 /** Reactive `getChannelMentionCandidates`. */

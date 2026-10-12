@@ -465,7 +465,6 @@ describe('the sharer\'s own full reconnect', () => {
   });
 });
 
-
 describe('native screen publications keep owner-scoped resume state', () => {
   it.each(['before', 'after'] as const)('resumes when the owner announces %s the new helper publication', async (order) => {
     const room = await viewerRoom();

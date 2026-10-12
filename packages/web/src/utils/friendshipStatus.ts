@@ -1,6 +1,6 @@
 import type { User } from '@backspace/shared';
-import type { TaggedFriend, TaggedFriendRequest } from '../stores/socialStore';
-import { isSelf, canonicalUserMatch } from './identity';
+import { isOutgoingRequest, type TaggedFriend, type TaggedFriendRequest } from '../stores/socialStore';
+import { isMine, userKey, type SelfIdentity } from './identity';
 
 export type FriendshipStatus =
   | { state: 'self' }
@@ -9,25 +9,22 @@ export type FriendshipStatus =
   | { state: 'inbound_pending'; request: TaggedFriendRequest }
   | { state: 'none' };
 
-export function getFriendshipStatus({ viewedUser, currentUser, friends, requests }: {
-  viewedUser: User;
-  currentUser: User | null;
-  friends: TaggedFriend[];
-  requests: TaggedFriendRequest[];
-}): FriendshipStatus {
-  if (!currentUser) return { state: 'none' };
-  if (isSelf(viewedUser, currentUser)) return { state: 'self' };
+/**
+ * Where the viewer stands with the person `viewedUser` names (as `origin`
+ * issued the row). Friends and requests from any instance are matched by
+ * person (`userKey`), never by id or username alone.
+ */
+export function getFriendshipStatus({ viewedUser, origin, self, friends, requests }: { viewedUser: User; origin: string; self: SelfIdentity | null; friends: TaggedFriend[]; requests: TaggedFriendRequest[] }): FriendshipStatus {
+  if (!self) return { state: 'none' };
+  if (isMine(viewedUser, origin, self)) return { state: 'self' };
 
-  const friend = friends.find(f => canonicalUserMatch(f, viewedUser));
+  const key = userKey(viewedUser, origin);
+  const friend = friends.find(f => userKey(f, f._instanceOrigin) === key);
   if (friend) return { state: 'friends', friend };
 
-  const request = requests.find(r =>
-    r.user && canonicalUserMatch(r.user, viewedUser)
-  );
+  const request = requests.find(r => r.user && userKey(r.user, r._instanceOrigin) === key);
   if (request?.user) {
-    // request.user is the OTHER party. If their ID === toId, then I am fromId (outbound)
-    const isOutbound = request.user.id === request.toId;
-    return isOutbound
+    return isOutgoingRequest(request)
       ? { state: 'outbound_pending', request }
       : { state: 'inbound_pending', request };
   }

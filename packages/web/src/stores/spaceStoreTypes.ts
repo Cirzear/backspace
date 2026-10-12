@@ -18,7 +18,7 @@ import type { PresenceSubject, IdentityFields } from '../utils/identity';
 import type { PeerDmChannel } from '../utils/dmConversationKey';
 import type { DmConversations } from './dmConversations';
 import type { SpaceChannelIndex } from './spaceChannels';
-export type TaggedSpace = Space & { _instanceOrigin: string; ownerTitle?: string | null };
+export type TaggedSpace = Space & { _instanceOrigin: string; ownerTitle?: string | null; myRoleIds?: string[] };
 
 export interface UserViewEntry {
   user: User;

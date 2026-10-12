@@ -8,7 +8,7 @@ import { useActivityStore, activitiesFor } from '../../stores/activityStore';
 import { Avatar } from '../ui/Avatar';
 import { ActivityCard, hasRichActivity, getActivityAccentClass } from '../ui/ActivityCard';
 import { getPrimaryActivity } from '@backspace/shared/src/activities.js';
-import { parseFederatedUsername, isFederationGlobeApplicable, userDisplayName } from '../../utils/identity';
+import { parseFederatedUsername, isFederationGlobeApplicable, spaceMemberName } from '../../utils/identity';
 import { useSpaceOrigin } from '../../hooks/useSpaceOrigin';
 import { useCanonicalUserView } from '../../utils/userViewLookup';
 import { useDelayedLoading } from '../../hooks/useDelayedLoading';
@@ -21,6 +21,9 @@ function memberNameTone(isOffline: boolean, colored: boolean): string {
   if (colored) return isOffline ? 'opacity-60' : '';
   return isOffline ? 'text-txt-tertiary' : 'text-txt-primary';
 }
+
+/** Keyboard focus ring for a member row (the rows are focusable controls). */
+const ROW_FOCUS_CLASS = 'outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-primary/60';
 
 function MemberSidebarRow({
   member,
@@ -38,22 +41,39 @@ function MemberSidebarRow({
   activities: Activity[];
   isRichActivity: boolean;
   accentClass: string;
-  onContextMenuMember: (e: React.MouseEvent, member: MemberWithUser, user: MemberWithUser['user']) => void;
-  onClickMember: (e: React.MouseEvent, member: MemberWithUser, user: MemberWithUser['user']) => void;
+  onClickMember: (e: React.MouseEvent | React.KeyboardEvent, member: MemberWithUser, user: MemberWithUser['user']) => void;
+  onContextMenuMember: (e: React.MouseEvent | React.KeyboardEvent, member: MemberWithUser, user: MemberWithUser['user']) => void;
 }) {
   const origin = useSpaceOrigin(member.spaceId);
   const canonical = useCanonicalUserView(member.user, origin);
-  const displayName = member.nickname ?? userDisplayName(canonical);
+  const displayName = spaceMemberName(member, canonical);
 
   const rowClass = isRichActivity
-    ? `flex items-center gap-2.5 px-2.5 py-2 rounded-[10px] mb-1 cursor-pointer transition-colors glass-pill border-l-2 ${accentClass}`
-    : 'flex items-center gap-2.5 px-2 py-1.5 rounded-[4px] hover:bg-interactive-hover cursor-pointer group transition-colors';
+    ? `flex items-center gap-2.5 px-2.5 py-2 rounded-[10px] mb-1 cursor-pointer transition-colors glass-pill border-l-2 ${accentClass} ${ROW_FOCUS_CLASS}`
+    : `flex items-center gap-2.5 px-2 py-1.5 rounded-[4px] hover:bg-interactive-hover cursor-pointer group transition-colors ${ROW_FOCUS_CLASS}`;
+
+  // The row is a control: Enter and Space open the profile like a click, and
+  // the menu key or Shift+F10 open the member menu like a right click.
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onClickMember(e, member, canonical);
+    } else if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+      e.preventDefault();
+      onContextMenuMember(e, member, canonical);
+    }
+  };
 
   return (
     <div
       key={member.userId}
       onClick={(e) => onClickMember(e, member, canonical)}
       onContextMenu={(e) => onContextMenuMember(e, member, canonical)}
+      onKeyDown={handleKeyDown}
+      role="button"
+      tabIndex={0}
+      aria-haspopup="menu"
       data-context-menu
       className={rowClass}
     >
@@ -115,9 +135,9 @@ export function MemberSidebar() {
     return color ? { color } : undefined;
   };
 
-  const handleMemberClick = (e: React.MouseEvent, member: MemberWithUser, user: MemberWithUser['user']) => {
+  const handleMemberClick = (e: React.MouseEvent | React.KeyboardEvent, member: MemberWithUser, user: MemberWithUser['user']) => {
     e.stopPropagation();
-    // Left click always means profile, regardless of the viewer's permissions.
+    // Left-click remains profile-only, even for moderators.
     useContextMenuStore.getState().close();
     const origin = useSpaceStore.getState().spaces.find(s => s.id === member.spaceId)?._instanceOrigin ?? '';
     openUserProfile(user, origin, e.currentTarget.getBoundingClientRect(), 'left', { spaceId: member.spaceId, userId: member.userId });

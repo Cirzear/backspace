@@ -1,7 +1,6 @@
 import { getUploadUrl } from '../../utils/assetUrls';
 import { DmUnreadBadge } from './DmUnreadBadge';
 import { SpaceUnreadBadge } from './SpaceUnreadBadge';
-import { useNotificationMuted } from '../notifications/useNotificationMuted';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import ReactDOM from 'react-dom';
 import { useTranslation } from 'react-i18next';
@@ -468,17 +467,18 @@ function FolderFlyout({
             >
               {/* Space icon */}
               <div className="relative">
-              <SpaceUnreadBadge spaceId={space.id} />
-              <div className="w-8 h-8 rounded-[10px] flex-shrink-0 overflow-hidden flex items-center justify-center" style={grad ? { background: grad.gradient } : undefined}>
-                {icon ? (
-                  <img
-                    src={getUploadUrl(icon)}
-                    alt=""
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <span className="text-[13px] font-bold text-white">{space.name.charAt(0).toUpperCase()}</span>
-                )}
+                <SpaceUnreadBadge spaceId={space.id} />
+                <div className="w-8 h-8 rounded-[10px] flex-shrink-0 overflow-hidden flex items-center justify-center" style={grad ? { background: grad.gradient } : undefined}>
+                  {icon ? (
+                    <img
+                      src={getUploadUrl(icon)}
+                      alt=""
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <span className="text-[13px] font-bold text-white">{space.name.charAt(0).toUpperCase()}</span>
+                  )}
+                </div>
               </div>
 
               </div>

@@ -3,6 +3,7 @@ import { receiveChannelPoke } from '../components/chat/channelPoke';
 import { describeErrorCode } from '../i18n/errors';
 import { useChannelActivityStore } from '../stores/channelActivityStore';
 import { useChatStore } from '../stores/chatStore';
+import { useUnreadCountStore } from '../stores/unreadCountStore';
 import { useNotificationSettingsStore } from '../stores/notificationSettingsStore';
 import { useNotificationStore } from '../stores/notificationStore';
 import { getChannelOrigin } from '../stores/spaceStore';
@@ -22,6 +23,7 @@ export const miscEvents = {
   },
   channel_unread_count: (origin, event) => {
     useChannelActivityStore.getState().updateCounts(origin, event.counts);
+    useUnreadCountStore.getState().updateCounts(origin, event.counts);
   },
   channel_poke_failed: (origin, event) => {
     useUIStore.getState().addToast(event.message, 'warning');

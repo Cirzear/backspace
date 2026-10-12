@@ -88,7 +88,7 @@ describe('MemberSidebar: member names', () => {
   it('names a member with an empty display name by their username, as every other surface does', () => {
     const blank: User = { ...user('u-kai', 'Kai', 'online'), displayName: '' };
     useSpaceStore.setState({ members: [member(blank, [])] });
-    render(<MemberSidebar />);
+    render(<MemoryRouter><MemberSidebar /></MemoryRouter>);
     expect(screen.getByText('kai')).toBeInTheDocument();
   });
 
@@ -98,7 +98,7 @@ describe('MemberSidebar: member names', () => {
       customStatus: 'Exploring deep space and listening to music',
     };
     useSpaceStore.setState({ members: [member(longUser, [])] });
-    render(<MemberSidebar />);
+    render(<MemoryRouter><MemberSidebar /></MemoryRouter>);
     const nameEl = screen.getByText('VeryLongNameThatExceedsTheContainerWidthLimit');
     expect(nameEl).toHaveClass('block');
     expect(nameEl).toHaveClass('truncate');

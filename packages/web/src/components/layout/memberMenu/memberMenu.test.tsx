@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MemberWithUser, Role, User } from '@backspace/shared';
@@ -14,14 +15,14 @@ import { useUIStore } from '../../../stores/uiStore';
 import { useSocialStore } from '../../../stores/socialStore';
 import { useContextMenuStore } from '../../../stores/contextMenuStore';
 import { api } from '../../../api/client';
-import { handleEvent } from '../../../hooks/webSocketEvents';
+import { applySpaceMemberUpdate } from '../../../stores/spaceMemberUpdates';
 
 const role: Role = { id: 'mod', spaceId: 'space', name: 'Moderator', color: '#ff0000', position: 1, createdAt: 1 };
 const user = (id: string): User => ({
   id, username: id, displayName: id, avatar: null, banner: null, accentColor: null,
-  avatarColor: null, bio: null, status: 'online', customStatus: null, createdAt: 1, homeInstance: null, homeUserId: null, replicatedInstances: []
+  avatarColor: null, bio: null, status: 'online', customStatus: null, isAdmin: false, createdAt: 1, homeInstance: null, homeUserId: null, replicatedInstances: []
 });
-const member = (id: string): MemberWithUser => ({ user: user(id), userId: id, spaceId: 'space', joinedAt: 1, nickname: null, roles: [] });
+const member = (id: string): MemberWithUser => ({ user: user(id), userId: id, spaceId: 'space', joinedAt: 1, nickname: null, roles: id === 'viewer' ? [{ ...role, id: 'senior', name: 'Senior', position: 2 }] : [] });
 const allPermissions = (PermissionBits.MANAGE_SPACE | PermissionBits.MANAGE_ROLES | PermissionBits.KICK_MEMBERS | PermissionBits.BAN_MEMBERS).toString();
 const update = vi.fn();
 const remove = vi.fn();
@@ -36,13 +37,13 @@ beforeEach(() => {
   spaces.useSpaceStore.setState({
     currentSpaceId: 'space', loadingSpaceId: null, members: [member('owner'), member('viewer'), member('target')],
     roles: [{ ...role, id: 'space', name: '@everyone' }, role], userViews: new Map(),
-    spaces: [{ id: 'space', name: 'Space', ownerId: 'owner', ownerTitle: null, _instanceOrigin: '' } as spaces.TaggedSpace],
+    spaces: [{ id: 'space', name: 'Space', ownerId: 'owner', _instanceOrigin: '' } as spaces.TaggedSpace],
     spacePermissions: new Map([['space', allPermissions]])
   });
   useSocialStore.setState({ friends: [], requests: [] });
   useUIStore.setState({
     isMobile: false, memberListOpen: true, activeModal: null,
-    userProfilePopout: { user: null, anchor: null, member: null, placement: 'left' }
+    userProfilePopout: { user: null, origin: '', anchor: null, member: null, placement: 'left' }
   });
   vi.spyOn(useUIStore.getState(), 'addToast').mockImplementation(toast);
   useContextMenuStore.getState().close();
@@ -65,6 +66,16 @@ describe('member context menu', () => {
     expect(useUIStore.getState().activeModal).toBeNull();
     expect(useUIStore.getState().userProfilePopout.member).toEqual({ spaceId: 'space', userId: 'target' });
     expect(useContextMenuStore.getState().menu).toBeNull();
+  });
+
+  it('hides moderation and role editing for an equal-ranked member', () => {
+    const state = spaces.useSpaceStore.getState();
+    spaces.useSpaceStore.setState({ members: state.members.map(m => m.userId === 'target' ? { ...m, roles: [{ ...role, position: 2 }] } : m) });
+    mount(); rightClick();
+    expect(screen.queryByRole('button', { name: /Roles/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Kick' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Ban' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Change space nickname…' })).not.toBeInTheDocument();
   });
 
   it('opens only the menu on right click, hiding self and owner management actions', () => {
@@ -136,7 +147,7 @@ describe('member context menu', () => {
       };
     });
     openRoles();
-    expect(screen.getByRole('menu', { name: 'Roles / permission groups' })).toHaveStyle({ left: '736px' });
+    expect(screen.getByRole('menu', { name: 'Roles' })).toHaveStyle({ left: '736px' });
   });
 
   it('saves a space nickname and offers an explicit reset', async () => {
@@ -148,8 +159,48 @@ describe('member context menu', () => {
     expect(update).toHaveBeenLastCalledWith('space', 'target', { nickname: 'Pilot' });
     rightClick('Pilot'); fireEvent.click(screen.getByRole('button', { name: 'Change space nickname…' }));
     update.mockResolvedValue(member('target'));
-    fireEvent.click(screen.getByRole('button', { name: 'Reset to default' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reset to account name' }));
     await waitFor(() => expect(update).toHaveBeenLastCalledWith('space', 'target', { nickname: null }));
+  });
+
+  it('clears the nickname when the field is saved empty', async () => {
+    spaces.useSpaceStore.setState({ members: spaces.useSpaceStore.getState().members.map(m => m.userId === 'target' ? { ...m, nickname: 'Pilot' } : m) });
+    update.mockResolvedValue(member('target'));
+    mount(); rightClick('Pilot'); fireEvent.click(screen.getByRole('button', { name: 'Change space nickname…' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Space nickname' }), { target: { value: '   ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith('space', 'target', { nickname: null }));
+    await screen.findByText('target');
+  });
+
+  it.each(['\u200B\u200D', 'a\tb', 'evil\u202Eexe'])('refuses %j before sending, with the server rule', async value => {
+    mount(); rightClick(); fireEvent.click(screen.getByRole('button', { name: 'Change space nickname…' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Space nickname' }), { target: { value } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('at most 32 characters');
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('opens the menu from the keyboard and gives focus back to the row on Escape', () => {
+    // StrictMode runs the menu's focus effect twice, as the dev build does.
+    render(<StrictMode><MemoryRouter><MemberSidebar /><ContextMenuRenderer /></MemoryRouter></StrictMode>);
+    const row = screen.getByText('target').closest('[role="button"]') as HTMLElement;
+    row.focus();
+    fireEvent.keyDown(row, { key: 'ContextMenu' });
+    expect(screen.getByRole('button', { name: 'View profile' })).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    expect(useContextMenuStore.getState().menu).toBeNull();
+    expect(row).toHaveFocus();
+    fireEvent.keyDown(row, { key: 'F10', shiftKey: true });
+    expect(useContextMenuStore.getState().menu).not.toBeNull();
+  });
+
+  it('opens the profile from the keyboard', () => {
+    mount();
+    const row = screen.getByText('target').closest('[role="button"]') as HTMLElement;
+    row.focus();
+    fireEvent.keyDown(row, { key: 'Enter' });
+    expect(useUIStore.getState().userProfilePopout.member).toEqual({ spaceId: 'space', userId: 'target' });
   });
 
   it('keeps nickname input and exposes save failures', async () => {
@@ -175,7 +226,7 @@ describe('member context menu', () => {
   it('uses instance-local IDs for remote member mutations', async () => {
     const space = spaces.useSpaceStore.getState().spaces[0]!;
     spaces.useSpaceStore.setState({ spaces: [{ ...space, _instanceOrigin: 'https://remote.test' }] });
-    spaces.setMyUserIdForOrigin('https://remote.test', 'viewer');
+    useAuthStore.getState().recordMyRow('https://remote.test', 'viewer');
     update.mockResolvedValue({ ...member('target'), roles: [role] });
     mount(); rightClick(); fireEvent.click(openRoles());
     await waitFor(() => expect(update).toHaveBeenCalledWith('space', 'target', { roleIds: ['mod'] }));
@@ -184,11 +235,11 @@ describe('member context menu', () => {
 
   it('applies socket nickname/roles only for the current space and origin without overwriting presence', () => {
     const updated = { ...member('target'), nickname: 'Pilot', roles: [role], user: { ...user('target'), status: 'offline' as const } };
-    handleEvent('https://other.test', { type: 'member_updated', spaceId: 'space', member: updated });
+    applySpaceMemberUpdate('https://other.test', updated);
     expect(spaces.useSpaceStore.getState().members[2]?.nickname).toBeNull();
-    handleEvent('', { type: 'member_updated', spaceId: 'other', member: { ...updated, spaceId: 'other' } });
+    applySpaceMemberUpdate('', { ...updated, spaceId: 'other' });
     expect(spaces.useSpaceStore.getState().members[2]?.nickname).toBeNull();
-    handleEvent('', { type: 'member_updated', spaceId: 'space', member: updated });
+    applySpaceMemberUpdate('', updated);
     expect(spaces.useSpaceStore.getState().members[2]).toMatchObject({ nickname: 'Pilot', roles: [role], user: { status: 'online' } });
   });
   it.each(['Enter', ' '])('activates role checkboxes with %s', async key => {
@@ -228,12 +279,12 @@ describe('member context menu', () => {
   it('shows the space nickname without replacing the original account identity', () => {
     vi.spyOn(api.users, 'getMutuals').mockResolvedValue({ mutualFriends: [], mutualSpaces: [] });
     spaces.useSpaceStore.setState({ members: [{ ...member('target'), nickname: 'Pilot' }] });
-    render(<MemoryRouter><UserProfilePopout user={{ ...user('target'), displayName: 'Original name' }}
+    render(<MemoryRouter><UserProfilePopout origin="" user={{ ...user('target'), displayName: 'Original name' }}
       member={{ spaceId: 'space', userId: 'target' }} onClose={vi.fn()}
       anchor={{ left: 200, top: 100, right: 250, bottom: 150, width: 50, height: 50 }} /></MemoryRouter>);
     expect(screen.getByText('Original name')).toBeInTheDocument();
     expect(screen.getByText('@target')).toBeInTheDocument();
-    expect(screen.getByText(/Space nickname: Pilot/)).toBeInTheDocument();
+    expect(screen.getByText('Nickname in this space: Pilot')).toBeInTheDocument();
   });
 
   it.each(['Kick', 'Ban'])('keeps the member visible when %s fails', async label => {

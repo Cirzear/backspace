@@ -360,10 +360,20 @@ function DesktopMenu({ items, position, close, closeGuard }: DesktopMenuProps) {
     el.style.top = `${y}px`;
   }, [position]);
 
-  // Auto-focus on mount for keyboard nav
+  // Auto-focus on mount for keyboard nav. The element focused before (the row
+  // a keyboard user opened the menu from) gets focus back when the menu
+  // closes, unless an action moved focus elsewhere, such as a dialog it opened.
+  // Read during the first render, before the menu takes focus: an effect
+  // that runs twice (React's development checks) would otherwise record the
+  // menu itself.
+  const [opener] = useState(() => (document.activeElement instanceof HTMLElement ? document.activeElement : null));
   useEffect(() => {
     menuRef.current?.focus();
-  }, []);
+    return () => {
+      const active = document.activeElement;
+      if (opener?.isConnected && (!active || active === document.body)) opener.focus();
+    };
+  }, [opener]);
 
   // Dismiss on scroll/resize
   useEffect(() => {

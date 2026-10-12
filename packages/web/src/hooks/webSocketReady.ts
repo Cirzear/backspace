@@ -3,6 +3,7 @@ import type { Activity, ActiveCallInfo, ServerEvent } from '@backspace/shared';
 import { ConnectionState as LiveKitConnectionState } from 'livekit-client';
 import { useActivityStore } from '../stores/activityStore';
 import { useAuthStore } from '../stores/authStore';
+import { useUnreadCountStore } from '../stores/unreadCountStore';
 import { useChannelActivityStore } from '../stores/channelActivityStore';
 import { useChatStore } from '../stores/chatStore';
 import { useNotificationSettingsStore } from '../stores/notificationSettingsStore';
@@ -153,6 +154,7 @@ function resetReadyMessages(origin: string): void {
 }
 
 function hydrateReadyReadStates(origin: string, event: ReadyEvent): void {
+  useUnreadCountStore.getState().hydrate(origin, event.unreadCounts);
   useChannelActivityStore.getState().hydrate(origin, { counts: event.unreadCounts, supportsPoke: event.supportsPoke });
   // Initialize/update unread tracking for this origin (home or remote)
   if (event.readStates) {

@@ -221,5 +221,5 @@
   "directory_private_space": "Defina o espaço como público ou por solicitação antes de listá-lo.",
   "directory_requires_discovery": "Ative primeiro a descoberta de espaços.",
   "space_owner_title_invalid": "Owner title must be a single line of 1–{{max}} characters",
-  "member_nickname_invalid": "Nickname must contain 1–32 characters on a single line. Use reset to restore the default."
+  "member_nickname_invalid": "Apelidos podem ter no máximo {{max}} caracteres em uma linha, com pelo menos um caractere visível e sem caracteres de controle."
 }

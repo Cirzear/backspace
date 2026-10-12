@@ -17,7 +17,8 @@
       "jump": "Jump to the original message"
     },
     "mention": {
-      "unknownUser": "Unknown User"
+      "unknownUser": "Unknown User",
+      "unknownRole": "Unknown Role"
     },
     "reactions": {
       "picker": "Reaction picker",

@@ -7,7 +7,7 @@ export function applySpaceMemberUpdate(origin: string, member: MemberWithUser): 
   const space = state.spaces.find(s => s.id === member.spaceId && s._instanceOrigin === origin);
   if (!space || state.currentSpaceId !== member.spaceId) return;
   useSpaceStore.setState({
-    members: state.members.map(existing => existing.userId === member.userId
+    members: state.members.map(existing => existing.spaceId === member.spaceId && existing.userId === member.userId
       // Profile/presence have their own live events; a database snapshot must not overwrite them.
       ? { ...existing, nickname: member.nickname, roles: member.roles }
       : existing),

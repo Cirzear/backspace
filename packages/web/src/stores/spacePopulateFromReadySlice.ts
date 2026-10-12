@@ -18,6 +18,7 @@ import {
   type TaggedSpace,
 } from './spaceStore';
 import type { SpaceState } from './spaceStoreTypes';
+import { getMyUserIdForOrigin } from './authStore';
 
 export const createPopulateFromReadySlice: StateCreator<SpaceState, [], [], Pick<SpaceState, 'populateFromReady'>> = (set, get) => ({
   populateFromReady: (origin: string, spaces: SpaceWithChannelsAndMembers[], folders?: SpaceFolder[], dmChannels?: DmChannel[], spaceLayout?: SpaceLayoutItem[] | null, layoutUpdatedAt?: number) => {
@@ -38,6 +39,7 @@ export const createPopulateFromReadySlice: StateCreator<SpaceState, [], [], Pick
       description: s.description ?? null,
       createdAt: s.createdAt,
       _instanceOrigin: origin,
+      myRoleIds: s.members?.find(m => m.userId === getMyUserIdForOrigin(origin))?.roles.map(r => r.id) ?? [],
     }));
 
     // Merge by origin: keep servers from other origins, replace all from this origin

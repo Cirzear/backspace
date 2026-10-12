@@ -17,7 +17,8 @@
       "jump": "跳转到原消息"
     },
     "mention": {
-      "unknownUser": "未知用户"
+      "unknownUser": "未知用户",
+      "unknownRole": "未知身份组"
     },
     "reactions": {
       "picker": "表情回应",

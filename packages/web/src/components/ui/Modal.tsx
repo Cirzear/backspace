@@ -48,7 +48,6 @@ function ModalSurface({ onClose, title, children, maxWidth = 'max-w-md', size, m
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
-
   // The portal surface exists only while open; keep Android back dismissal scoped to it.
   useEffect(() => registerNativeDismiss(onClose), [onClose]);
 

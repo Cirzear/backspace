@@ -6,7 +6,7 @@ import { listNotificationSettings } from '../routes/notificationSettings.js';
 import { computePermissions, PermissionBits, permissionsToString } from '../utils/permissions.js';
 import { memberRolesView, rolesForViewer } from '../utils/permissionDataView.js';
 import { sanitizeUser } from '../utils/sanitize.js';
-import { channelUnreadCounts, dmUnreadCounts } from './channelUnreadCounts.js';
+import { canCountUnread, readyUnreadCounts } from './channelUnreadCounts.js';
 import { loadOpenDmChannels } from '../utils/dmChannelWire.js';
 import { presenceIdentityOf, snapshotActivities } from './presenceEvent.js';
 import { connectionManager } from './connectionManager.js';
@@ -47,6 +47,7 @@ function buildReadySpaces(userId: string) {
   const spaceIds = memberships.map(m => m.spaceId);
 
   const visibleChannelIdSet = new Set<string>();
+  const countableChannelIds: string[] = [];
   const spaces: SpaceWithChannelsAndMembers[] = [];
 
   if (spaceIds.length > 0) {
@@ -190,6 +191,7 @@ function buildReadySpaces(userId: string) {
         const hasView = (chPerms & PermissionBits.VIEW_CHANNEL) !== 0n || (chPerms & PermissionBits.ADMINISTRATOR) !== 0n;
         if (hasView) {
           visibleChannelIdSet.add(ch.id);
+          if (canCountUnread(chPerms)) countableChannelIds.push(ch.id);
           visibleChannels.push({
             id: ch.id,
             spaceId: ch.spaceId,
@@ -231,7 +233,7 @@ function buildReadySpaces(userId: string) {
   // Store user's space IDs for broadcasting
   connectionManager.setUserSpaces(userId, spaceIds);
 
-  return { spaces, visibleChannelIdSet };
+  return { spaces, visibleChannelIdSet, countableChannelIds };
 }
 
 function buildReadyDmChannels(userId: string) {
@@ -282,7 +284,7 @@ export function buildReadyPayload(userId: string): {
   connectionManager.setUserShowActivity(userId, userRow.showActivity !== 0);
   connectionManager.setUserStatus(userId, (userRow.status ?? 'offline') as string);
 
-  const { spaces, visibleChannelIdSet } = buildReadySpaces(userId);
+  const { spaces, visibleChannelIdSet, countableChannelIds } = buildReadySpaces(userId);
 
   const { dmChannels, dmMemberships } = buildReadyDmChannels(userId);
   // Include DM channel IDs in the visible set for read state filtering
@@ -515,10 +517,12 @@ export function buildReadyPayload(userId: string): {
     voiceUserStates,
     spaceVoiceStates,
     supportsPoke: true,
-    unreadCounts: {
-      ...channelUnreadCounts(userId, spaces.flatMap(space => space.channels.map(channel => channel.id))),
-      ...dmUnreadCounts(userId, dmChannels.map(dm => dm.id)),
-    },
+    unreadCounts: readyUnreadCounts(
+      userId,
+      countableChannelIds,
+      dmChannels.map(dm => dm.id),
+      new Map(readStateRows.map(rs => [rs.channelId, rs.lastReadMessageId])),
+    ),
     readStates,
     notificationSettings: listNotificationSettings(userId),
     activeCalls,

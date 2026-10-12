@@ -225,6 +225,20 @@
       "when": 1791536400000,
       "tag": "0031_ai_translation",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1791751492187,
+      "tag": "0032_unread_count_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1791753591416,
+      "tag": "0033_mass_mention_preferences",
+      "breakpoints": true
     }
   ]
 }

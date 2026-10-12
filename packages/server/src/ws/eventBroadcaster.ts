@@ -1,6 +1,6 @@
 import type { ServerEvent } from '@backspace/shared';
 import type { WebSocket } from 'ws';
-import { unreadCountEvent } from './channelUnreadCounts.js';
+import { unreadCountFollowUp } from './channelUnreadCounts.js';
 import { computePermissions, PermissionBits } from '../utils/permissions.js';
 import { getDb, schema } from '../db/index.js';
 import { eq } from 'drizzle-orm';
@@ -18,36 +18,54 @@ export interface BroadcasterContext {
 export class EventBroadcaster {
   constructor(private ctx: BroadcasterContext) {}
 
-  /** Send to a specific user (all their connections). */
-  sendToUser(userId: string, event: ServerEvent): void {
+  /**
+   * Send to a specific user (all their connections). An event that moves one
+   * of the user's unread counts is followed on the same sockets by its
+   * `channel_unread_count` (ws/channelUnreadCounts.ts). `channelPerms` are
+   * the user's permissions in the event's space channel when the caller has
+   * already computed them, so the count does not compute them again.
+   */
+  sendToUser(userId: string, event: ServerEvent, channelPerms?: bigint): void {
+    this.deliver(userId, event, JSON.stringify(event), channelPerms);
+  }
+
+  /** `sendToUser` with the event already serialized, for fan-outs that serialize it once. */
+  private deliver(userId: string, event: ServerEvent, message: string, channelPerms?: bigint): void {
     const connections = this.ctx.getUserConnections(userId);
-    const message = JSON.stringify(event);
-    const unread = connections.size ? unreadCountEvent(userId, event) : null;
-    const unreadMessage = unread ? JSON.stringify(unread) : null;
+    if (connections.size === 0) return;
+    const followUp = unreadCountFollowUp(userId, event, channelPerms);
+    const followUpMessage = followUp ? JSON.stringify(followUp) : null;
     for (const ws of connections) {
       if (ws.readyState === 1) { // WebSocket.OPEN
         ws.send(message);
-        if (unreadMessage) ws.send(unreadMessage);
+        if (followUpMessage) ws.send(followUpMessage);
       }
     }
   }
 
   /** Send to all members of a space. */
   sendToSpace(spaceId: string, event: ServerEvent, excludeUserId?: string): void {
+    const message = JSON.stringify(event);
     for (const [userId, spaceIds] of this.ctx.getUserSpacesEntries()) {
       if (spaceIds.has(spaceId) && userId !== excludeUserId) {
-        this.sendToUser(userId, event);
+        const connections = this.ctx.getUserConnections(userId);
+        for (const ws of connections) {
+          if (ws.readyState === 1) {
+            ws.send(message);
+          }
+        }
       }
     }
   }
 
   /** Send to space members who have VIEW_CHANNEL on the given channel. */
   sendToChannel(spaceId: string, channelId: string, event: ServerEvent, excludeUserId?: string): void {
+    const message = JSON.stringify(event);
     for (const [userId, spaceIds] of this.ctx.getUserSpacesEntries()) {
       if (spaceIds.has(spaceId) && userId !== excludeUserId) {
         const perms = computePermissions(userId, spaceId, channelId);
         if ((perms & PermissionBits.VIEW_CHANNEL) !== 0n) {
-          this.sendToUser(userId, event);
+          this.deliver(userId, event, message, perms);
         }
       }
     }

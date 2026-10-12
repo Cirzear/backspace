@@ -24,7 +24,7 @@ import { useVoiceStore, type VoiceConnectionQuality } from '../stores/voiceStore
 import { useUIStore } from '../stores/uiStore';
 import { broadcastVoiceStatus, clearSpaceVoiceForDmCall } from '../utils/voice';
 import { consumeIntentionalCameraOff, markIntentionalCameraOff } from '../utils/voiceActions';
-import { dmCallRoomKey} from '../utils/dmCall';
+import { dmCallChannelId, dmCallOrigin, dmCallRoomKey, voiceSessionOrigin } from '../utils/dmCall';
 import { AudioManager } from '../audio/AudioManager';
 import { SpeakingDetector } from '../audio/SpeakingDetector';
 import {
@@ -40,9 +40,9 @@ import {
   resolveNativeOverdrive,
   syncScreenShareAudio,
 } from '../utils/screenShare';
-import { parseShareSignal, parseStreamWatch, streamWatchKey } from '../utils/streamWatchProtocol';
+import { encodeStreamWatch, parseShareSignal, parseStreamWatch, streamWatchFor, streamWatchKey } from '../utils/streamWatchProtocol';
 import { StreamRepublishTracker } from '../utils/streamRepublish';
-import { StreamResumeMemory } from '../utils/streamResume';
+import { StreamResumeMemory, type RememberedStream } from '../utils/streamResume';
 import { getMediaStreamTrack } from '../utils/livekitInternals';
 import { deactivate as deactivateHwOverdrive } from '../utils/hwOverdrive';
 import {
@@ -196,6 +196,15 @@ export function useLiveKit() {
       if (signal === 'stream_republish') {
         // The sender's next screen-share unpublish is a codec swap, not the end.
         republish?.announce(participant.identity);
+        return;
+      }
+      if (signal === 'stream_resume') {
+        // The sender's full reconnect brought its share back.
+        if (resume.resumeAnnounced(participant.identity)) resumeIfPublished(room, resume, participant.identity);
+        return;
+      }
+      if (signal === 'stream_stop') {
+        resume.stopAnnounced(participant.identity);
         return;
       }
       if (signal === 'stream_resume') {
@@ -603,7 +612,11 @@ export function useLiveKit() {
           syncSubscriptions();
           return; // Helper loss must never clear the owner's WS status or watcher identity.
         }
-        // A full reconnect temporarily drops every participant; retain watchers until Connected.
+        // While the room is not Connected the leave may be this room's own
+        // full reconnect dropping every participant (Room.handleRestarting),
+        // so a viewer stays in the watcher set. Every return to Connected
+        // keeps only the viewers present then (`retainWatchers` below), which
+        // also catches a viewer that really left in that window.
         if (newRoom.state === ConnectionState.Connected) {
           useVoiceStore.getState().evictWatcher(participant.identity);
         }

@@ -105,7 +105,7 @@ function broadcastChannelVisibility(spaceId: string, channelIds: readonly string
           type: 'channel_updated',
           channel: { ...rowToChannel(channel), isPrivate: privateIds.has(channel.id), myPermissions: permissionsToString(perms) },
           spaceId,
-        });
+        }, perms);
       } else {
         connectionManager.sendToUser(userId, {
           type: 'channel_deleted',

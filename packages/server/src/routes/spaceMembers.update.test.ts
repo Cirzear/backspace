@@ -21,13 +21,7 @@ const announceSpaceAccessChange = vi.fn();
 const checkVoicePermissions = vi.fn();
 vi.mock('../db/index.js', () => ({ getDb: () => testDb, getRawDb: () => sqlite, schema }));
 vi.mock('../utils/auth.js', () => ({ authenticate: async (req: { userId?: string }) => { req.userId = currentUserId; } }));
-vi.mock('../ws/handler.js', () => ({
-  connectionManager: {
-    sendToSpace: (...args: unknown[]) => sendToSpace(...args),
-    announceSpaceAccessChange: (...args: unknown[]) => announceSpaceAccessChange(...args),
-    getAllRooms: () => [],
-  },
-}));
+vi.mock('../ws/handler.js', () => ({ connectionManager: { sendToSpace: (...args: unknown[]) => sendToSpace(...args), announceSpaceAccessChange: (...args: unknown[]) => announceSpaceAccessChange(...args) } }));
 
 vi.mock('../ws/events.js', () => ({ checkVoicePermissions: (...args: unknown[]) => checkVoicePermissions(...args) }));
 
@@ -58,10 +52,9 @@ beforeEach(async () => {
     { id: 'other-role', spaceId: 'other-space', name: 'Other', permissions: '0', position: 1, createdAt: 1 },
   ]).run();
   testDb.insert(schema.memberRoles).values({ spaceId: 'space', userId: 'moderator', roleId: 'mod-role' }).run();
-  const { updateSpaceMemberRoutes, listSpaceMemberRoutes } = await import('./spaceMembers.js');
+  const { spaceRoutes } = await import('./spaces.js');
   app = Fastify();
-  updateSpaceMemberRoutes(app);
-  listSpaceMemberRoutes(app);
+  await app.register(spaceRoutes);
 });
 
 afterEach(async () => {
@@ -113,12 +106,50 @@ describe('space member nickname and roles', () => {
     expect((await update({ nickname: 'No' }, 'owner')).statusCode).toBe(403);
   });
 
-  it.each(['', '  ', 'a\nb', 'a\rb', 1, false, [], {}, 'x'.repeat(MAX_MEMBER_NICKNAME_LENGTH + 1)])('rejects invalid nickname %j', async nickname => {
+  it.each([
+    'a\nb', 'a\rb', 'a\tb', 'a\u0000b', 'a\u2028b', 'evil\u202Eexe', '\u2066x\u2069',
+    '\u200B', '\u200B\u200D\uFEFF', '\u3164', 1, false, [], {}, 'x'.repeat(MAX_MEMBER_NICKNAME_LENGTH + 1),
+  ])('rejects invalid nickname %j', async nickname => {
     const response = await update({ nickname });
     expect(response.statusCode).toBe(400);
     expect(response.json().code).toBe('member_nickname_invalid');
     expect(stored().nickname).toBeNull();
     expect(sendToSpace).not.toHaveBeenCalled();
+  });
+
+  it.each(['', '   '])('clears the nickname for the empty value %j', async nickname => {
+    currentUserId = 'member';
+    expect((await update({ nickname: 'Pilot' })).statusCode).toBe(200);
+    const response = await update({ nickname });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().nickname).toBeNull();
+    expect(stored().nickname).toBeNull();
+  });
+
+  it('keeps emoji joiner sequences and scripts that use joiners', async () => {
+    currentUserId = 'member';
+    const family = '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}';
+    expect((await update({ nickname: family })).statusCode).toBe(200);
+    expect(stored().nickname).toBe(family);
+    expect((await update({ nickname: 'می\u200Cخواهم' })).statusCode).toBe(200);
+  });
+
+  it('applies the role hierarchy to another member\'s nickname', async () => {
+    // manager holds MANAGE_SPACE at position 1; moderator ranks above at 2.
+    currentUserId = 'manager';
+    const response = await update({ nickname: 'No' }, 'moderator');
+    expect(response.statusCode).toBe(403);
+    expect(response.json().code).toBe('role_hierarchy');
+    expect(stored('moderator').nickname).toBeNull();
+    expect(sendToSpace).not.toHaveBeenCalled();
+  });
+
+  it('lets an instance admin who is not a member manage roles, as before nicknames', async () => {
+    testDb.update(schema.users).set({ isAdmin: 1 }).where(eq(schema.users.id, 'outsider')).run();
+    currentUserId = 'outsider';
+    const response = await update({ roleIds: ['mod-role'] });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().roles.map((r: { id: string }) => r.id)).toEqual(['mod-role']);
   });
 
   it('accepts the nickname limit, and nickname-only updates preserve roles', async () => {

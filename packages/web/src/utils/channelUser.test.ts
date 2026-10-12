@@ -200,6 +200,14 @@ describe('filterMentionCandidates', () => {
     expect(filterMentionCandidates(all, 'ali').map((c) => c.userId)).toEqual([me.id]);
     expect(filterMentionCandidates(all, '', 2)).toHaveLength(2);
   });
+
+  it('matches a space nickname too', () => {
+    useSpaceStore.setState({
+      channelToSpaceMap: new Map([['chan-1', 'space-1']]),
+      members: [{ ...member('space-1', kai), nickname: 'Pilot' }, member('space-1', zed)],
+    });
+    expect(filterMentionCandidates(getChannelMentionCandidates('chan-1'), 'pil').map((c) => c.userId)).toEqual([kai.id]);
+  });
 });
 
 describe('self in a channel', () => {

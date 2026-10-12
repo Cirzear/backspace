@@ -5,6 +5,7 @@ import { useTransferStore } from './transferStore';
 import { getSessionItem, setSessionItem, removeSessionItem, flushSessionStorage } from '../platform/sessionStorage';
 import { useChannelActivityStore } from './channelActivityStore';
 import { useNotificationStore } from './notificationStore';
+import { useUnreadCountStore } from './unreadCountStore';
 import { useMemo } from 'react';
 import { create } from 'zustand';
 import { isChosenUserStatus, type ChosenUserStatus, type FederatedIdentity, type User } from '@backspace/shared';
@@ -92,6 +93,7 @@ function resetUserStores() {
   useSpaceStore.getState().reset();
   useNotificationStore.getState().reset();
   useChannelActivityStore.getState().reset();
+  useUnreadCountStore.getState().reset();
   useSocialStore.getState().reset();
   useVoiceStore.getState().resetSession();
   useInstanceStore.getState().reset();

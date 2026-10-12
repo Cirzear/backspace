@@ -221,5 +221,5 @@
   "directory_private_space": "Stell den Space auf „Öffentlich“ oder „Auf Anfrage“, bevor du ihn eintragen lässt.",
   "directory_requires_discovery": "Schalte zuerst das Entdecken von Spaces ein.",
   "space_owner_title_invalid": "Der Inhabertitel muss eine einzelne Zeile mit 1–{{max}} Zeichen sein",
-  "member_nickname_invalid": "Der Spitzname muss 1–32 Zeichen in einer Zeile enthalten. Verwende Zurücksetzen für den Standardnamen."
+  "member_nickname_invalid": "Spitznamen dürfen höchstens {{max}} Zeichen in einer Zeile haben, mindestens ein sichtbares Zeichen und keine Steuerzeichen."
 }

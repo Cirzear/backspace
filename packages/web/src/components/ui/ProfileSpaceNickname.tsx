@@ -7,5 +7,5 @@ export function ProfileSpaceNickname({ member }: { member: ProfileMemberContext 
   const { t } = useTranslation('spaces');
   const spaceMember = useProfileMember(member);
   if (!spaceMember?.nickname) return null;
-  return <div className="mb-1 text-sm text-txt-secondary">{t('members.nickname.label')}: {spaceMember.nickname}</div>;
+  return <div className="mb-1 text-sm text-txt-secondary">{t('members.nickname.shownAs', { nickname: spaceMember.nickname })}</div>;
 }

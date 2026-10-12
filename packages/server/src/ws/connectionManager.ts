@@ -870,8 +870,8 @@ class ConnectionManager {
   // ─── Broadcasting ─────────────────────────────────────────────────────────
 
   /** Send to a specific user (all their connections). */
-  sendToUser(userId: string, event: ServerEvent): void {
-    this.broadcaster.sendToUser(userId, event);
+  sendToUser(userId: string, event: ServerEvent, channelPerms?: bigint): void {
+    this.broadcaster.sendToUser(userId, event, channelPerms);
   }
 
   /** Send to all members of a space. */

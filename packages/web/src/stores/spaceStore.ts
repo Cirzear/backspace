@@ -10,7 +10,7 @@ import type {
   User,
 } from '@backspace/shared';
 import { create } from 'zustand';
-import { api, HttpError } from '../api/client';
+import { api, BackspaceApiClient, HttpError } from '../api/client';
 import { JoinRequestRequiredError } from '../utils/joinErrors';
 import { resolveAssetUrl, normalizeUserAssets } from '../utils/assetUrls';
 import {
@@ -24,6 +24,7 @@ import { applyDmPinMoves } from '../utils/dmOriginFailover';
 import { sortDmChannels } from '../utils/dmSorting';
 import { useAuthStore, getMyUserIdForOrigin, isMe } from './authStore';
 import { useChatStore } from './chatStore';
+import { useNotificationSettingsStore } from './notificationSettingsStore';
 import {
   putChannels,
   dropChannels,
@@ -435,6 +436,8 @@ export const useSpaceStore = create<SpaceState>((set, get, apiStore) => ({
             ...channelTableFields(state, replaced.tables),
             categoryOriginMap: withCategoryOrigins(state.categoryOriginMap, categories, origin),
             spacePermissions,
+            spaces: state.spaces.map(s => s.id === spaceId && s._instanceOrigin === origin
+              ? { ...s, myRoleIds: detail.members.find(m => m.userId === getMyUserIdForOrigin(origin))?.roles.map(r => r.id) ?? [] } : s),
             loadingSpaceId: endLoading(state),
           };
           if (state.currentSpaceId !== spaceId) return fields;
@@ -873,6 +876,21 @@ export function useIsDmChannel(channelId: string): boolean | undefined {
  * Returns the instance origin for a given channel ID.
  * '' = home instance, 'https://...' = remote instance.
  */
+/**
+ * The viewer's role ids in the space a channel belongs to, as the space's own
+ * instance lists them (`TaggedSpace.myRoleIds`). Undefined for a DM, and for
+ * a space whose roster has not been read yet.
+ */
+export function selectMyRoleIdsInChannel(
+  state: Pick<SpaceState, 'spaces' | 'channelToSpaceMap' | 'channelOriginMap'>,
+  channelId: string,
+): readonly string[] | undefined {
+  const spaceId = state.channelToSpaceMap.get(channelId);
+  if (spaceId === undefined) return undefined;
+  const origin = state.channelOriginMap.get(channelId) ?? '';
+  return state.spaces.find((s) => s.id === spaceId && (s._instanceOrigin ?? '') === origin)?.myRoleIds;
+}
+
 export function getChannelOrigin(channelId: string): string {
   return useSpaceStore.getState().channelOriginMap.get(channelId) ?? '';
 }

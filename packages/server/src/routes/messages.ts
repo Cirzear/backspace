@@ -15,7 +15,7 @@ import {
   type Embed,
 } from '@backspace/shared';
 import { sanitizeUser } from '../utils/sanitize.js';
-import { hasMassMention } from '@backspace/shared/src/mentions.js';
+import { addsMassMention, hasMassMention, massMentionFields } from '@backspace/shared/src/mentions.js';
 import { deleteAttachmentFiles } from '../utils/fileCleanup.js';
 import { sendError } from '../utils/httpErrors.js';
 import { parseHistoryPage, selectHistoryPage, markHistoryPageHonoured } from '../utils/messagePaging.js';
@@ -190,6 +190,7 @@ export function buildMessageWithUser(
     type: message.type,
     editedAt: message.editedAt,
     createdAt: message.createdAt,
+    ...massMentionFields(message.content),
     user: sanitizeUser(user),
     attachments: attachmentRows.map(a => ({
       id: a.id,
@@ -338,7 +339,8 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
       return sendError(reply, 400, 'content_too_long', { max: config.maxMessageLength });
     }
 
-    // @everyone/@here/role mentions ping many people; only MENTION_EVERYONE may send them.
+    // @everyone, @here and role mentions alert many people; only MENTION_EVERYONE
+    // may send them (permissions.md, "Mass mentions").
     if (hasMassMention(content) && !hasPermission(request.userId, spaceId, PermissionBits.MENTION_EVERYONE, id)) {
       return sendError(reply, 403, 'missing_permission', { permission: 'MENTION_EVERYONE' });
     }
@@ -452,9 +454,10 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
       return sendError(reply, 403, 'message_edit_not_author');
     }
 
-    // Editing cannot bypass the same mass-mention permission as creation.
+    // An edit that adds a mass mention needs the same permission as sending
+    // one. Keeping the ones the message already has does not.
     const mentionSpaceId = getChannelSpaceId(message.channelId);
-    if (hasMassMention(content) && (!mentionSpaceId || !hasPermission(request.userId, mentionSpaceId, PermissionBits.MENTION_EVERYONE, message.channelId))) {
+    if (addsMassMention(message.content, content) && (!mentionSpaceId || !hasPermission(request.userId, mentionSpaceId, PermissionBits.MENTION_EVERYONE, message.channelId))) {
       return sendError(reply, 403, 'missing_permission', { permission: 'MENTION_EVERYONE' });
     }
 
