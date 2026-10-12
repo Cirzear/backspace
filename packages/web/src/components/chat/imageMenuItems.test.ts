@@ -60,8 +60,8 @@ it('keeps failures visible and never reports a false success', async () => {
   expect(toast).not.toHaveBeenCalledWith('Added to my stickers', 'success');
 });
 
-it('collects remote/federated stickers across servers by downloading and uploading', async () => {
-  const fetchImage = vi.fn().mockResolvedValue(new Response(new Blob(['remote-webp'], { type: 'image/webp' })));
+it('reads another instance\'s sticker from the token\'s own address and uploads it to the home collection', async () => {
+  const fetchImage = vi.fn().mockResolvedValue(new Response('remote-webp', { headers: { 'Content-Type': 'image/webp' } }));
   vi.stubGlobal('fetch', fetchImage);
   vi.mocked(api.stickers.collect).mockRejectedValueOnce(
     new HttpError(400, 'Only stickers from this instance can be added to a collection', undefined, 'sticker_not_local'),
@@ -69,9 +69,31 @@ it('collects remote/federated stickers across servers by downloading and uploadi
   const item = menu(token)[0]!;
   if (item.type !== 'action') throw new Error('Expected action');
   await item.onClick();
-  expect(fetchImage).toHaveBeenCalledWith(`https://chat.test/api/stickers/assets/${'a'.repeat(64)}.webp`);
+  expect(fetchImage).toHaveBeenCalledWith(`https://chat.test/api/stickers/assets/${'a'.repeat(64)}.webp`, { credentials: 'omit', cache: 'no-store' });
   expect(uploadSticker).toHaveBeenCalledWith(expect.any(Blob), 'Happy');
   expect(toast).toHaveBeenLastCalledWith('Added to my stickers', 'success');
+});
+
+it('does not download a sticker this instance reports as missing', async () => {
+  const fetchImage = vi.fn();
+  vi.stubGlobal('fetch', fetchImage);
+  vi.mocked(api.stickers.collect).mockRejectedValueOnce(new HttpError(404, 'Sticker not found', undefined, 'sticker_not_found'));
+  const item = menu(token)[0]!;
+  if (item.type !== 'action') throw new Error('Expected action');
+  await item.onClick();
+  expect(fetchImage).not.toHaveBeenCalled();
+  expect(uploadSticker).not.toHaveBeenCalled();
+  expect(toast).toHaveBeenLastCalledWith('That sticker no longer exists.', 'warning');
+});
+
+it('refuses a remote answer that is too large before uploading it', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(new Uint8Array(5 * 1024 * 1024 + 1), { headers: { 'Content-Type': 'image/webp' } })));
+  vi.mocked(api.stickers.collect).mockRejectedValueOnce(new HttpError(400, 'not local', undefined, 'sticker_not_local'));
+  const item = menu(token)[0]!;
+  if (item.type !== 'action') throw new Error('Expected action');
+  await item.onClick();
+  expect(uploadSticker).not.toHaveBeenCalled();
+  expect(toast).toHaveBeenLastCalledWith(expect.stringContaining('5 MB'), 'warning');
 });
 
 it('shows the localized text for a coded refusal such as full collection', async () => {
