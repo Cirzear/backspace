@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({ open: vi.fn(), send: vi.fn(), toast: vi.fn() }
 vi.mock('../../stores/contextMenuStore', () => ({ useContextMenuStore: { getState: () => ({ open: mocks.open }) } }));
 vi.mock('../../stores/uiStore', () => ({ useUIStore: { getState: () => ({ addToast: mocks.toast }) } }));
 vi.mock('../../hooks/useWebSocket', () => ({ wsSend: mocks.send }));
-import { useChannelPokeStore } from './channelPokeStore';
+import { useChannelPokeStore } from '../../stores/channelPokeStore';
 import { useChannelPokeMenu } from './useChannelPokeMenu';
 
 const options = { channelId: 'chat', targetUserId: 'target', origin: 'https://host.test', enabled: true };

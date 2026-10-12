@@ -1,5 +1,5 @@
 import { receiveChannelPoke } from '../components/chat/channelPoke';
-import { useChannelPokeStore } from '../components/chat/channelPokeStore';
+import { useChannelPokeStore } from '../stores/channelPokeStore';
 import { applySpaceMemberUpdate } from '../stores/spaceMemberUpdates';
 import { useUnreadCountStore } from '../stores/unreadCountStore';
 import React, { useEffect, useRef } from 'react';

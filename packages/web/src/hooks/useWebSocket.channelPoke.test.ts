@@ -46,7 +46,7 @@ const { connectInstance, disconnectInstance } = await import('./useWebSocket');
 const { useSpaceStore } = await import('../stores/spaceStore');
 const { useAuthStore } = await import('../stores/authStore');
 const { useChatStore } = await import('../stores/chatStore');
-const { useChannelPokeStore } = await import('../components/chat/channelPokeStore');
+const { useChannelPokeStore } = await import('../stores/channelPokeStore');
 
 const NOVA = 'https://nova.example';
 const SPACE = 'space-nova';

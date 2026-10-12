@@ -1,6 +1,6 @@
 import type { MouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useChannelPokeStore } from './channelPokeStore';
+import { useChannelPokeStore } from '../../stores/channelPokeStore';
 import { useContextMenuStore } from '../../stores/contextMenuStore';
 import { useUIStore } from '../../stores/uiStore';
 import { wsSend } from '../../hooks/useWebSocket';

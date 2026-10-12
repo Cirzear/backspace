@@ -1,4 +1,4 @@
-import { useChannelPokeStore } from '../components/chat/channelPokeStore';
+import { useChannelPokeStore } from './channelPokeStore';
 import { useUnreadCountStore } from './unreadCountStore';
 import { useMemo } from 'react';
 import { create } from 'zustand';
