@@ -145,9 +145,11 @@ describe('role mention audiences without permission-bit disclosure', () => {
     useSpaceStore.getState().populateFromReady('https://remote.example', [space([EVERYONE, VIP, MODS])]);
     expect(useSpaceStore.getState().currentSpaceId).toBeNull();
     expect(useSpaceStore.getState().spaces[0]?.myRoleIds).toEqual(['r-vip']);
-    const event = { channelId: GENERAL.id, message: { userId: 'u-owner', content: '<@&r-vip>' } } as Parameters<typeof messageAlertsUser>[0];
+    const event = { channelId: GENERAL.id, message: { userId: 'u-owner', content: '<@&r-vip>', mentionRoleIds: ['r-vip'] } } as Parameters<typeof messageAlertsUser>[0];
     expect(messageAlertsUser(event)).toBe(true);
-    expect(messageAlertsUser({ ...event, message: { ...event.message, content: '<@&r-mod>' } })).toBe(false);
+    expect(messageAlertsUser({ ...event, message: { ...event.message, content: '<@&r-mod>', mentionRoleIds: ['r-mod'] } })).toBe(false);
+    // The text alone, without the hosting instance's stamp, does not alert.
+    expect(messageAlertsUser({ ...event, message: { ...event.message, mentionRoleIds: undefined } })).toBe(false);
   });
   it('refreshes the audience after permission changes even when the space is not open', async () => {
     useAuthStore.setState({ user: user('u-me'), myRowIds: new Map() });

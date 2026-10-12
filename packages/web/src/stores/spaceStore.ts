@@ -1521,6 +1521,21 @@ export function useIsDmChannel(channelId: string): boolean | undefined {
  * Returns the instance origin for a given channel ID.
  * '' = home instance, 'https://...' = remote instance.
  */
+/**
+ * The viewer's role ids in the space a channel belongs to, as the space's own
+ * instance lists them (`TaggedSpace.myRoleIds`). Undefined for a DM, and for
+ * a space whose roster has not been read yet.
+ */
+export function selectMyRoleIdsInChannel(
+  state: Pick<SpaceState, 'spaces' | 'channelToSpaceMap' | 'channelOriginMap'>,
+  channelId: string,
+): readonly string[] | undefined {
+  const spaceId = state.channelToSpaceMap.get(channelId);
+  if (spaceId === undefined) return undefined;
+  const origin = state.channelOriginMap.get(channelId) ?? '';
+  return state.spaces.find((s) => s.id === spaceId && (s._instanceOrigin ?? '') === origin)?.myRoleIds;
+}
+
 export function getChannelOrigin(channelId: string): string {
   return useSpaceStore.getState().channelOriginMap.get(channelId) ?? '';
 }
