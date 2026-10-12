@@ -1,6 +1,14 @@
 /** Namespaced values reuse message/reaction transport without colliding with native emoji. */
 export const STICKER_PREFIX = 'sticker:';
 export const MAX_STICKER_BYTES = 5 * 1024 * 1024;
+/** Longest collection name, after trimming. */
+export const MAX_STICKER_NAME_LENGTH = 100;
+/** Most stickers one account keeps in its collection. */
+export const MAX_PERSONAL_STICKERS = 200;
+/** Most images one upload form sends; the per-account upload rate allows a full batch in one minute. */
+export const MAX_STICKER_BATCH = 20;
+/** Uploads one account may send per minute. */
+export const STICKER_UPLOADS_PER_MINUTE = 30;
 export const STICKER_ID_PATTERN = /^[a-f0-9]{64}$/;
 
 export interface PersonalSticker {

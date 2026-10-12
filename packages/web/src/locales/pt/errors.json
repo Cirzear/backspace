@@ -224,5 +224,6 @@
   "member_nickname_invalid": "Apelidos podem ter no máximo {{max}} caracteres em uma linha, com pelo menos um caractere visível e sem caracteres de controle.",
   "sticker_invalid_image": "Envie uma imagem PNG, JPEG, WebP ou GIF de no máximo {{maxMb}} MB.",
   "sticker_not_local": "Ainda não é possível adicionar à sua coleção figurinhas de outro servidor.",
-  "sticker_not_found": "Essa figurinha não existe mais."
+  "sticker_not_found": "Essa figurinha não existe mais.",
+  "sticker_collection_full": "Sua coleção está cheia com {{max}} figurinhas. Remova uma para adicionar outra."
 }

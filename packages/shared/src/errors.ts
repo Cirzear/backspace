@@ -272,6 +272,7 @@ export const ERROR_CODES = [
   'sticker_invalid_image',
   'sticker_not_local',
   'sticker_not_found',
+  'sticker_collection_full',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

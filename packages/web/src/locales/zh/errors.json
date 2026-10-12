@@ -224,5 +224,6 @@
   "member_nickname_invalid": "昵称最多 {{max}} 个字符，须为单行，至少包含一个可见字符，且不能包含控制字符。",
   "sticker_invalid_image": "请上传不超过 {{maxMb}} MB 的 PNG、JPEG、WebP 或 GIF 图片。",
   "sticker_not_local": "暂时无法将其他服务器的表情添加到“我的表情”。",
-  "sticker_not_found": "该表情已不存在。"
+  "sticker_not_found": "该表情已不存在。",
+  "sticker_collection_full": "“我的表情”最多可保存 {{max}} 个。请先移除一个再添加。"
 }

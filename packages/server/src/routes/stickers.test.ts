@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
 import * as schema from '../db/schema.js';
-import { stickerUrl, MAX_STICKER_BYTES } from '@backspace/shared/src/stickers.js';
+import { stickerUrl, MAX_STICKER_BYTES, MAX_PERSONAL_STICKERS, STICKER_UPLOADS_PER_MINUTE } from '@backspace/shared/src/stickers.js';
 
 const settings = vi.hoisted(() => ({ uploadDir: '' }));
 let db: ReturnType<typeof drizzle<typeof schema>>;
@@ -23,9 +23,10 @@ vi.mock('../utils/auth.js', () => ({
     request.userId = request.headers.authorization;
   },
 }));
-import { stickerRoutes, encodeSticker } from './stickers.js';
+import { stickerRoutes, encodeSticker, _resetStickerUploadLimit } from './stickers.js';
 
 beforeEach(async () => {
+  _resetStickerUploadLimit();
   settings.uploadDir = await mkdtemp(path.join(tmpdir(), 'backspace-stickers-'));
   sqlite = new Database(':memory:');
   sqlite.pragma('foreign_keys = ON');
@@ -112,6 +113,49 @@ describe('personal stickers', () => {
     expect((await app.inject({ method: 'POST', url: '/api/stickers', headers: { authorization: 'alice' }, payload: { name: 'remote', url: 'https://example.com/x.png' } })).statusCode).toBe(400);
   });
 
+  it('caps a collection and still returns an entry that is already in it', async () => {
+    const existing = (await upload()).json();
+    const insert = sqlite.prepare('INSERT INTO sticker_assets (id, created_at) VALUES (?, 1)');
+    const collectRow = sqlite.prepare("INSERT INTO personal_stickers (user_id, sticker_id, name, created_at) VALUES ('alice', ?, 'Filler', 1)");
+    for (let index = 1; index < MAX_PERSONAL_STICKERS; index += 1) {
+      const id = index.toString(16).padStart(64, '0');
+      insert.run(id);
+      collectRow.run(id);
+    }
+    const full = await upload();
+    expect(full.statusCode).toBe(409);
+    expect(full.json()).toMatchObject({ code: 'sticker_collection_full', details: { max: MAX_PERSONAL_STICKERS } });
+    const other = (await app.inject({ method: 'POST', url: '/api/stickers', headers: { authorization: 'bob' },
+      payload: { name: 'Other', image: (await sharp({ create: { width: 8, height: 8, channels: 4, background: 'blue' } }).png().toBuffer()).toString('base64') } })).json();
+    const collectOther = await app.inject({ method: 'POST', url: `/api/stickers/${other.id}/collect`, headers: { authorization: 'alice' }, payload: { token: other.token, name: 'Other' } });
+    expect(collectOther.statusCode).toBe(409);
+    const again = await app.inject({ method: 'POST', url: `/api/stickers/${existing.id}/collect`, headers: { authorization: 'alice' }, payload: { token: existing.token, name: 'Again' } });
+    expect(again.statusCode).toBe(200);
+    expect(again.json()).toMatchObject({ id: existing.id, name: 'Happy' });
+  });
+
+  it('limits uploads per account per minute', async () => {
+    for (let index = 0; index < STICKER_UPLOADS_PER_MINUTE; index += 1) {
+      expect((await upload()).statusCode).toBe(200);
+    }
+    const limited = await upload();
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json()).toMatchObject({ code: 'rate_limited' });
+    const image = await sharp({ create: { width: 8, height: 8, channels: 4, background: 'red' } }).png().toBuffer();
+    const otherAccount = await app.inject({ method: 'POST', url: '/api/stickers', headers: { authorization: 'bob' },
+      payload: { name: 'Happy', image: image.toString('base64') } });
+    expect(otherAccount.statusCode).toBe(200);
+  });
+
+  it('stores large images within the display box', async () => {
+    const image = await sharp({ create: { width: 2048, height: 1024, channels: 4, background: 'green' } }).png().toBuffer();
+    const metadata = await sharp(await encodeSticker(image)).metadata();
+    expect([metadata.width, metadata.height]).toEqual([512, 256]);
+    const small = await sharp({ create: { width: 40, height: 20, channels: 4, background: 'green' } }).png().toBuffer();
+    const smallMetadata = await sharp(await encodeSticker(small)).metadata();
+    expect([smallMetadata.width, smallMetadata.height]).toEqual([40, 20]);
+  });
+
   it('preserves animation frames', async () => {
     const frames = Buffer.alloc(8 * 16 * 4, 255);
     frames.fill(0, 8 * 8 * 4);
@@ -120,5 +164,14 @@ describe('personal stickers', () => {
     const metadata = await sharp(result, { animated: true }).metadata();
     expect(metadata.pages).toBe(2);
     expect(metadata.delay).toEqual([100, 200]);
+  });
+
+  it('resizes every frame of a large animation', async () => {
+    const frames = Buffer.alloc(800 * 1600 * 4, 255);
+    frames.fill(0, 800 * 800 * 4);
+    const gif = await sharp(frames, { raw: { width: 800, height: 1600, channels: 4, pageHeight: 800 } }).gif({ delay: [100, 200], loop: 0 }).toBuffer();
+    const metadata = await sharp(await encodeSticker(gif), { animated: true }).metadata();
+    expect(metadata.pages).toBe(2);
+    expect([metadata.width, metadata.pageHeight]).toEqual([512, 512]);
   });
 });

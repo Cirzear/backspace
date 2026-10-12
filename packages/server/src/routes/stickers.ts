@@ -1,20 +1,40 @@
 import type { FastifyInstance } from 'fastify';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, count, desc, eq } from 'drizzle-orm';
 import sharp from 'sharp';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import path from 'node:path';
-import { MAX_STICKER_BYTES, STICKER_ID_PATTERN, STICKER_PREFIX, type PersonalSticker } from '@backspace/shared/src/stickers.js';
+import {
+  MAX_PERSONAL_STICKERS, MAX_STICKER_BYTES, MAX_STICKER_NAME_LENGTH, STICKER_ID_PATTERN, STICKER_PREFIX,
+  STICKER_UPLOADS_PER_MINUTE, type PersonalSticker,
+} from '@backspace/shared/src/stickers.js';
 import { getDb, schema } from '../db/index.js';
 import { authenticate } from '../utils/auth.js';
 import { getOurOrigin } from '../utils/federationAuth.js';
 import { config } from '../config.js';
 import { sendError } from '../utils/httpErrors.js';
+import { createFixedWindowLimit } from '../utils/fixedWindowLimit.js';
 
 // Separate from attachment cleanup: favorites and historical messages share immutable assets.
 const assetPath = (id: string) => path.join(config.uploadDir, 'stickers', `${id}.webp`);
 const tokenFor = (id: string) => `${STICKER_PREFIX}${getOurOrigin()}/api/stickers/assets/${id}.webp`;
 const MAX_STICKER_MB = MAX_STICKER_BYTES / (1024 * 1024);
+/** Stored stickers fit this box; the largest place one is shown is a 240 px message row. */
+const MAX_STICKER_DIMENSION = 512;
+/** Bound decoded pixels across animation frames, not only the compressed upload size. */
+const MAX_DECODED_PIXELS = 16_777_216;
+
+/**
+ * Uploads per account (the row id on this instance, so each federated account
+ * counts on its own). Every upload is a full decode and re-encode, so the
+ * budget is per account and not only the per-address HTTP limit.
+ */
+const uploadLimit = createFixedWindowLimit({ max: STICKER_UPLOADS_PER_MINUTE, windowMs: 60_000 });
+
+/** Tests only: forget every account's upload window. */
+export function _resetStickerUploadLimit(): void {
+  uploadLimit.reset();
+}
 
 /** Thrown by `encodeSticker` for bytes that are not an accepted image. */
 export class StickerImageError extends Error {
@@ -24,34 +44,55 @@ export class StickerImageError extends Error {
   }
 }
 
-function collectSticker(input: { userId: string; id: string; name: string }): PersonalSticker {
+function collectionSize(userId: string): number {
+  return getDb().select({ count: count() }).from(schema.personalStickers)
+    .where(eq(schema.personalStickers.userId, userId)).get()?.count ?? 0;
+}
+
+/**
+ * Add an asset to a collection, or return the entry that is already there.
+ * Null when the collection is full. Synchronous from the size check to the
+ * insert, so two requests from one account cannot both take the last place.
+ */
+function collectSticker(input: { userId: string; id: string; name: string }): PersonalSticker | null {
   const db = getDb();
+  const existing = () => db.select().from(schema.personalStickers).where(and(
+    eq(schema.personalStickers.userId, input.userId), eq(schema.personalStickers.stickerId, input.id),
+  )).get();
+  const found = existing();
+  if (found) return { id: input.id, name: found.name, token: tokenFor(input.id) };
+  if (collectionSize(input.userId) >= MAX_PERSONAL_STICKERS) return null;
   db.insert(schema.personalStickers).values({
     userId: input.userId, stickerId: input.id, name: input.name, createdAt: Date.now(),
   }).onConflictDoNothing().run();
-  const row = db.select().from(schema.personalStickers).where(and(
-    eq(schema.personalStickers.userId, input.userId), eq(schema.personalStickers.stickerId, input.id),
-  )).get()!;
-  return { id: input.id, name: row.name, token: tokenFor(input.id) };
+  return { id: input.id, name: existing()!.name, token: tokenFor(input.id) };
 }
 
-/** Re-encode instead of trusting MIME/extension; decode all frames to preserve animations safely. */
+/**
+ * Re-encode instead of trusting MIME/extension; decode all frames to preserve
+ * animations safely. The result fits MAX_STICKER_DIMENSION and is refused
+ * when it is still larger than an upload may be, so a stored asset is never
+ * bigger than the bytes the account sent.
+ */
 export async function encodeSticker(bytes: Buffer): Promise<Buffer> {
   if (!bytes.length || bytes.length > MAX_STICKER_BYTES) throw new StickerImageError();
-  // Bound decoded pixels across animation frames, not only the compressed upload size.
-  const MAX_DECODED_PIXELS = 16_777_216;
+  let encoded: Buffer;
   try {
     const image = sharp(bytes, { animated: true, limitInputPixels: MAX_DECODED_PIXELS });
     const metadata = await image.metadata();
     if (!metadata.format || !['png', 'jpeg', 'webp', 'gif'].includes(metadata.format)) {
       throw new StickerImageError();
     }
-    return await image.rotate().webp().toBuffer();
+    encoded = await image.rotate()
+      .resize(MAX_STICKER_DIMENSION, MAX_STICKER_DIMENSION, { fit: 'inside', withoutEnlargement: true })
+      .webp().toBuffer();
   } catch (error) {
     // Sharp's own messages name decoder internals; the caller only needs to know the image was refused.
     if (error instanceof StickerImageError) throw error;
     throw new StickerImageError();
   }
+  if (encoded.length > MAX_STICKER_BYTES) throw new StickerImageError();
+  return encoded;
 }
 
 export async function stickerRoutes(app: FastifyInstance): Promise<void> {
@@ -67,10 +108,15 @@ export async function stickerRoutes(app: FastifyInstance): Promise<void> {
     preHandler: authenticate,
     bodyLimit: Math.ceil(MAX_STICKER_BYTES / 3) * 4 + 4096,
     schema: { body: { type: 'object', required: ['name', 'image'], additionalProperties: false,
-      properties: { name: { type: 'string', minLength: 1, maxLength: 100 }, image: { type: 'string', minLength: 4 } } } },
+      properties: { name: { type: 'string', minLength: 1, maxLength: MAX_STICKER_NAME_LENGTH }, image: { type: 'string', minLength: 4 } } } },
   }, async (request, reply) => {
     const { name, image } = request.body;
     if (!name.trim()) return sendError(reply, 400, 'validation_failed');
+    if (!uploadLimit.consume(request.userId)) return sendError(reply, 429, 'rate_limited');
+    // Refused before the decode; collectSticker checks again where the row is written.
+    if (collectionSize(request.userId) >= MAX_PERSONAL_STICKERS) {
+      return sendError(reply, 409, 'sticker_collection_full', { max: MAX_PERSONAL_STICKERS });
+    }
     if (!/^[A-Za-z0-9+/]*={0,2}$/.test(image)) return sendError(reply, 400, 'validation_failed');
     const bytes = Buffer.from(image, 'base64');
     if (bytes.toString('base64') !== image) return sendError(reply, 400, 'validation_failed');
@@ -88,7 +134,9 @@ export async function stickerRoutes(app: FastifyInstance): Promise<void> {
     await writeFile(temporaryPath, encoded);
     await rename(temporaryPath, assetPath(id));
     getDb().insert(schema.stickerAssets).values({ id, createdAt: Date.now() }).onConflictDoNothing().run();
-    return collectSticker({ userId: request.userId, id, name: name.trim() });
+    const sticker = collectSticker({ userId: request.userId, id, name: name.trim() });
+    if (!sticker) return sendError(reply, 409, 'sticker_collection_full', { max: MAX_PERSONAL_STICKERS });
+    return sticker;
   });
 
   app.post<{ Params: { id: string }; Body: { token: string; name: string } }>('/api/stickers/:id/collect', {
@@ -96,7 +144,7 @@ export async function stickerRoutes(app: FastifyInstance): Promise<void> {
     schema: { body: { type: 'object', required: ['token', 'name'], additionalProperties: false, properties: {
       token: { type: 'string', maxLength: 2048 },
       // The collecting client names the entry in its own language; the server stores no wording of its own.
-      name: { type: 'string', minLength: 1, maxLength: 100 },
+      name: { type: 'string', minLength: 1, maxLength: MAX_STICKER_NAME_LENGTH },
     } },
       params: { type: 'object', required: ['id'], properties: { id: { type: 'string', pattern: STICKER_ID_PATTERN.source } } } },
   }, async (request, reply) => {
@@ -105,7 +153,9 @@ export async function stickerRoutes(app: FastifyInstance): Promise<void> {
     if (!asset) return sendError(reply, 404, 'sticker_not_found');
     const name = request.body.name.trim();
     if (!name) return sendError(reply, 400, 'validation_failed');
-    return collectSticker({ userId: request.userId, id: asset.id, name });
+    const sticker = collectSticker({ userId: request.userId, id: asset.id, name });
+    if (!sticker) return sendError(reply, 409, 'sticker_collection_full', { max: MAX_PERSONAL_STICKERS });
+    return sticker;
   });
 
   app.delete<{ Params: { id: string } }>('/api/stickers/:id', { preHandler: authenticate }, async (request) => {
