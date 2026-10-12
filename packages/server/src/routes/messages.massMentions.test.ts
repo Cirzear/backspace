@@ -177,3 +177,15 @@ describe('mass mention authorization across transports and edits', () => {
     expect(testDb.select().from(schema.messages).all()).toEqual([]);
   });
 });
+
+describe('system messages carry no mass mention stamps', () => {
+  it('reads a system row whose recorded name is a mass mention as plain text', async () => {
+    const id = generateSnowflake();
+    testDb.insert(schema.messages).values({
+      id, channelId: CHANNEL, userId: 'member', type: 'system', createdAt: NOW,
+      content: JSON.stringify({ event: 'channel_poke', targetUserId: 'owner', targetDisplayName: '@everyone <@&role>' }),
+    }).run();
+    const history = await app.inject({ method: 'GET', url: '/api/channels/' + CHANNEL + '/messages' });
+    expect(history.json()).toEqual([expect.objectContaining({ id, type: 'system', mentionEveryone: false, mentionRoleIds: [] })]);
+  });
+});

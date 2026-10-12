@@ -173,6 +173,18 @@ export function isReplyTargetInChannel(channelId: string, replyToId: string): bo
   return target !== undefined;
 }
 
+/**
+ * The mass mention stamps of a stored channel message (`massMentionFields`).
+ * A system message is written by this instance and records names people
+ * chose (a poke records its target's name), so its text is never a mention:
+ * a member whose nickname is `@everyone` must not reach every member by
+ * being poked. Only messages members wrote carry the stamps.
+ */
+export function storedMassMentionFields(message: { type: 'user' | 'system'; content: string | null }): { mentionEveryone: boolean; mentionRoleIds: string[] } {
+  if (message.type === 'system') return { mentionEveryone: false, mentionRoleIds: [] };
+  return massMentionFields(message.content);
+}
+
 export function buildMessageWithUser(
   message: typeof schema.messages.$inferSelect,
   user: typeof schema.users.$inferSelect,
@@ -190,7 +202,7 @@ export function buildMessageWithUser(
     type: message.type,
     editedAt: message.editedAt,
     createdAt: message.createdAt,
-    ...massMentionFields(message.content),
+    ...storedMassMentionFields(message),
     user: sanitizeUser(user),
     attachments: attachmentRows.map(a => ({
       id: a.id,
