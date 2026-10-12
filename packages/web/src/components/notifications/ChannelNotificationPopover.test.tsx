@@ -228,23 +228,23 @@ describe('NotificationSettingsModal for a space', () => {
 describe('mass mention settings controls', () => {
   it('writes a space suppression preference to its hosting origin', async () => {
     render(<NotificationSettingsControls origin={REMOTE} spaceId={SPACE} channelId={null} />);
-    const checkbox = screen.getByRole('checkbox', { name: 'Suppress @everyone and @here' });
+    const checkbox = screen.getByRole('switch', { name: 'Suppress @everyone and @here' });
     fireEvent.click(checkbox);
-    await waitFor(() => expect(checkbox).toBeChecked());
+    await waitFor(() => expect(checkbox).toHaveAttribute('aria-checked', 'true'));
     expect(updateSpace).toHaveBeenCalledWith(SPACE, { suppressEveryone: true });
     expect(clientOrigins).toContain(REMOTE);
     expect(updateChannel).not.toHaveBeenCalled();
   });
   it('keeps suppression controls out of channel overrides', () => {
     openPopover();
-    expect(screen.queryByRole('checkbox', { name: 'Suppress role mentions' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('switch', { name: 'Suppress role mentions' })).not.toBeInTheDocument();
   });
   it('reports a failed save without silently changing the preference', async () => {
     updateSpace.mockRejectedValue(new Error('offline'));
     render(<NotificationSettingsControls origin={REMOTE} spaceId={SPACE} channelId={null} />);
-    const checkbox = screen.getByRole('checkbox', { name: 'Suppress role mentions' });
+    const checkbox = screen.getByRole('switch', { name: 'Suppress role mentions' });
     fireEvent.click(checkbox);
     await waitFor(() => expect(useUIStore.getState().toasts).toHaveLength(1));
-    expect(checkbox).not.toBeChecked();
+    expect(checkbox).toHaveAttribute('aria-checked', 'false');
   });
 });

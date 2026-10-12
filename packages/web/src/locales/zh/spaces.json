@@ -452,7 +452,8 @@
       "deafenMembers": "拒听成员",
       "moveMembers": "移动成员",
       "stream": "视频推流",
-      "disconnectMembers": "断开成员连接"
+      "disconnectMembers": "断开成员连接",
+      "mentionEveryone": "提及 @everyone、@here 和身份组"
     },
     "tristate": {
       "deny": "拒绝",
@@ -659,6 +660,7 @@
     "saveFailed": "无法保存通知设置",
     "suppressEveryone": "屏蔽 @everyone 和 @here 提醒",
     "suppressRoles": "屏蔽 @身份组 提醒",
-    "permission": "提及 @everyone、@here 和身份组"
+    "massHeading": "群组提及",
+    "massNote": "@here 与 @everyone 通知的成员相同。直接提及你的消息始终会通知你。"
   }
 }

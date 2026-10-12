@@ -458,7 +458,8 @@
       "deafenMembers": "Ensurdecer membros",
       "moveMembers": "Mover membros",
       "stream": "Transmitir",
-      "disconnectMembers": "Desconectar membros"
+      "disconnectMembers": "Desconectar membros",
+      "mentionEveryone": "Mencionar @everyone, @here e cargos"
     },
     "tristate": {
       "deny": "Negar",
@@ -685,6 +686,7 @@
     "saveFailed": "Não foi possível salvar as configurações de notificação",
     "suppressEveryone": "Suprimir @everyone e @here",
     "suppressRoles": "Suprimir menções a cargos",
-    "permission": "Mencionar @everyone, @here e cargos"
+    "massHeading": "Menções em grupo",
+    "massNote": "@here alcança os mesmos membros que @everyone. Menções diretas a você sempre notificam."
   }
 }

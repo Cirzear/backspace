@@ -455,7 +455,8 @@
       "deafenMembers": "Mitgliedern den Ton ausschalten",
       "moveMembers": "Mitglieder verschieben",
       "stream": "Streamen",
-      "disconnectMembers": "Mitglieder trennen"
+      "disconnectMembers": "Mitglieder trennen",
+      "mentionEveryone": "@everyone, @here und Rollen erwähnen"
     },
     "tristate": {
       "deny": "Verbieten",
@@ -672,6 +673,7 @@
     "saveFailed": "Benachrichtigungseinstellungen konnten nicht gespeichert werden",
     "suppressEveryone": "@everyone und @here unterdrücken",
     "suppressRoles": "Rollenerwähnungen unterdrücken",
-    "permission": "@everyone, @here und Rollen erwähnen"
+    "massHeading": "Gruppenerwähnungen",
+    "massNote": "@here erreicht dieselben Mitglieder wie @everyone. Erwähnungen von dir mit Namen benachrichtigen dich immer."
   }
 }
