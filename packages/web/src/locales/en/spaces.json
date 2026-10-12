@@ -455,7 +455,8 @@
       "deafenMembers": "Deafen Members",
       "moveMembers": "Move Members",
       "stream": "Stream",
-      "disconnectMembers": "Disconnect Members"
+      "disconnectMembers": "Disconnect Members",
+      "mentionEveryone": "Mention @everyone, @here and Roles"
     },
     "tristate": {
       "deny": "Deny",
@@ -682,6 +683,10 @@
     "mutedIndefinitely": "Muted until you unmute",
     "spaceMuted": "This space is muted, so its channels are too.",
     "mutedIndicator": "Muted",
-    "saveFailed": "Could not save notification settings"
+    "saveFailed": "Could not save notification settings",
+    "suppressEveryone": "Suppress @everyone and @here",
+    "suppressRoles": "Suppress role mentions",
+    "massHeading": "Group mentions",
+    "massNote": "@here reaches the same members as @everyone. Mentions of you by name always notify you."
   }
 }

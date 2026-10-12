@@ -13,7 +13,7 @@ import { useContextMenuStore } from '../../stores/contextMenuStore';
 import { buildMessageMenuItems } from './messageMenuItems';
 import { useAuthStore, useSelfIdentity } from '../../stores/authStore';
 import { useChatStore } from '../../stores/chatStore';
-import { useSpaceStore } from '../../stores/spaceStore';
+import { selectMyRoleIdsInChannel, useSpaceStore } from '../../stores/spaceStore';
 import { useUIStore } from '../../stores/uiStore';
 import { AttachmentRenderer, attUrlOf } from './AttachmentRenderer';
 import { AttachmentProgress } from './AttachmentProgress';
@@ -27,7 +27,7 @@ import { isDeletedPartnerDm } from '../../utils/dmFormatters';
 import { isFederationGlobeApplicable, isMine, spaceMemberName } from '../../utils/identity';
 import { useCanonicalUserView } from '../../utils/userViewLookup';
 import { useSelfIdInChannel } from '../../utils/channelUser';
-import { contentMentionsAny } from '../../utils/mentionTokens';
+import { mentionsReader } from '../../utils/notificationFilters';
 import {
   isPendingMessage,
   usePendingMessageStore,
@@ -214,6 +214,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
   // The channel whose origin issued this message's ids; mentions resolve there.
   const mentionChannelId = channelKey || null;
   const selfIdHere = useSelfIdInChannel(mentionChannelId);
+  const myRoleIdsHere = useSpaceStore((s) => (mentionChannelId ? selectMyRoleIdsInChannel(s, mentionChannelId) : undefined));
   const startEditing = () => {
     setEditContent(message.content ?? '');
     setEditingMessage(message.id);
@@ -460,10 +461,20 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
 
   const replyRoleColor = (msg: { userId: string }) => getMemberDisplayColor(msg.userId);
 
-  // Self-mention highlighting. A token carries an id on the channel's origin,
-  // so "me" is my id there, not my home id (#332). Tokens inside code are not
-  // mentions (the shared scan in utils/mentionTokens.ts).
-  const isMentioned = !!selfIdHere && !!message.content && contentMentionsAny(message.content, new Set([selfIdHere]));
+  // Mention highlighting, by the rule the alert uses (`messageMentions`): a
+  // `<@id>` token for my id on the channel's origin, not my home id (#332),
+  // or a mass mention the space's instance stamped that reaches me
+  // (`@everyone`, `@here`, a role I hold there). Tokens inside code are not
+  // mentions (the shared scan in utils/mentionTokens.ts). A pending message
+  // has no stamps yet.
+  const stamped = isPendingMessage(message) ? undefined : message;
+  const isMentioned = mentionsReader({
+    myId: selfIdHere,
+    myRoleIds: myRoleIdsHere,
+    content: message.content,
+    mentionEveryone: stamped?.mentionEveryone,
+    mentionRoleIds: stamped?.mentionRoleIds,
+  });
 
   const content = (
     <div

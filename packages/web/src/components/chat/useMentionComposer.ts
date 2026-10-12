@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState, type RefObject, type ChangeEvent, type KeyboardEvent } from 'react';
 import { useComposerStore } from '../../stores/composerStore';
+import { useSpaceStore } from '../../stores/spaceStore';
 import {
   filterMentionCandidates,
   useChannelMentionCandidates,
@@ -24,8 +25,8 @@ interface Options {
 
 /**
  * The composer's mention handling: the picker's state and keys, and the map
- * between the stored draft (wire `<@id>` tokens) and the text the textarea
- * shows (`@name`). The draft stays in wire form; every other composer feature
+ * between the stored draft (wire `<@id>` and `<@&id>` tokens) and the text the
+ * textarea shows (`@name`). The draft stays in wire form; every other composer feature
  * works on it and converts textarea offsets with `mentionModel`.
  */
 export function useMentionComposer({ channelId, draftText, textareaRef }: Options) {
@@ -36,13 +37,24 @@ export function useMentionComposer({ channelId, draftText, textareaRef }: Option
   // so a DM shows its own members (the signed-in user included) and never the
   // roster of the space loaded last.
   const resolveUser = useChannelUserResolver(channelId);
+  // Role labels come from the channel's own space, as MassMentionBadge
+  // resolves them in the sent message; a DM has none.
+  const spaceId = useSpaceStore((s) => s.channelToSpaceMap.get(channelId));
+  const roles = useSpaceStore((s) => s.roles);
   const modelFor = useCallback(
     (value: string): ComposerMentions =>
-      composerMentions(value, (userId) => {
-        const found = resolveUser(userId);
-        return found ? userDisplayName(found.user) : null;
-      }),
-    [resolveUser],
+      composerMentions(
+        value,
+        (userId) => {
+          const found = resolveUser(userId);
+          return found ? userDisplayName(found.user) : null;
+        },
+        (roleId) => {
+          const role = spaceId === undefined ? undefined : roles.find((r) => r.id === roleId && r.spaceId === spaceId);
+          return role ? role.name.replace(/^@/, '') : null;
+        },
+      ),
+    [resolveUser, spaceId, roles],
   );
   const mentionModel = useMemo(() => modelFor(draftText), [modelFor, draftText]);
   // The popover's rows; keyboard navigation indexes the same list.

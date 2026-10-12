@@ -23,8 +23,8 @@ Source: `packages/server/src/ws/handler.ts`, `packages/server/src/ws/events.ts`
 ### Messages
 | type | fields | notes |
 |------|--------|-------|
-| `message_create` | channelId, content, replyToId? | SEND_MESSAGES perm; `replyToId` must name a message in the same channel |
-| `message_edit` | messageId, content | author only |
+| `message_create` | channelId, content, replyToId? | SEND_MESSAGES perm; MENTION_EVERYONE for content with `@everyone`, `@here` or a role token (permissions.md, "Mass mentions"); `replyToId` must name a message in the same channel |
+| `message_edit` | messageId, content | author only; MENTION_EVERYONE when the edit adds a mass mention the message did not have |
 | `message_delete` | messageId | author or MANAGE_MESSAGES |
 | `typing_start` | channelId | 5s auto-expire |
 
@@ -101,7 +101,7 @@ All four also need the actor to outrank the target (permissions.md, "Role hierar
 ### Messages
 | type | fields | scope |
 |------|--------|-------|
-| `message_created` | message: MessageWithUser | channel (VIEW_CHANNEL) |
+| `message_created` | message: MessageWithUser | channel (VIEW_CHANNEL). The message carries `mentionEveryone` and `mentionRoleIds`, the mass mentions the space allowed (permissions.md, "Mass mentions"); clients alert on mass mentions from these alone |
 | `message_updated` | message: MessageWithUser | channel (VIEW_CHANNEL) |
 | `message_deleted` | messageId, channelId | channel (VIEW_CHANNEL) |
 | `typing` | channelId, userId, username | channel (VIEW_CHANNEL, excludes sender) |
@@ -229,8 +229,9 @@ settings"), including to the socket of the session that made the change. It
 names the instance's own ids; the client files it under the origin of the
 socket that delivered it, which is the instance that hosts the space
 (`notificationSettingsStore.apply`), and keeps the newer `updatedAt` when
-several sources disagree. A setting with `level` null and `muted` false was
-cleared. Clients load the full list with `GET /users/@me/notification-settings`
+several sources disagree. A setting with `level` null, `muted` false and no suppress flag was
+cleared. Space settings carry `suppressEveryone` and `suppressRoles`;
+an old client ignores them. Clients load the full list with `GET /users/@me/notification-settings`
 when each instance's `ready` arrives; the `ready` payload itself does not
 carry it. Mixed versions: an old client ignores the event; a new client on an
 old server gets a 404 from the list route, logs it and uses the defaults.

@@ -455,7 +455,8 @@
       "deafenMembers": "Mitgliedern den Ton ausschalten",
       "moveMembers": "Mitglieder verschieben",
       "stream": "Streamen",
-      "disconnectMembers": "Mitglieder trennen"
+      "disconnectMembers": "Mitglieder trennen",
+      "mentionEveryone": "@everyone, @here und Rollen erwähnen"
     },
     "tristate": {
       "deny": "Verbieten",
@@ -682,6 +683,10 @@
     "mutedIndefinitely": "Stummgeschaltet, bis du es aufhebst",
     "spaceMuted": "Dieser Space ist stummgeschaltet, damit auch seine Kanäle.",
     "mutedIndicator": "Stummgeschaltet",
-    "saveFailed": "Benachrichtigungseinstellungen konnten nicht gespeichert werden"
+    "saveFailed": "Benachrichtigungseinstellungen konnten nicht gespeichert werden",
+    "suppressEveryone": "@everyone und @here unterdrücken",
+    "suppressRoles": "Rollenerwähnungen unterdrücken",
+    "massHeading": "Gruppenerwähnungen",
+    "massNote": "@here erreicht dieselben Mitglieder wie @everyone. Erwähnungen von dir mit Namen benachrichtigen dich immer."
   }
 }

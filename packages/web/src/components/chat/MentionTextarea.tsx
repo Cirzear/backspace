@@ -40,7 +40,7 @@ export function MentionTextarea({ model, textareaRef, mentionAnchorRef, mentionS
           const offset = anchor - part.start;
           const content = offset >= 0 && offset < part.text.length
             ? <>{part.text.slice(0, offset)}{marker}{part.text.slice(offset)}</> : part.text;
-          return <span key={index} className={part.mention ? 'rounded bg-accent-primary/15 text-accent-primary' : undefined}>{content}</span>;
+          return <span key={index} className={part.painted ? 'rounded bg-accent-primary/15 text-accent-primary' : undefined}>{content}</span>;
         })}
         {'\u200b'}
       </div>

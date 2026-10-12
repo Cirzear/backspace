@@ -60,6 +60,7 @@ and after the pass.
 | 12 | ATTACH_FILES | Upload files |
 | 13 | READ_MESSAGE_HISTORY | View message history |
 | 14 | ADD_REACTIONS | Add emoji reactions |
+| 15 | MENTION_EVERYONE | Send `@everyone`, `@here` and role mentions (see "Mass mentions") |
 | 20 | CONNECT | Join voice channels |
 | 21 | SPEAK | Transmit audio |
 | 22 | MUTE_MEMBERS | Space-mute others |
@@ -68,7 +69,7 @@ and after the pass.
 | 25 | STREAM | Screen share |
 | 26 | DISCONNECT_MEMBERS | Disconnect from voice |
 
-**Default @everyone:** VIEW_CHANNEL, SEND_MESSAGES, CREATE_INVITE, CONNECT, SPEAK, ATTACH_FILES, READ_MESSAGE_HISTORY, ADD_REACTIONS, STREAM
+**Default @everyone:** VIEW_CHANNEL, SEND_MESSAGES, CREATE_INVITE, CONNECT, SPEAK, ATTACH_FILES, READ_MESSAGE_HISTORY, ADD_REACTIONS, STREAM. MENTION_EVERYONE is not a default: it is granted per role.
 
 ---
 
@@ -487,7 +488,7 @@ channel-scoped for editing or deleting one channel. The current split:
 
 | Scope | Actions |
 |---|---|
-| Channel | view, send, attach, react, read history, manage messages; connect, speak, stream; edit or delete the channel (`MANAGE_CHANNELS`); mute, deafen, move, disconnect a voice user (checked on the channel the target is in) |
+| Channel | view, send, attach, react, read history, manage messages, mention everyone; connect, speak, stream; edit or delete the channel (`MANAGE_CHANNELS`); mute, deafen, move, disconnect a voice user (checked on the channel the target is in) |
 | Space | create a channel; reorder channels and categories; create, rename or delete a category; read or write any channel or category override (`MANAGE_ROLES`); invites, kick, ban, space settings |
 
 Member and role actions also follow the role hierarchy and the held-bits
@@ -637,6 +638,90 @@ Covered by `packages/server/src/routes/messages.broadcastAudience.test.ts`,
 which drives the real `ConnectionManager` and asserts both directions: a member
 denied `VIEW_CHANNEL` receives neither event, while readers of the channel and
 the space-wide `category_created` are unaffected.
+
+---
+
+## Mass mentions
+
+Three tokens address a group rather than one user, and all three need
+MENTION_EVERYONE (bit 15):
+
+| Token | Reaches |
+|---|---|
+| `@everyone` | every member who can see the channel |
+| `@here` | the same members as `@everyone`. Backspace has no "online only" audience when it decides an alert; each member's own settings decide |
+| `<@&roleId>` | every member holding that role in the channel's space |
+
+A token inside inline code or a fenced block is text. `@everyone` and `@here`
+count only on their own: not inside a word or an address (`a@everyone`), not
+after another `@`, not followed by a word character or `-`
+(`@everyone-else`). The one scan is `splitMentions` in
+`packages/shared/src/mentions.ts`; the server gate, the server's stamp, the
+renderer, the reply preview, the composer, the highlight and the alert rule
+all read tokens through it.
+
+**Sending.** The permission is checked at channel scope
+(`hasPermission(userId, spaceId, MENTION_EVERYONE, channelId)`), so channel and
+category overrides apply. A message with a mass mention from an author without
+it is refused, not sent as plain text: `POST /api/channels/:id/messages`
+answers `403 missing_permission` with `details.permission` =
+`MENTION_EVERYONE`, the WebSocket `message_create` sends an `error` with the
+same code and details, and nothing is stored. The web client keeps the draft
+and shows the reason. An edit (`PATCH /api/messages/:id`, WS `message_edit`)
+is refused the same way only when it adds a mass mention the stored message
+did not have (`addsMassMention`): keeping the ones it already has needs no
+permission, so a member who lost the bit, or wrote `@everyone` before the
+permission existed, can still fix the rest of the text. Edits never alert.
+DMs have no roles and no settings to suppress; their tokens are not checked
+and change nothing, since every DM message alerts anyway.
+
+**The stamp.** Every channel message the server sends (`buildMessageWithUser`,
+the WebSocket `getMessageWithUser`) carries `mentionEveryone` and
+`mentionRoleIds` (`massMentionFields`), read from the stored content. Since
+the server stores a new mass mention only from an author with the
+permission, the stamp says the space allowed it. Clients alert on mass
+mentions from the stamp alone, never from the text (sounds.md, "Which
+messages alert"). Messages stored before this version are stamped from their
+text too; that matters only for the highlight, since only `message_created`
+alerts.
+
+**Federation.** A space lives on one instance, and a member from another
+instance reads its channels from that instance directly with their
+replicated id there (client-federation.md). The permission is resolved there
+for that id, and the stamp comes from there. Role mentions are matched
+against the reader's roles on that instance (`myRoleIds` on the client's
+space entry, keyed by origin), never against a home id. No server-to-server
+route carries channel messages, so a peer cannot add a stamp.
+
+**Mixed versions.**
+
+| Case | Behaviour |
+|---|---|
+| 1.9.x client on this server | it sends `@everyone` as before and gets the coded refusal when the author lacks the bit; it ignores the stamp and alerts only on `<@id>`, as before |
+| this client on a 1.9.x server | that server sends no stamp, so its `@everyone` and role tokens render as badges but never alert; the suppress switches answer `400` there and the save shows as failed |
+| this client's role editor on a 1.9.x server | the bit can be switched and is stored, and that server ignores it |
+
+**Existing spaces.** No role gains the bit on upgrade: only the owner,
+instance admins and `ADMINISTRATOR` holders can send mass mentions until the
+owner grants MENTION_EVERYONE to a role. A member without it who used to type
+`@everyone` as plain text now gets the refusal. New roles start from the
+@everyone defaults, which do not include it. The held-bits rule applies as to
+every bit: a `MANAGE_ROLES` holder can switch it only if they hold it.
+
+**Editors.** The role editor (`utils/permissionGroups.ts`, text group), the
+member role editor, and the text channel and category override editors list
+it as "Mention @everyone, @here and Roles"
+(`spaces:permissions.names.mentionEveryone`).
+
+**Not yet offered.** The mention picker in the composer lists members only;
+roles, `@everyone` and `@here` are typed. The composer shows a known role
+token as `@RoleName` and paints `@everyone` and `@here`, as the sent message
+does.
+
+Covered by `routes/messages.massMentions.test.ts`,
+`utils/notificationFilters.test.ts`, `utils/mentionTokens.test.ts`,
+`chat/composerMentions.test.ts`, `chat/MassMentionBadge.test.tsx` and
+`stores/spaceStore.reducedRoles.test.ts`.
 
 ---
 

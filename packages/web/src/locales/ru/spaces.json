@@ -461,7 +461,8 @@
       "deafenMembers": "Отключение звука участникам",
       "moveMembers": "Перемещение участников",
       "stream": "Трансляция",
-      "disconnectMembers": "Отключение участников"
+      "disconnectMembers": "Отключение участников",
+      "mentionEveryone": "Упоминать @everyone, @here и роли"
     },
     "tristate": {
       "deny": "Запретить",
@@ -708,6 +709,10 @@
     "mutedIndefinitely": "Заглушено, пока вы не отмените",
     "spaceMuted": "Это пространство заглушено, поэтому заглушены и его каналы.",
     "mutedIndicator": "Заглушено",
-    "saveFailed": "Не удалось сохранить настройки уведомлений"
+    "saveFailed": "Не удалось сохранить настройки уведомлений",
+    "suppressEveryone": "Подавлять @everyone и @here",
+    "suppressRoles": "Подавлять упоминания ролей",
+    "massHeading": "Групповые упоминания",
+    "massNote": "@here доходит до тех же участников, что и @everyone. Упоминания вас по имени всегда приходят."
   }
 }
