@@ -51,4 +51,9 @@ describe('InlineMessageText', () => {
     const { container } = render(<InlineMessageText channelId="chan-1" content={'type `<@U1>` to ping <@U1>'} />);
     expect(container.textContent).toBe('type `<@U1>` to ping @Unknown User');
   });
+
+  it('quotes a sticker by its label, never by its token', () => {
+    const { container } = render(<InlineMessageText channelId="chan-1" content={`sticker:https://chat.test/api/stickers/assets/${'a'.repeat(64)}.webp`} />);
+    expect(container.textContent).toBe('Sticker');
+  });
 });

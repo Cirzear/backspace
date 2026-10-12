@@ -222,5 +222,9 @@
   "directory_private_space": "Set the space to public or request to join before listing it.",
   "directory_requires_discovery": "Turn on space discovery first.",
   "space_owner_title_invalid": "Owner titles can be 1 to {{max}} characters on one line, with at least one visible character and no control characters.",
-  "member_nickname_invalid": "Nicknames can be at most {{max}} characters on one line, with at least one visible character and no control characters."
+  "member_nickname_invalid": "Nicknames can be at most {{max}} characters on one line, with at least one visible character and no control characters.",
+  "sticker_invalid_image": "Upload a PNG, JPEG, WebP or GIF image of at most {{max}} MB.",
+  "sticker_not_local": "Stickers from another server cannot be added to your collection yet.",
+  "sticker_not_found": "That sticker no longer exists.",
+  "sticker_collection_full": "Your collection is full at {{max}} stickers. Remove one to add another."
 }

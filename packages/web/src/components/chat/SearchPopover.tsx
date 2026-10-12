@@ -7,6 +7,7 @@ import { useFloatingPosition } from '../../hooks/useFloatingPosition';
 import { isDmChannel, getChannelOrigin, getApiForOrigin } from '../../stores/spaceStore';
 import { Avatar } from '../ui/Avatar';
 import { highlightMatch } from './searchHighlight';
+import { messageTextForPreview } from '../../utils/stickerMessages';
 import { useEmojiShortcodeNames } from '../../utils/emojiShortcodes';
 import { useCanonicalUserView } from '../../utils/userViewLookup';
 import type { MessageWithUser, DmMessageWithUser, User } from '@backspace/shared';
@@ -77,7 +78,7 @@ function SearchResultRow({
           </span>
         </div>
         <div className="text-[13px] text-txt-secondary leading-[1.4] line-clamp-2 mt-0.5">
-          {highlightMatch(msg.content ?? '', query)}
+          {highlightMatch(messageTextForPreview(msg.content ?? ''), query)}
         </div>
         {msg.attachments && msg.attachments.length > 0 && (
           <div className="flex items-center gap-1 mt-1 text-[11px] text-txt-tertiary">

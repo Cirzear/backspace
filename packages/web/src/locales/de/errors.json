@@ -222,5 +222,9 @@
   "directory_private_space": "Stell den Space auf „Öffentlich“ oder „Auf Anfrage“, bevor du ihn eintragen lässt.",
   "directory_requires_discovery": "Schalte zuerst das Entdecken von Spaces ein.",
   "space_owner_title_invalid": "Besitzertitel dürfen 1 bis {{max}} Zeichen in einer Zeile haben, mindestens ein sichtbares Zeichen und keine Steuerzeichen.",
-  "member_nickname_invalid": "Spitznamen dürfen höchstens {{max}} Zeichen in einer Zeile haben, mindestens ein sichtbares Zeichen und keine Steuerzeichen."
+  "member_nickname_invalid": "Spitznamen dürfen höchstens {{max}} Zeichen in einer Zeile haben, mindestens ein sichtbares Zeichen und keine Steuerzeichen.",
+  "sticker_invalid_image": "Lade ein PNG-, JPEG-, WebP- oder GIF-Bild mit höchstens {{max}} MB hoch.",
+  "sticker_not_local": "Sticker von einem anderen Server können noch nicht zu deiner Sammlung hinzugefügt werden.",
+  "sticker_not_found": "Diesen Sticker gibt es nicht mehr.",
+  "sticker_collection_full": "Deine Sammlung ist mit {{max}} Stickern voll. Entferne einen, um einen neuen hinzuzufügen."
 }

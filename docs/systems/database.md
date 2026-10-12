@@ -133,6 +133,21 @@ Indexes: `idx_messages_channel_id` (channelId); `idx_messages_user_id` (userId);
 | createdAt | integer NOT NULL | | |
 CHECK: exactly one of messageId/dmMessageId is set
 
+### sticker_assets and personal_stickers
+
+Migration `0031_personal_stickers` adds only these two tables; message and reaction columns are unchanged (a sticker is a token in `content` or `emoji`, see [uploads.md](uploads.md#14-personal-stickers)).
+
+| Table | Column | Type | Notes |
+|-------|--------|------|-------|
+| sticker_assets | id | text PK NOT NULL | SHA-256 of the encoded WebP bytes |
+| sticker_assets | created_at | integer NOT NULL | Epoch ms of the latest upload of these bytes; set before the file is written, and the start of the cleanup's 24-hour grace period |
+| personal_stickers | user_id | text NOT NULL | FK → users.id, ON DELETE CASCADE |
+| personal_stickers | sticker_id | text NOT NULL | FK → sticker_assets.id |
+| personal_stickers | name | text NOT NULL | User’s collection label |
+| personal_stickers | created_at | integer NOT NULL | Epoch ms |
+
+The composite primary key (user_id, sticker_id) makes collection idempotent; one user holds at most 200 rows (`MAX_PERSONAL_STICKERS`, checked by the routes). Removing an entry or deleting its user removes only the association. An asset stays while any collection entry, message or reaction on this instance names it; after that, and once past its grace period, the storage cleanup deletes the row and its file (`cleanupUnusedStickerAssets`). Files live under `UPLOAD_DIR/stickers`, outside the attachment phases and the storage stats.
+
 ### embeds
 | Column | Type | Notes |
 |--------|------|-------|

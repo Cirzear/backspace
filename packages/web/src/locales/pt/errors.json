@@ -222,5 +222,9 @@
   "directory_private_space": "Defina o espaço como público ou por solicitação antes de listá-lo.",
   "directory_requires_discovery": "Ative primeiro a descoberta de espaços.",
   "space_owner_title_invalid": "O título do dono pode ter de 1 a {{max}} caracteres em uma linha, com pelo menos um caractere visível e sem caracteres de controle.",
-  "member_nickname_invalid": "Apelidos podem ter no máximo {{max}} caracteres em uma linha, com pelo menos um caractere visível e sem caracteres de controle."
+  "member_nickname_invalid": "Apelidos podem ter no máximo {{max}} caracteres em uma linha, com pelo menos um caractere visível e sem caracteres de controle.",
+  "sticker_invalid_image": "Envie uma imagem PNG, JPEG, WebP ou GIF de no máximo {{max}} MB.",
+  "sticker_not_local": "Ainda não é possível adicionar à sua coleção figurinhas de outro servidor.",
+  "sticker_not_found": "Essa figurinha não existe mais.",
+  "sticker_collection_full": "Sua coleção está cheia com {{max}} figurinhas. Remova uma para adicionar outra."
 }

@@ -3,6 +3,7 @@ import { parseDmSystemEvent } from '@backspace/shared/src/dmSystemEvents';
 import { parseFederatedUsername, isMine, type SelfIdentity } from './identity';
 import i18n from '../i18n';
 import { formatters } from '../i18n/formatters';
+import { messageTextForPreview } from './stickerMessages';
 
 /**
  * Who is looking at a DM: the signed-in user (`useSelfIdentity`) and the
@@ -90,7 +91,7 @@ export function formatDmPreview(lastMessage: PreviewMessage | null | undefined):
   if (!hasText && !hasAttachments) return null;
 
   if (hasText && !hasAttachments) {
-    return content!;
+    return messageTextForPreview(content!);
   }
 
   if (!hasText && hasAttachments) {
@@ -103,7 +104,7 @@ export function formatDmPreview(lastMessage: PreviewMessage | null | undefined):
 
   // Both text and attachments present
   const icon = getUnifiedAttachmentIcon(attachments!);
-  return `${content} ${icon}`;
+  return `${messageTextForPreview(content!)} ${icon}`;
 }
 
 // ─── System Messages ─────────────────────────────────────────────────────────
