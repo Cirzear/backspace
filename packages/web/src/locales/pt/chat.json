@@ -187,7 +187,7 @@
     "manage": "Gerenciar",
     "done": "Concluído",
     "collectionHint": "Selecione uma figurinha para enviar.",
-    "removeHint": "Remove apenas da coleção. Mensagens e reações enviadas não são afetadas.",
+    "manageHint": "Renomeie ou remova figurinhas da coleção. Mensagens e reações enviadas não são afetadas.",
     "emptyHint": "Envie uma imagem para dar mais personalidade às suas conversas.",
     "chooseImage": "Escolher imagem",
     "cancel": "Cancelar",
@@ -220,6 +220,7 @@
     "batchFailed_other": "Não foi possível adicionar {{count}} imagens. Elas continuam na lista abaixo.",
     "uploadingProgress": "Adicionando {{current}} de {{total}}…",
     "rename": "Renomear",
+    "renameNamed": "Renomear {{name}}",
     "renameTitle": "Renomear figurinha",
     "search": "Pesquisar figurinhas",
     "noResults": "Nenhuma figurinha encontrada"
