@@ -3,14 +3,15 @@ import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { describeError } from '../../i18n/errors';
 import { useFormatters } from '../../i18n/formatters';
-import { useAuthStore } from '../../stores/authStore';
-import { getMyUserIdForOrigin, useSpaceStore, type TaggedSpace } from '../../stores/spaceStore';
+import { useSelfIdentity } from '../../stores/authStore';
+import { useSpaceStore, type TaggedSpace } from '../../stores/spaceStore';
+import { hostKeepsOwnerTitle, ownerGroupTitle } from '../../utils/memberGroups';
 import { Modal } from '../ui/Modal';
 
 function OwnerTitleEditor({ space, onClose }: { space: TaggedSpace; onClose: () => void }) {
   const { t } = useTranslation(['spaces', 'common', 'errors']);
   const updateSpace = useSpaceStore((s) => s.updateSpace);
-  const [title, setTitle] = useState(space.ownerTitle ?? '');
+  const [title, setTitle] = useState(ownerGroupTitle(space) ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -64,7 +65,7 @@ function OwnerTitleEditor({ space, onClose }: { space: TaggedSpace; onClose: () 
         </div>
         {error && <p role="alert" className="text-sm text-txt-danger">{error}</p>}
         <div className="flex items-center justify-end gap-2">
-          <button type="button" disabled={saving || space.ownerTitle === null} onClick={() => void save(null)} className="mr-auto text-xs text-txt-secondary hover:text-txt-primary disabled:opacity-50">
+          <button type="button" disabled={saving || ownerGroupTitle(space) === null} onClick={() => void save(null)} className="mr-auto text-xs text-txt-secondary hover:text-txt-primary disabled:opacity-50">
             {t('spaces:members.ownerTitle.reset')}
           </button>
           <button type="button" disabled={saving} onClick={onClose} className="px-3 py-2 rounded-lg text-sm text-txt-secondary hover:bg-interactive-hover disabled:opacity-50">
@@ -83,17 +84,19 @@ function OwnerTitleEditor({ space, onClose }: { space: TaggedSpace; onClose: () 
 export function OwnerTitleHeading({ space, count }: { space: TaggedSpace; count: number }) {
   const { t } = useTranslation('spaces');
   const { formatNumber } = useFormatters();
-  const homeUserId = useAuthStore((s) => s.user?.id);
-  // Federated owners have an instance-local user ID on the space's host.
-  const userId = space._instanceOrigin ? getMyUserIdForOrigin(space._instanceOrigin) : homeUserId;
+  // The owner id is the owner's row on the space's host, so compare it with
+  // the signed-in user's row there, not with the home account id.
+  const self = useSelfIdentity();
+  const myIdHere = self?.rowIds.get(space._instanceOrigin);
   const [editing, setEditing] = useState(false);
-  const canEdit = userId === space.ownerId;
-  const title = space.ownerTitle ?? t('members.groups.owner');
+  const canEdit = myIdHere !== undefined && myIdHere === space.ownerId && hostKeepsOwnerTitle(space);
+  const ownerTitle = ownerGroupTitle(space);
+  const title = ownerTitle ?? t('members.groups.owner');
 
   return (
     <>
       <div className="flex items-center gap-1 px-2 mb-1">
-        <h3 title={title} className={`min-w-0 truncate text-[10.5px] font-bold text-txt-tertiary tracking-[0.06em] ${space.ownerTitle === null ? 'uppercase' : ''}`}>
+        <h3 title={title} className={`min-w-0 truncate text-[10.5px] font-bold text-txt-tertiary tracking-[0.06em] ${ownerTitle === null ? 'uppercase' : ''}`}>
           {title} — {formatNumber(count)}
         </h3>
         {canEdit && (

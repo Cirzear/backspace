@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { MemberWithUser, Role, User } from '@backspace/shared';
-import { groupMembers, memberGroup, memberNameColor, memberTopRole, OWNER_NAME_COLOR } from './memberGroups';
+import { groupMembers, hostKeepsOwnerTitle, memberGroup, memberNameColor, memberTopRole, ownerGroupTitle, OWNER_NAME_COLOR } from './memberGroups';
 
 function role(id: string, position: number, color: string): Role {
   return { id, spaceId: 's', name: id, color, position, permissions: '0', createdAt: 1 };
@@ -46,5 +46,19 @@ describe('member colour and group', () => {
       ['__owner__', ['owner']], ['r-top', ['top']], ['r-low', ['low']], ['__online__', ['plain']],
     ]);
     expect(offline.map((m) => m.userId)).toEqual(['away']);
+  });
+});
+
+describe('owner group title', () => {
+  it('reads the stored title, or null for the default heading', () => {
+    expect(ownerGroupTitle({ ownerTitle: 'Captain' })).toBe('Captain');
+    expect(ownerGroupTitle({ ownerTitle: null })).toBeNull();
+    expect(ownerGroupTitle({})).toBeNull();
+  });
+
+  it('treats a host that does not send the field as one that does not keep titles', () => {
+    expect(hostKeepsOwnerTitle({ ownerTitle: null })).toBe(true);
+    expect(hostKeepsOwnerTitle({ ownerTitle: 'Captain' })).toBe(true);
+    expect(hostKeepsOwnerTitle({})).toBe(false);
   });
 });

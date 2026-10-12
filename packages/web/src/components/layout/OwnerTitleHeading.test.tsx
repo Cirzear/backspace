@@ -32,7 +32,7 @@ beforeEach(() => {
   vi.restoreAllMocks();
   useSpaceStore.getState().reset();
   useSpaceStore.setState({ spaces: [{ ...space }] });
-  useAuthStore.setState({ user });
+  useAuthStore.setState({ user, myRowIds: new Map() });
 });
 
 describe('owner title heading', () => {
@@ -124,6 +124,25 @@ describe('owner title heading', () => {
     useSpaceStore.setState({ spaces: [{ ...space, ownerId: 'remote-owner', _instanceOrigin: origin }] });
     render(<Heading />);
     expect(screen.getByRole('button', { name: 'Edit owner title' })).toBeInTheDocument();
+  });
+
+  it('offers the editor once the remote host names the signed-in user, without a remount', async () => {
+    const origin = 'https://peer.example';
+    useSpaceStore.setState({ spaces: [{ ...space, ownerId: 'remote-owner', _instanceOrigin: origin }] });
+    render(<Heading />);
+    expect(screen.queryByRole('button', { name: 'Edit owner title' })).not.toBeInTheDocument();
+    act(() => useAuthStore.getState().recordMyRow(origin, 'remote-owner'));
+    expect(await screen.findByRole('button', { name: 'Edit owner title' })).toBeInTheDocument();
+  });
+
+  it('shows the default heading and no editor for a host that does not send owner titles', () => {
+    // A 1.10.0 host omits the field and drops it from a PATCH without an error.
+    const olderHostSpace: Partial<TaggedSpace> = { ...space };
+    delete olderHostSpace.ownerTitle;
+    useSpaceStore.setState({ spaces: [olderHostSpace as TaggedSpace] });
+    render(<Heading />);
+    expect(screen.getByRole('heading', { name: 'Owner — 1' })).toHaveClass('uppercase');
+    expect(screen.queryByRole('button', { name: 'Edit owner title' })).not.toBeInTheDocument();
   });
 
   it.each(['', 'https://peer.example'])('retains the title from ready and newly joined space payloads at %s', (origin) => {
