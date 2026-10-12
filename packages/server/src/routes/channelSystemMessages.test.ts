@@ -129,4 +129,15 @@ describe('channel system messages are not what members wrote', () => {
     const res = await app.inject({ method: 'POST', url: '/api/channels/' + CHANNEL + '/messages', payload: { content: 'hi', replyToId: written } });
     expect(res.statusCode).toBe(201);
   });
+
+  it('refuses an edit, by its author too, with system_message_immutable over REST and WebSocket', async () => {
+    const poke = seed('system', POKE);
+    const res = await app.inject({ method: 'PATCH', url: '/api/messages/' + poke, payload: { content: 'rewritten' } });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ code: 'system_message_immutable' });
+    const { handleClientEvent } = await import('../ws/events.js');
+    handleClientEvent({ type: 'message_edit', messageId: poke, content: 'rewritten' }, 'member', 'member', {} as never, false);
+    expect(sendToUser).toHaveBeenCalledWith('member', expect.objectContaining({ type: 'error', code: 'system_message_immutable' }));
+    expect(testDb.select().from(schema.messages).get()?.content).toBe(POKE);
+  });
 });

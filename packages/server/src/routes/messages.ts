@@ -464,8 +464,12 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
       return sendError(reply, 404, 'message_not_found');
     }
 
-    // System payloads are authored by the host, not editable by the actor.
-    if (message.type === 'system' || message.userId !== request.userId) {
+    // A system row (a poke) is written by this instance, so nobody edits it,
+    // its author included; the DM routes refuse theirs with the same code.
+    if (message.type === 'system') {
+      return sendError(reply, 403, 'system_message_immutable');
+    }
+    if (message.userId !== request.userId) {
       return sendError(reply, 403, 'message_edit_not_author');
     }
 
