@@ -260,9 +260,6 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
   const { addVoiceUser, removeVoiceUser, clearVoiceUsersForOrigin, setVoiceUsers, setVoiceChannelElapsedSeconds, setVoiceUserStatus, clearVoiceUserStatus } = useVoiceStore.getState();
 
   switch (event.type) {
-    case 'channel_poke_failed':
-      useUIStore.getState().addToast(event.message, 'warning');
-      break;
     case 'channel_poke':
       receiveChannelPoke(origin, event);
       break;

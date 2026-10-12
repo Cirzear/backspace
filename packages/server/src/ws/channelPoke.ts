@@ -3,28 +3,47 @@ import { eq } from 'drizzle-orm';
 import { generateSnowflake } from '../utils/snowflake.js';
 import { sanitizeUser } from '../utils/sanitize.js';
 import { getDb, schema } from '../db/index.js';
-import { getChannelSpaceId, hasPermission, PermissionBits } from '../utils/permissions.js';
+import { getChannelSpaceId, getMember, hasPermission, PermissionBits } from '../utils/permissions.js';
 import { connectionManager } from './handler.js';
+import { errorText } from '../utils/httpErrors.js';
+import type { ErrorCode, ErrorDetails } from '@backspace/shared/src/errors';
+
+/**
+ * Refuse a poke with a coded `error` on the socket that sent it, as
+ * `refuseDmMessage` does: the client shows the code's text in the user's
+ * language, and the user's other sessions did not ask, so they are not told.
+ */
+function refusePoke(ws: WebSocket, code: ErrorCode, details?: ErrorDetails): void {
+  connectionManager.sendToWs(ws, details
+    ? { type: 'error', message: errorText(code, details), code, details }
+    : { type: 'error', message: errorText(code), code });
+}
 
 // Persist passive history before broadcasting; the separate poke event only animates live viewers.
 export function handleChannelPoke({ event, userId, ws }: {
   event: Record<string, unknown>; userId: string; ws: WebSocket;
 }): void {
   const { channelId, targetUserId } = event;
-  const fail = (message: string) => ws.send(JSON.stringify({ type: 'channel_poke_failed', message }));
   if (typeof channelId !== 'string' || typeof targetUserId !== 'string') {
-    fail('Invalid poke target'); return;
+    refusePoke(ws, 'validation_failed'); return;
   }
+  // A channel the actor cannot see answers as one that does not exist.
   const spaceId = getChannelSpaceId(channelId);
-  if (!spaceId || !hasPermission(userId, spaceId, PermissionBits.VIEW_CHANNEL, channelId)
-    || !hasPermission(userId, spaceId, PermissionBits.SEND_MESSAGES, channelId)
-    || !hasPermission(targetUserId, spaceId, PermissionBits.VIEW_CHANNEL, channelId)) {
-    fail('Poke requires channel access and permission to send messages'); return;
+  if (!spaceId || !hasPermission(userId, spaceId, PermissionBits.VIEW_CHANNEL, channelId)) {
+    refusePoke(ws, 'channel_not_found'); return;
+  }
+  if (!hasPermission(userId, spaceId, PermissionBits.SEND_MESSAGES, channelId)) {
+    refusePoke(ws, 'missing_permission', { permission: 'SEND_MESSAGES' }); return;
   }
   const db = getDb();
   const actor = db.select().from(schema.users).where(eq(schema.users.id, userId)).get();
   const target = db.select().from(schema.users).where(eq(schema.users.id, targetUserId)).get();
-  if (!actor || !target) { fail('Poke user not found'); return; }
+  // The target is a member of the space: an instance admin who never joined
+  // holds every permission there but is not someone to poke.
+  if (!actor || !target || !getMember(spaceId, targetUserId)) { refusePoke(ws, 'member_not_found'); return; }
+  if (!hasPermission(targetUserId, spaceId, PermissionBits.VIEW_CHANNEL, channelId)) {
+    refusePoke(ws, 'poke_target_no_access'); return;
+  }
   const username = actor.displayName ?? actor.username;
   const targetUsername = target.displayName ?? target.username;
   const message = db.insert(schema.messages).values({
