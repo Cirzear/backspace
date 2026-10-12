@@ -97,9 +97,7 @@ export const GROUP_DM_ICON_MIME_PREFIX = 'image/';
  */
 export const PASSWORD_MIN_LENGTH = 8;
 
-/** Owner headings stay short enough to identify the owner at a glance. */
-export const MAX_OWNER_TITLE_LENGTH = 32;
-// ─── Space Nickname Constants ────────────────────────────────────────────────
+// ─── Space Nickname and Owner Title Constants ────────────────────────────────
 
 /**
  * The longest space nickname (a member's name in one space, separate from the
@@ -129,7 +127,39 @@ export function normalizeMemberNickname(value: unknown): string | null | undefin
   const trimmed = value.trim();
   if (trimmed.length === 0) return null;
   if (trimmed.length > MAX_MEMBER_NICKNAME_LENGTH) return undefined;
-  if (NICKNAME_FORBIDDEN.test(trimmed)) return undefined;
-  if (trimmed.replace(NICKNAME_INVISIBLE, '').length === 0) return undefined;
-  return trimmed;
+  return isVisibleSingleLine(trimmed) ? trimmed : undefined;
+}
+
+/**
+ * Whether a trimmed, non-empty label may be shown as a name or heading: no
+ * control character, line break or bidirectional control, and at least one
+ * visible character. Shared by nicknames and owner titles.
+ */
+function isVisibleSingleLine(trimmed: string): boolean {
+  if (NICKNAME_FORBIDDEN.test(trimmed)) return false;
+  return trimmed.replace(NICKNAME_INVISIBLE, '').length > 0;
+}
+
+/**
+ * The longest owner title (the heading over a space's owner in its member
+ * list), counted in UTF-16 code units after `normalizeOwnerTitle`, the unit an
+ * input's `maxLength` counts in.
+ */
+export const MAX_OWNER_TITLE_LENGTH = 32;
+
+/**
+ * The form an owner title is stored in, or `undefined` when the value is not
+ * one. `null` resets the heading to the translated default. A string is
+ * trimmed and refused when it trims to nothing, is longer than
+ * MAX_OWNER_TITLE_LENGTH, or fails the rule nicknames follow (control
+ * characters, line breaks, bidirectional controls, nothing visible). Unlike a
+ * nickname, a blank title does not reset: only `null` does. The server applies
+ * it on `PATCH /api/spaces/:id`, and the client applies it before sending.
+ */
+export function normalizeOwnerTitle(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > MAX_OWNER_TITLE_LENGTH) return undefined;
+  return isVisibleSingleLine(trimmed) ? trimmed : undefined;
 }

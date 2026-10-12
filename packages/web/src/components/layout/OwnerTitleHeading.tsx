@@ -1,4 +1,4 @@
-import { MAX_OWNER_TITLE_LENGTH } from '@backspace/shared/src/constants.js';
+import { MAX_OWNER_TITLE_LENGTH, normalizeOwnerTitle } from '@backspace/shared/src/constants.js';
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { describeError } from '../../i18n/errors';
@@ -30,12 +30,13 @@ function OwnerTitleEditor({ space, onClose }: { space: TaggedSpace; onClose: () 
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
-    const trimmed = title.trim();
-    if (!trimmed || trimmed.length > MAX_OWNER_TITLE_LENGTH || /[\r\n]/.test(trimmed)) {
+    // The server's own rule, so both refuse the same values. Only Reset sends null.
+    const normalized = normalizeOwnerTitle(title);
+    if (typeof normalized !== 'string') {
       setError(t('errors:space_owner_title_invalid', { max: MAX_OWNER_TITLE_LENGTH }));
       return;
     }
-    void save(trimmed);
+    void save(normalized);
   };
 
   return (

@@ -86,7 +86,17 @@ describe('owner title heading', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Edit owner title' }));
     await userEvent.type(screen.getByLabelText('Owner title'), '   ');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
-    expect(screen.getByRole('alert')).toHaveTextContent('1–32');
+    expect(screen.getByRole('alert')).toHaveTextContent('1 to 32');
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a title the server would refuse, such as one with only invisible characters', async () => {
+    const update = vi.spyOn(api.spaces, 'update');
+    render(<Heading />);
+    await userEvent.click(screen.getByRole('button', { name: 'Edit owner title' }));
+    await userEvent.type(screen.getByLabelText('Owner title'), '\u200B\u200B');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('at least one visible character');
     expect(update).not.toHaveBeenCalled();
   });
 

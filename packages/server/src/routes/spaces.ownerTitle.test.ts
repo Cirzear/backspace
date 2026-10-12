@@ -86,7 +86,10 @@ describe('space owner title', () => {
     expect((await app.inject({ method: 'PATCH', url: '/api/spaces/space', payload: { name: 'Renamed' } })).statusCode).toBe(200);
   });
 
-  it.each(['', '   ', '\n', 'Boss\nOwner', 123, false, {}, [], 'x'.repeat(MAX_OWNER_TITLE_LENGTH + 1)])('rejects invalid title %j without persisting or broadcasting', async (title) => {
+  it.each([
+    '', '   ', '\n', 'Boss\nOwner', 'Boss\u2028Owner', 'Boss\u0007', '\u202Eboss', '\u200B\u200B', '\u3164',
+    123, false, {}, [], 'x'.repeat(MAX_OWNER_TITLE_LENGTH + 1),
+  ])('rejects invalid title %j without persisting or broadcasting', async (title) => {
     const response = await update(title);
     expect(response.statusCode).toBe(400);
     expect(response.json().code).toBe('space_owner_title_invalid');
