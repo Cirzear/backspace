@@ -1,3 +1,4 @@
+import { OwnerTitleHeading } from './OwnerTitleHeading';
 import { useMemberContextMenu } from './memberMenu/useMemberContextMenu';
 import { useContextMenuStore } from '../../stores/contextMenuStore';
 import React, { useMemo } from 'react';
@@ -193,9 +194,13 @@ export function MemberSidebar() {
         {/* Role-based groups */}
         {roleGroups.map((group) => (
           <div key={group.key} className="mb-4">
-            <h3 className="text-[10.5px] font-bold text-txt-tertiary uppercase tracking-[0.06em] px-2 mb-1">
-              {groupHeading(group.kind, group.label)} — {formatNumber(group.members.length)}
-            </h3>
+            {group.kind === 'owner' && space ? (
+              <OwnerTitleHeading key={space.id} space={space} count={group.members.length} />
+            ) : (
+              <h3 className="text-[10.5px] font-bold text-txt-tertiary uppercase tracking-[0.06em] px-2 mb-1">
+                {groupHeading(group.kind, group.label)} — {formatNumber(group.members.length)}
+              </h3>
+            )}
             {group.members.map((m) => renderMember(m))}
           </div>
         ))}

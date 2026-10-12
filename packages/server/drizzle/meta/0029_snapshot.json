@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "da7e11c3-b893-43af-b1b3-21055fb53e83",
+  "id": "5ceff7dc-da49-4150-9227-a95807fa5726",
   "prevId": "4b498e74-96f0-4186-b044-b7df65f453a6",
   "tables": {
     "attachments": {
@@ -2997,6 +2997,14 @@
           "notNull": false,
           "autoincrement": false
         },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'user'"
+        },
         "edited_at": {
           "name": "edited_at",
           "type": "integer",
@@ -3032,7 +3040,8 @@
           "columns": [
             "channel_id",
             "CAST(id AS INTEGER)",
-            "user_id"
+            "user_id",
+            "type"
           ],
           "isUnique": false
         }
@@ -4592,103 +4601,6 @@
             "restriction_type"
           ],
           "name": "voice_restrictions_space_id_user_id_restriction_type_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "sticker_assets": {
-      "name": "sticker_assets",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "personal_stickers": {
-      "name": "personal_stickers",
-      "columns": {
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "sticker_id": {
-          "name": "sticker_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "personal_stickers_user_id_users_id_fk": {
-          "name": "personal_stickers_user_id_users_id_fk",
-          "tableFrom": "personal_stickers",
-          "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "personal_stickers_sticker_id_sticker_assets_id_fk": {
-          "name": "personal_stickers_sticker_id_sticker_assets_id_fk",
-          "tableFrom": "personal_stickers",
-          "tableTo": "sticker_assets",
-          "columnsFrom": [
-            "sticker_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "personal_stickers_user_id_sticker_id_pk": {
-          "columns": [
-            "user_id",
-            "sticker_id"
-          ],
-          "name": "personal_stickers_user_id_sticker_id_pk"
         }
       },
       "uniqueConstraints": {},

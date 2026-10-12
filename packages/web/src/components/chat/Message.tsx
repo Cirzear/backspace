@@ -1,5 +1,6 @@
 import { stickerUrl } from '@backspace/shared/src/stickers';
 import { StickerMessage } from './StickerMessage';
+import { useChannelPokeMenu } from './useChannelPokeMenu';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -435,6 +436,9 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     ? { spaceId: currentSpaceId, userId: message.userId }
     : undefined;
 
+  const handleAuthorMenu = useChannelPokeMenu({ channelId: channelKey, targetUserId: message.userId,
+    origin: messageOrigin, enabled: canSendMessages && !isDmMessage && !pending });
+
   const handleUsernameClick = (e: React.MouseEvent) => {
     if (!message.user) return;
     e.stopPropagation();
@@ -486,7 +490,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
       {/* Avatar or timestamp column */}
       <div className="w-10 flex-shrink-0 flex items-start justify-start">
         {isFirstInGroup || message.replyTo ? (
-          <div className="mt-0.5">
+          <div className="mt-0.5 relative" data-poke-user={message.userId} onContextMenu={handleAuthorMenu}>
             <ProfileAvatar
               src={displayIdentity.avatar}
               name={displayName}
@@ -544,7 +548,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
 
         {(isFirstInGroup || message.replyTo) && (
           <div className="flex items-baseline gap-2 mb-0.5">
-            <span onClick={handleUsernameClick}>
+            <span onClick={handleUsernameClick} onContextMenu={handleAuthorMenu}>
               <PersonName
                 name={displayName}
                 person={displayIdentity}

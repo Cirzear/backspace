@@ -109,6 +109,16 @@ the channel policy whatever the preference says. It widens a channel on
 because that choice is about the one channel and the preference is a general
 one.
 
+**Pokes never alert.** A poke (websocket.md, "Channel pokes") reaches the
+client as a `channel_poke` event, not a `message_created`, and
+`chatStore.addRealtimeMessage` keeps channel system rows out of
+`realtimeMessageEvents`, so the predicate never sees one: no `message.ogg`,
+no OS notification and no unread dot, on any notification level. A poke has
+no sound of its own; its only cue is the avatar animation in the open
+channel, which follows the same gates as an alert would (not in DND, not in
+a muted channel or one set to `nothing`, unless the viewer is the poker) and
+also skips reduced motion.
+
 **Order.** The predicate decides first, then Do Not Disturb (below) withholds
 what it allowed. A batch of events raises at most one sound and at most one
 notification, for the first message that alerts.

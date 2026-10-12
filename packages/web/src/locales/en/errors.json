@@ -209,6 +209,7 @@
   "message_empty": "A message needs some text or an attachment.",
   "message_edit_not_author": "You can only edit your own messages.",
   "message_delete_forbidden": "You cannot delete this message.",
+  "poke_target_no_access": "That member cannot see this channel, so they cannot be poked here.",
   "paging_cursor_conflict": "Messages can be loaded before a message or after it, not both at once.",
   "internal_error": "Something went wrong on the server. Try again.",
   "voice_disabled": "Voice and video are not set up on this instance.",
@@ -220,5 +221,6 @@
   "directory_unreachable": "Outer Space is not reachable right now. Inner Space still works.",
   "directory_private_space": "Set the space to public or request to join before listing it.",
   "directory_requires_discovery": "Turn on space discovery first.",
+  "space_owner_title_invalid": "Owner titles can be 1 to {{max}} characters on one line, with at least one visible character and no control characters.",
   "member_nickname_invalid": "Nicknames can be at most {{max}} characters on one line, with at least one visible character and no control characters."
 }

@@ -10,7 +10,7 @@
 
 ## Storage and protocol
 
-Migration `0029_personal_stickers` adds immutable content-addressed `sticker_assets` and a user-scoped `personal_stickers` table. The user/asset primary key makes collection idempotent. Collection removal does not delete the asset or change old messages/reactions.
+Migration `0031_personal_stickers` adds immutable content-addressed `sticker_assets` and a user-scoped `personal_stickers` table. The user/asset primary key makes collection idempotent. Collection removal does not delete the asset or change old messages/reactions.
 
 Images live in `UPLOAD_DIR/stickers/<sha256>.webp`, outside the ordinary orphan-attachment cleanup. Back up the complete upload directory alongside SQLite. These assets are retained; the existing top-level attachment storage statistics do not include this subdirectory.
 

@@ -87,6 +87,14 @@ describe('counting', () => {
     expect(countChannelUnread('me', 'chat', String(newId(3)))).toBe(0);
   });
 
+  it('leaves out system rows such as pokes', () => {
+    addMessage(newId(1), 'chat', 'other');
+    sqlite.prepare("INSERT INTO messages (id, channel_id, user_id, content, type, created_at) VALUES (?, 'chat', 'other', '{}', 'system', 1)")
+      .run(String(newId(2)));
+    expect(countChannelUnread('me', 'chat', '0')).toBe(1);
+    expect(countChannelUnread('me', 'chat', String(newId(1)))).toBe(0);
+  });
+
   it('stops at the cap', () => {
     for (let i = 0; i < UNREAD_COUNT_CAP + 50; i++) addMessage(newId(i), 'chat', 'other');
     for (let i = 0; i < UNREAD_COUNT_CAP + 50; i++) addDmMessage(newId(i), 'dm', 'other');

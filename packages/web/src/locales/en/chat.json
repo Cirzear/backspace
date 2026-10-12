@@ -170,6 +170,11 @@
     "playUnnamed": "Play video",
     "videoTitle": "Video"
   },
+  "poke": {
+    "action": "Poke",
+    "received": "{{actor}} poked {{target}}",
+    "disconnected": "Disconnected. Poke was not sent."
+  },
   "stickers": {
     "title": "My stickers",
     "upload": "Upload image",
