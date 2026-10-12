@@ -593,6 +593,12 @@
     "groups": {
       "owner": "Besitzer"
     },
+    "ownerTitle": {
+      "edit": "Besitzertitel bearbeiten",
+      "label": "Besitzertitel",
+      "hint": "Für alle Mitglieder dieses Spaces sichtbar. 1 bis {{max}} Zeichen; Berechtigungen bleiben unverändert.",
+      "reset": "Standard wiederherstellen"
+    },
     "menu": {
       "profile": "Profil anzeigen",
       "nickname": "Space-Spitznamen ändern…",

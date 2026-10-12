@@ -58,6 +58,7 @@ Adds `detached_home_instance`, `detached_home_user_id` and their index. The data
 | banner | text | | Upload filename |
 | avatarColor | text | | Hex color |
 | ownerId | text NOT NULL | | FK → users.id |
+| ownerTitle | text | | The owner title: the heading over the owner's group in the member list, set by the owner alone (migration `0030_space_owner_title`). Null shows the translated default ("Owner"). Stored as `normalizeOwnerTitle` returns it. Cleared when ownership is transferred. See [spaces.md](spaces.md), "Owner title". |
 | inviteCode | text UNIQUE | | |
 | visibility | text | `'private'` | public/request/private |
 | description | text | | |

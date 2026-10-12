@@ -340,10 +340,11 @@ describe('mass-mention preference migration', () => {
     try {
       // Exercise the exact pre-feature schema, rather than a hand-written approximation.
       applyMigrations(upgrade, '0027_unread_count_indexes.sql');
-      const previousDb = drizzle(upgrade, { schema });
-      previousDb.insert(schema.users).values({ id: 'member', username: 'member', passwordHash: 'x', createdAt: NOW }).run();
-      previousDb.insert(schema.spaces).values({ id: 'space', name: 'space', ownerId: 'member', createdAt: NOW }).run();
-      previousDb.insert(schema.channels).values({ id: 'channel', spaceId: 'space', name: 'channel', type: 'text', createdAt: NOW }).run();
+      // Plain SQL: the drizzle schema describes today's tables, and its
+      // inserts name columns a later migration adds.
+      upgrade.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run('member', 'member', 'x', NOW);
+      upgrade.prepare('INSERT INTO spaces (id, name, owner_id, created_at) VALUES (?, ?, ?, ?)').run('space', 'space', 'member', NOW);
+      upgrade.prepare('INSERT INTO channels (id, space_id, name, type, created_at) VALUES (?, ?, ?, ?, ?)').run('channel', 'space', 'channel', 'text', NOW);
       upgrade.prepare('INSERT INTO notification_settings (user_id, space_id, channel_id, level, muted, muted_until, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
         .run('member', 'space', null, 'mentions', 1, NOW + HOUR, NOW);
       upgrade.prepare('INSERT INTO notification_settings (user_id, space_id, channel_id, level, muted, muted_until, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')

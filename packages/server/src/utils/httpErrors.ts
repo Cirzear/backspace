@@ -176,6 +176,7 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   join_request_not_found: 'Join request not found',
   join_request_decided: 'This request has already been decided',
   // spaces
+  space_owner_title_invalid: 'Owner titles can be 1 to {{max}} characters on one line, with at least one visible character and no control characters.',
   member_nickname_invalid: 'Nicknames can be at most {{max}} characters on one line, with at least one visible character and no control characters.',
   space_name_required: 'Space name is required',
   space_name_length: 'Space name must be between {{min}} and {{max}} characters',

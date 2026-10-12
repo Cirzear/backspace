@@ -593,6 +593,12 @@
     "groups": {
       "owner": "Owner"
     },
+    "ownerTitle": {
+      "edit": "Edit owner title",
+      "label": "Owner title",
+      "hint": "Visible to all members in this space. Use 1–{{max}} characters; this does not change permissions.",
+      "reset": "Reset to default"
+    },
     "menu": {
       "profile": "View profile",
       "nickname": "Change space nickname…",
