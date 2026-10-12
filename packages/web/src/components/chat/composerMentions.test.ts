@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { composerMentions } from './composerMentions';
+import { appendMention, composerMentions, mentionInsertion } from './composerMentions';
 
 // Two people with the same shown name, as two members of one space can be.
 const names = new Map([['123', 'Alice'], ['456', 'Alice']]);
@@ -62,5 +62,20 @@ describe('composer mention display and wire offsets', () => {
     const result = model('Hi <@123> !');
     expect(result.toDisplay(5)).toBe(3);
     expect(result.toDisplay(result.text.length + 10)).toBe(result.text.length);
+  });
+});
+
+describe('adding a mention to the end of a draft', () => {
+  it('writes the token and a space after it', () => {
+    expect(mentionInsertion('123')).toBe('<@123> ');
+    expect(appendMention('', '123')).toBe('<@123> ');
+  });
+  it('puts a space between the draft and the token when the draft ends in text', () => {
+    expect(appendMention('hi', '123')).toBe('hi <@123> ');
+    expect(appendMention('hi <@456>', '123')).toBe('hi <@456> <@123> ');
+  });
+  it('adds no second space after whitespace the draft ends with', () => {
+    expect(appendMention('hi ', '123')).toBe('hi <@123> ');
+    expect(appendMention('hi\n', '123')).toBe('hi\n<@123> ');
   });
 });

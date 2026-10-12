@@ -7,8 +7,8 @@ import {
   useChannelUserResolver,
   type ChannelUser,
 } from '../../utils/channelUser';
-import { userDisplayName } from '../../utils/identity';
-import { composerMentions, type ComposerMentions } from './composerMentions';
+import { spaceMemberName } from '../../utils/identity';
+import { composerMentions, mentionInsertion, type ComposerMentions } from './composerMentions';
 
 interface MentionState {
   query: string;
@@ -47,7 +47,9 @@ export function useMentionComposer({ channelId, draftText, textareaRef }: Option
         value,
         (userId) => {
           const found = resolveUser(userId);
-          return found ? userDisplayName(found.user) : null;
+          // The name the sent message's MentionBadge shows: the space
+          // nickname where there is one.
+          return found ? spaceMemberName(found.member, found.user) : null;
         },
         (roleId) => {
           const role = spaceId === undefined ? undefined : roles.find((r) => r.id === roleId && r.spaceId === spaceId);
@@ -70,7 +72,7 @@ export function useMentionComposer({ channelId, draftText, textareaRef }: Option
       const cursorPos = textarea ? mentionModel.toWire(textarea.selectionStart, true) : draftText.length;
       const before = draftText.slice(0, mentionState.startIndex);
       const after = draftText.slice(cursorPos);
-      const insertion = `<@${candidate.userId}> `;
+      const insertion = mentionInsertion(candidate.userId);
       const newContent = before + insertion + after;
       setDraft(channelId, newContent);
       setMentionState(null);

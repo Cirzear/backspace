@@ -1,6 +1,6 @@
 import { isStickerMessage } from '../../utils/stickerMessages';
 import { StickerMessage } from './StickerMessage';
-import { useChannelPokeMenu } from './useChannelPokeMenu';
+import { useAuthorMenu } from './useAuthorMenu';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -441,8 +441,14 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     ? { spaceId: currentSpaceId, userId: message.userId }
     : undefined;
 
-  const handleAuthorMenu = useChannelPokeMenu({ channelId: channelKey, targetUserId: message.userId,
-    origin: messageOrigin, enabled: canSendMessages && !isDmMessage && !pending });
+  const handleAuthorMenu = useAuthorMenu({
+    channelId: channelKey,
+    authorId: message.userId,
+    origin: messageOrigin,
+    isDm: isDmMessage,
+    canSend: canSendMessages && !isDeadDmThread && !pending,
+    isAuthor,
+  });
 
   const handleUsernameClick = (e: React.MouseEvent) => {
     if (!message.user) return;
