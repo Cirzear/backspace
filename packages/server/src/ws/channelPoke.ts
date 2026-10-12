@@ -8,6 +8,7 @@ import { getDb, schema } from '../db/index.js';
 import { getChannelSpaceId, getMember, hasPermission, PermissionBits } from '../utils/permissions.js';
 import { connectionManager } from './handler.js';
 import { errorText } from '../utils/httpErrors.js';
+import { createFixedWindowLimit } from '../utils/fixedWindowLimit.js';
 import type { ErrorCode, ErrorDetails } from '@backspace/shared/src/errors';
 
 /**
@@ -19,6 +20,22 @@ function refusePoke(ws: WebSocket, code: ErrorCode, details?: ErrorDetails): voi
   connectionManager.sendToWs(ws, details
     ? { type: 'error', message: errorText(code, details), code, details }
     : { type: 'error', message: errorText(code), code });
+}
+
+/**
+ * How often one member may poke: 5 pokes per minute, counted per actor (the
+ * row id on this instance, so each federated account counts on its own),
+ * across every channel and target. A poke is a stored row that every viewer of
+ * the channel receives and that plays a cue on its target, so it is held well
+ * below the per-user limit on every WebSocket event (30 at once, 2 a second).
+ */
+export const CHANNEL_POKE_RATE_LIMIT = { max: 5, windowMs: 60_000 } as const;
+
+const pokeLimit = createFixedWindowLimit(CHANNEL_POKE_RATE_LIMIT);
+
+/** Tests only: forget every actor's window. */
+export function _resetChannelPokeLimit(): void {
+  pokeLimit.reset();
 }
 
 /**
@@ -53,6 +70,10 @@ export function handleChannelPoke({ event, userId, ws }: {
   if (!actor || !target || !targetMember) { refusePoke(ws, 'member_not_found'); return; }
   if (!hasPermission(targetUserId, spaceId, PermissionBits.VIEW_CHANNEL, channelId)) {
     refusePoke(ws, 'poke_target_no_access'); return;
+  }
+  // Counted only once a poke would be stored, so a refused one costs nothing.
+  if (!pokeLimit.consume(userId)) {
+    refusePoke(ws, 'rate_limited'); return;
   }
   // The target's name in this space when the poke happened: the snapshot a
   // client shows once the target has left (channelSystemEvents.ts).

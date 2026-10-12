@@ -36,7 +36,7 @@ vi.mock('./handler.js', () => ({
   },
 }));
 
-const { handleChannelPoke } = await import('./channelPoke.js');
+const { handleChannelPoke, _resetChannelPokeLimit, CHANNEL_POKE_RATE_LIMIT } = await import('./channelPoke.js');
 
 const SPACE = 'space';
 const CHANNEL = 'chat';
@@ -53,6 +53,7 @@ function refusals(): unknown[] {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  _resetChannelPokeLimit();
   sqlite = new Database(':memory:');
   sqlite.pragma('foreign_keys = ON');
   const dir = path.resolve(__dirname, '../../drizzle');
@@ -124,6 +125,23 @@ describe('channel poke refusals', () => {
     expect(testDb.select().from(schema.messages).all()).toEqual([]);
     expect(sendToChannel).not.toHaveBeenCalled();
     expect(sendToUser).not.toHaveBeenCalled();
+  });
+});
+
+describe('the poke rate limit', () => {
+  it('refuses the poke after the limit with rate_limited, without storing it', () => {
+    for (let i = 0; i < CHANNEL_POKE_RATE_LIMIT.max; i++) poke({ channelId: CHANNEL, targetUserId: 'target' });
+    expect(refusals()).toEqual([]);
+    poke({ channelId: CHANNEL, targetUserId: 'owner' });
+    expect(refusals()).toEqual([expect.objectContaining({ code: 'rate_limited' })]);
+    expect(testDb.select().from(schema.messages).all()).toHaveLength(CHANNEL_POKE_RATE_LIMIT.max);
+  });
+
+  it('counts each actor on their own and does not count refused pokes', () => {
+    for (let i = 0; i < CHANNEL_POKE_RATE_LIMIT.max; i++) poke({ channelId: CHANNEL, targetUserId: 'outsider' });
+    for (let i = 0; i < CHANNEL_POKE_RATE_LIMIT.max; i++) poke({ channelId: CHANNEL, targetUserId: 'target' });
+    poke({ channelId: CHANNEL, targetUserId: 'actor' }, 'target');
+    expect(testDb.select().from(schema.messages).all()).toHaveLength(CHANNEL_POKE_RATE_LIMIT.max + 1);
   });
 });
 
