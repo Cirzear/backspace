@@ -4,7 +4,7 @@ import type { BaseSQLiteDatabase } from 'drizzle-orm/sqlite-core';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { config } from '../config.js';
 import * as schema from './schema.js';
-import { ensureDefaults, backfillOneOnOneDmMembership, healSkippedOutboxMigration } from './migrate.js';
+import { ensureDefaults, backfillOneOnOneDmMembership, healSkippedOutboxMigration, healLegacyColumns } from './migrate.js';
 import { normalizeAllRolePositions } from './rolePositions.js';
 import { normalizeStoredPermissions } from './permissionStrings.js';
 import { setWorkerId } from '../utils/snowflake.js';
@@ -55,6 +55,7 @@ export function initDatabase() {
   }
 
   healSkippedOutboxMigration(sqlite, migrationsFolder);
+  healLegacyColumns(sqlite);
 
   const db = drizzle(sqlite, { schema });
   migrate(db, { migrationsFolder });

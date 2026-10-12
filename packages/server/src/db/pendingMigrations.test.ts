@@ -13,19 +13,19 @@ describe('hasPendingMigrations', () => {
     expect(hasPendingMigrations(db, migrationsFolder)).toBe(true);
   });
 
-  it('returns true when fewer rows than journal entries are applied', () => {
+  it('returns true when max created_at is less than the newest journal timestamp', () => {
     const db = new Database(':memory:');
     db.exec('CREATE TABLE __drizzle_migrations (id INTEGER PRIMARY KEY, hash TEXT, created_at NUMERIC)');
     db.prepare('INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)').run('x', 1);
     expect(hasPendingMigrations(db, migrationsFolder)).toBe(true);
   });
 
-  it('returns false when applied count >= journal entries', () => {
+  it('returns false when max created_at >= newest journal timestamp', () => {
     const db = new Database(':memory:');
     db.exec('CREATE TABLE __drizzle_migrations (id INTEGER PRIMARY KEY, hash TEXT, created_at NUMERIC)');
     const journal = require(path.join(migrationsFolder, 'meta/_journal.json'));
-    const insert = db.prepare('INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)');
-    for (let i = 0; i < journal.entries.length; i++) insert.run(`h${i}`, i);
+    const newest = Math.max(...journal.entries.map((e: { when: number }) => e.when));
+    db.prepare('INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)').run('h_newest', newest);
     expect(hasPendingMigrations(db, migrationsFolder)).toBe(false);
   });
 });

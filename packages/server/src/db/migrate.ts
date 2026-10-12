@@ -129,8 +129,11 @@ export function healSkippedOutboxMigration(db: Database.Database, migrationsFold
   const newerApplied = db.prepare('SELECT 1 FROM __drizzle_migrations WHERE created_at >= ? LIMIT 1').get(OUTBOX_MIGRATION_TIMESTAMP);
   if (!newerApplied) return;
 
-  console.log('[migrate] Detected skipped migration 0026_outbox_queue_keys. Healing schema...');
-  const migrationPath = path.join(migrationsFolder, '0026_outbox_queue_keys.sql');
+  const fileName = fs.existsSync(path.join(migrationsFolder, '0021_outbox_queue_keys.sql'))
+    ? '0021_outbox_queue_keys.sql'
+    : '0026_outbox_queue_keys.sql';
+  console.log(`[migrate] Detected skipped migration ${fileName}. Healing schema...`);
+  const migrationPath = path.join(migrationsFolder, fileName);
   const sql = fs.readFileSync(migrationPath, 'utf8');
   const hash = crypto.createHash('sha256').update(sql).digest('hex');
   const statements = sql.split(/-->\s*statement-breakpoint/).map((s) => s.trim()).filter(Boolean);
@@ -146,5 +149,27 @@ export function healSkippedOutboxMigration(db: Database.Database, migrationsFold
   });
   run();
   console.log('[migrate] Successfully healed migration 0026_outbox_queue_keys');
+}
+
+/**
+ * Ensures required columns on messages and spaces exist even if legacy migration timestamps
+ * caused 0029 or 0030 to be skipped during upgrade from older shapes (e.g. pre-squash).
+ * Idempotent — no-op if columns already exist or if tables do not exist yet.
+ */
+export function healLegacyColumns(db: Database.Database): void {
+  const messagesTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'messages'").get();
+  if (messagesTable) {
+    const cols = db.prepare("PRAGMA table_info('messages')").all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === 'type')) {
+      db.exec("ALTER TABLE `messages` ADD `type` text DEFAULT 'user' NOT NULL");
+    }
+  }
+  const spacesTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'spaces'").get();
+  if (spacesTable) {
+    const cols = db.prepare("PRAGMA table_info('spaces')").all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === 'owner_title')) {
+      db.exec("ALTER TABLE `spaces` ADD `owner_title` text DEFAULT NULL");
+    }
+  }
 }
 

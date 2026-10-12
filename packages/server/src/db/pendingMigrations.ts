@@ -5,11 +5,11 @@ import path from 'node:path';
 interface DrizzleJournal { entries: Array<{ idx: number; tag: string; when: number }>; }
 
 /**
- * True when migrations are pending. Drizzle's better-sqlite3 migrator appends one
- * row per applied migration to `__drizzle_migrations`, in journal order. Comparing
- * the applied row count to the journal entry count is sufficient to know whether
- * `migrate()` will apply anything — without running it. A missing table means a
- * pre-drizzle or empty DB: treat as pending.
+ * True when migrations are pending. Drizzle's better-sqlite3 migrator executes
+ * every journal migration whose `when` timestamp is greater than the maximum
+ * `created_at` in `__drizzle_migrations`. Comparing `MAX(created_at)` to the newest
+ * journal entry timestamp accurately predicts whether `migrate()` will apply anything.
+ * A missing table means a pre-drizzle or empty DB: treat as pending.
  */
 export function hasPendingMigrations(db: Database.Database, migrationsFolder: string): boolean {
   const journalPath = path.join(migrationsFolder, 'meta', '_journal.json');
@@ -20,6 +20,7 @@ export function hasPendingMigrations(db: Database.Database, migrationsFolder: st
     .get();
   if (!tableExists) return true;
 
-  const applied = db.prepare('SELECT COUNT(*) AS n FROM __drizzle_migrations').get() as { n: number };
-  return applied.n < journal.entries.length;
+  const last = db.prepare('SELECT MAX(created_at) AS t FROM __drizzle_migrations').get() as { t: number | null };
+  const newest = Math.max(...journal.entries.map((e) => e.when));
+  return (last.t ?? 0) < newest;
 }
