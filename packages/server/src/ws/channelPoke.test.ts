@@ -153,10 +153,25 @@ describe('a channel poke', () => {
   });
 
   it('ignores names and ids the client sends beyond the channel and target', () => {
-    poke({ channelId: CHANNEL, targetUserId: 'target', username: 'forged', targetUsername: 'forged', userId: 'owner' });
+    poke({ channelId: CHANNEL, targetUserId: 'target', targetDisplayName: 'forged', userId: 'owner' });
     const row = testDb.select().from(schema.messages).get()!;
     expect(row.userId).toBe('actor');
     expect(row.content).not.toContain('forged');
+  });
+
+  it("records the target's nickname in the space as the stored name", () => {
+    testDb.update(schema.spaceMembers).set({ nickname: 'Navigator' }).where(eq(schema.spaceMembers.userId, 'target')).run();
+    poke({ channelId: CHANNEL, targetUserId: 'target' });
+    expect(parseChannelSystemEvent(testDb.select().from(schema.messages).get()!.content)).toEqual({
+      event: 'channel_poke', targetUserId: 'target', targetDisplayName: 'Navigator',
+    });
+  });
+
+  it('records the account name without the instance for a target without a nickname', () => {
+    poke({ channelId: CHANNEL, targetUserId: 'target' });
+    expect(parseChannelSystemEvent(testDb.select().from(schema.messages).get()!.content)).toEqual({
+      event: 'channel_poke', targetUserId: 'target', targetDisplayName: 'target',
+    });
   });
 
   it('propagates a storage failure without sending anything', () => {

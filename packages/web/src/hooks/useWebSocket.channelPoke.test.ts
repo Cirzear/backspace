@@ -134,7 +134,7 @@ function socketFor(origin: string): FakeWebSocket {
 function pokeRow(id: string): MessageWithUser {
   return {
     id, channelId: 'c1', userId: 'actor-on-nova', type: 'system', replyToId: null, editedAt: null, createdAt: 1,
-    content: JSON.stringify({ event: 'channel_poke', targetUserId: 'me-on-nova', username: 'Actor', targetUsername: 'Me' }),
+    content: JSON.stringify({ event: 'channel_poke', targetUserId: 'me-on-nova', targetDisplayName: 'Me' }),
     mentionEveryone: false, mentionRoleIds: [],
     user: { ...me('actor-on-nova'), displayName: 'Actor' }, attachments: [], embeds: [], reactions: [],
   };

@@ -8,7 +8,7 @@ import type { MessageWithUser } from '@backspace/shared';
 import { receiveChannelPoke } from './channelPoke';
 const event = {
   id: '1', channelId: 'chat', userId: 'actor', type: 'system', replyToId: null, editedAt: null, createdAt: 1,
-  content: JSON.stringify({ event: 'channel_poke', targetUserId: 'target', username: 'Actor', targetUsername: 'Target' }),
+  content: JSON.stringify({ event: 'channel_poke', targetUserId: 'target', targetDisplayName: 'Target' }),
   attachments: [], embeds: [], reactions: [],
 } as unknown as MessageWithUser;
 const animate = vi.fn(() => ({ onfinish: null }));

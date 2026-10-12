@@ -2,6 +2,7 @@ import type { WebSocket } from 'ws';
 import { eq } from 'drizzle-orm';
 import { generateSnowflake } from '../utils/snowflake.js';
 import { buildMessageWithUser } from '../routes/messages.js';
+import { dmSystemName } from '../utils/dmSystemMessages.js';
 import { channelSystemContent } from '@backspace/shared/src/channelSystemEvents.js';
 import { getDb, schema } from '../db/index.js';
 import { getChannelSpaceId, getMember, hasPermission, PermissionBits } from '../utils/permissions.js';
@@ -48,15 +49,17 @@ export function handleChannelPoke({ event, userId, ws }: {
   const target = db.select().from(schema.users).where(eq(schema.users.id, targetUserId)).get();
   // The target is a member of the space: an instance admin who never joined
   // holds every permission there but is not someone to poke.
-  if (!actor || !target || !getMember(spaceId, targetUserId)) { refusePoke(ws, 'member_not_found'); return; }
+  const targetMember = getMember(spaceId, targetUserId);
+  if (!actor || !target || !targetMember) { refusePoke(ws, 'member_not_found'); return; }
   if (!hasPermission(targetUserId, spaceId, PermissionBits.VIEW_CHANNEL, channelId)) {
     refusePoke(ws, 'poke_target_no_access'); return;
   }
-  const username = actor.displayName ?? actor.username;
-  const targetUsername = target.displayName ?? target.username;
+  // The target's name in this space when the poke happened: the snapshot a
+  // client shows once the target has left (channelSystemEvents.ts).
+  const targetDisplayName = targetMember.nickname || dmSystemName(target);
   const row = db.insert(schema.messages).values({
     id: generateSnowflake(), channelId, userId, type: 'system',
-    content: channelSystemContent({ event: 'channel_poke', targetUserId, username, targetUsername }),
+    content: channelSystemContent({ event: 'channel_poke', targetUserId, targetDisplayName }),
     createdAt: Date.now(),
   }).returning().get();
   // One event carries the stored row. It is not a message_created: a client

@@ -5,15 +5,18 @@
  *
  * - The instance hosting the space writes the row; no client sends content
  *   for it, and it is never relayed to a peer.
- * - `targetUserId` is that instance's id for the member who was poked, the id
- *   its member list and messages carry.
- * - Names are snapshots taken when the row was written. A client names the
- *   people from the space's roster while they are in it, and falls back to
- *   the snapshot only for someone who is not.
+ * - The actor is the row's author (`userId`), named like any author. The
+ *   target is `targetUserId`, that instance's id for the member who was poked,
+ *   the id its member list and messages carry.
+ * - `targetDisplayName` is a snapshot of the target's name in the space when
+ *   the row was written (their nickname, else their account name). A client
+ *   names the target from the space's roster while they are in it, as every
+ *   other surface of the space does, and uses the snapshot only for someone
+ *   who is no longer there.
  * - System messages cannot be edited.
  */
 export type ChannelSystemEvent =
-  | { event: 'channel_poke'; targetUserId: string; username: string; targetUsername: string };
+  | { event: 'channel_poke'; targetUserId: string; targetDisplayName: string };
 
 type Fields = Record<string, unknown>;
 
@@ -46,10 +49,9 @@ export function parseChannelSystemEvent(content: string | null | undefined): Cha
   if (!isFields(value)) return null;
   if (value.event === 'channel_poke') {
     const targetUserId = text(value.targetUserId);
-    const username = text(value.username);
-    const targetUsername = text(value.targetUsername);
-    if (!targetUserId || !username || !targetUsername) return null;
-    return { event: 'channel_poke', targetUserId, username, targetUsername };
+    const targetDisplayName = text(value.targetDisplayName);
+    if (!targetUserId || !targetDisplayName) return null;
+    return { event: 'channel_poke', targetUserId, targetDisplayName };
   }
   return null;
 }
