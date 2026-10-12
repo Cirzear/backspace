@@ -1,3 +1,4 @@
+import { useChannelPokeStore } from './channelPokeStore';
 import { useUnreadCountStore } from './unreadCountStore';
 import { useMemo } from 'react';
 import { create } from 'zustand';
@@ -77,6 +78,7 @@ interface AuthState {
 function resetUserStores() {
   useChatStore.getState().clearAllMessages();
   useSpaceStore.getState().reset();
+  useChannelPokeStore.getState().reset();
   useUnreadCountStore.getState().reset();
   useSocialStore.getState().reset();
   useVoiceStore.getState().resetSession();

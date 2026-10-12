@@ -424,7 +424,11 @@ routes' codes, from `utils/dmMessageRules.ts`; see
 [websocket.md](websocket.md#dm-messages)), `dm_call_in_progress`,
 `not_dm_member` and `validation_failed` (`dm_call_start`), and
 `dm_call_not_found`, `not_dm_member` and `validation_failed`
-(`dm_call_accept`; see [voice.md](voice.md#dm-call-state-machine)).
+(`dm_call_accept`; see [voice.md](voice.md#dm-call-state-machine)), every
+refusal of `channel_poke` (`validation_failed`, `channel_not_found`,
+`missing_permission`, `member_not_found`, `poke_target_no_access`,
+`rate_limited`; see [websocket.md](websocket.md#channel-pokes)), and
+`system_message_immutable` for a `message_edit` of a channel system message.
 
 The web client no longer matches on English error text. The places that
 used to (the join page, the space invite card, the invite modal, the roles
@@ -440,8 +444,13 @@ DM system messages (member added, removed, left, ownership transferred, call
 events, space invites) are stored and relayed as structured JSON with a
 `type` discriminator and identity fields, never as English text. The client
 renders them through `dmFormatters.ts`, which now reads the `dm:system.*`
-keys. This is the only kind of server-authored text shown in chat, and it is
-already federation safe because peers relay the structure, not a rendering.
+keys. It is federation safe because peers relay the structure, not a
+rendering.
+
+Space channel system messages (a poke) follow the same rule: structured JSON
+(`channelSystemEvents.ts`) with ids and a name snapshot, rendered by
+`ChannelSystemMessage` from `chat:poke.received`. Content a client does not
+know renders `dm:system.generic` in both places.
 
 If a future feature stores a human sentence on the server, that is a bug in
 the feature, not a localization task.

@@ -27,6 +27,7 @@ import { useDelayedLoading } from '../../hooks/useDelayedLoading';
 import { describeError } from '../../i18n/errors';
 import type { MessageWithUser } from '@backspace/shared';
 import { SystemMessage } from './SystemMessage';
+import { ChannelSystemMessage } from './ChannelSystemMessage';
 import { MessageJumpContext } from './messageJumpContext';
 import {
   BOTTOM_ANCHOR,
@@ -1173,7 +1174,9 @@ export function MessageList({ channelId, jumpToMessageId, onJumpHandled }: Messa
                   />
                 )}
                 {msg.type === 'system' ? (
-                  <SystemMessage message={msg} dm={currentDm ?? null} />
+                  isDm === false
+                    ? <ChannelSystemMessage message={msg} />
+                    : <SystemMessage message={msg} dm={currentDm ?? null} />
                 ) : (
                   <Message
                     message={msg}

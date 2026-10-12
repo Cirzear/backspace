@@ -204,6 +204,13 @@
       "when": 1791753591416,
       "tag": "0028_mass_mention_preferences",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1791769904748,
+      "tag": "0029_persistent_channel_pokes",
+      "breakpoints": true
     }
   ]
 }

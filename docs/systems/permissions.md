@@ -488,7 +488,7 @@ channel-scoped for editing or deleting one channel. The current split:
 
 | Scope | Actions |
 |---|---|
-| Channel | view, send, attach, react, read history, manage messages, mention everyone; connect, speak, stream; edit or delete the channel (`MANAGE_CHANNELS`); mute, deafen, move, disconnect a voice user (checked on the channel the target is in) |
+| Channel | view, send, attach, react, read history, manage messages, mention everyone, poke (VIEW_CHANNEL and SEND_MESSAGES); connect, speak, stream; edit or delete the channel (`MANAGE_CHANNELS`); mute, deafen, move, disconnect a voice user (checked on the channel the target is in) |
 | Space | create a channel; reorder channels and categories; create, rename or delete a category; read or write any channel or category override (`MANAGE_ROLES`); invites, kick, ban, space settings |
 
 Member and role actions also follow the role hierarchy and the held-bits
@@ -512,6 +512,7 @@ rule (above). Every gated surface:
 | Channel and category overrides: toggles | `ui/OverrideEntry.tsx` via `ui/PermissionsEditor.tsx` | a tri-state toggle for a bit the viewer does not hold is locked, shows its state and a lock, and the `permissions.unheldLocked` note says why |
 | Channel and category overrides: remove | `ui/OverrideEntry.tsx` via `ui/PermissionsEditor.tsx` | disabled for a saved override that sets a bit the viewer does not hold (`permissions.removeUnheld`); a row added in the same edit can always be dropped |
 | Voice user menu: mute, deafen, move, disconnect | `voice/voiceMenuItems.tsx` | no moderation items for members ranked at or above the viewer |
+| Message author right-click: Poke | `chat/useChannelPokeMenu.ts` via `chat/Message.tsx` | only for a sent message in a space channel where the viewer holds SEND_MESSAGES (`channelPermissions`) and the space's instance offered pokes in its `ready`; otherwise the right click opens the message menu. The server also needs the target to be a member with VIEW_CHANNEL (websocket.md, "Channel pokes") |
 | Voice drag-to-move | `hooks/useDragManager.ts` via `layout/ChannelSidebar.tsx` | not draggable for members ranked at or above the viewer |
 
 The helpers in `web/src/utils/roleHierarchy.ts` are the surface every role
@@ -619,7 +620,7 @@ Space membership and channel access are not the same thing, so the two
 | Helper | Recipients | Carries |
 |--------|-----------|---------|
 | `sendToSpace(spaceId, event)` | every member of the space | space-level facts: `space_updated`, `member_joined`, `member_left`, `category_created` / `category_updated` / `category_deleted`, voice presence |
-| `sendToChannel(spaceId, channelId, event)` | members whose `computePermissions` grants `VIEW_CHANNEL` on that channel | anything scoped to one channel: `message_created`, `message_updated`, `message_deleted`, `typing`, `reaction_added`, `reaction_removed`, `embeds_resolved` |
+| `sendToChannel(spaceId, channelId, event)` | members whose `computePermissions` grants `VIEW_CHANNEL` on that channel | anything scoped to one channel: `message_created`, `message_updated`, `message_deleted`, `typing`, `reaction_added`, `reaction_removed`, `embeds_resolved`, `channel_poke` |
 
 Anything naming a channel or carrying its content goes through `sendToChannel`.
 A message edit ships the full `MessageWithUser` (content, author, attachments), a
@@ -677,9 +678,11 @@ and change nothing, since every DM message alerts anyway.
 
 **The stamp.** Every channel message the server sends (`buildMessageWithUser`,
 the WebSocket `getMessageWithUser`) carries `mentionEveryone` and
-`mentionRoleIds` (`massMentionFields`), read from the stored content. Since
+`mentionRoleIds` (`storedMassMentionFields`), read from the stored content. Since
 the server stores a new mass mention only from an author with the
-permission, the stamp says the space allowed it. Clients alert on mass
+permission, the stamp says the space allowed it. A system message (a poke)
+is stamped empty whatever its content holds: it records names members chose,
+and a nickname of `@everyone` is not a mention. Clients alert on mass
 mentions from the stamp alone, never from the text (sounds.md, "Which
 messages alert"). Messages stored before this version are stamped from their
 text too; that matters only for the highlight, since only `message_created`
@@ -727,7 +730,8 @@ Covered by `routes/messages.massMentions.test.ts`,
 
 ## Reply-target confinement
 
-A message's `replyToId` must name a message in the **same channel**. Both create
+A message's `replyToId` must name a message in the **same channel**, and one a
+member wrote: a system row such as a poke takes no replies. Both create
 paths enforce it (`POST /api/channels/:id/messages` and the WebSocket
 `message_create` handler) via `isReplyTargetInChannel`, answering
 `400 Invalid reply target` / a WS `error` event without inserting anything. Every

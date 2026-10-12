@@ -232,6 +232,7 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   message_empty: 'Message must have content or attachments',
   message_edit_not_author: 'You can only edit your own messages',
   message_delete_forbidden: 'You cannot delete this message',
+  poke_target_no_access: 'That member cannot see this channel',
   paging_cursor_conflict: 'Use either before or after, not both',
   internal_error: 'Something went wrong on the server',
   // misc
