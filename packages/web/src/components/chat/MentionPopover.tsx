@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Avatar } from '../ui/Avatar';
 import { useFloatingPosition } from '../../hooks/useFloatingPosition';
 import { useCanonicalUserView } from '../../utils/userViewLookup';
-import { userDisplayName } from '../../utils/identity';
+import { spaceMemberName } from '../../utils/identity';
 import { useUIStore } from '../../stores/uiStore';
 import type { ChannelUser } from '../../utils/channelUser';
 
@@ -23,7 +23,7 @@ function MentionMemberRow({
 }) {
   const canonical = useCanonicalUserView(candidate.user, candidate.origin);
   const roleColor = candidate.nameColor;
-  const displayName = userDisplayName(canonical);
+  const displayName = spaceMemberName(candidate.member, canonical);
   // The username is the second label whenever it says more than the name:
   // a display name is set, or the name is the base of a federated username.
   const showUsername = canonical.username !== displayName;
@@ -128,8 +128,11 @@ function DesktopMention({
 
   const { style } = useFloatingPosition(anchorRef, floatingRef, {
     placement: 'top',
+    align: 'start',
     offset: 4,
     enabled: candidates.length > 0,
+    // The anchor is the marker at the typed `@`; text before it can move it.
+    followAnchor: true,
   });
 
   // Scroll selected item into view

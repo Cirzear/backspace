@@ -1,3 +1,5 @@
+import { useMentionComposer } from './useMentionComposer';
+import { MentionTextarea } from './MentionTextarea';
 import { layoutRect } from '../../platform/interfaceScale';
 import React, { useState, useRef, useCallback, useMemo, useEffect, useLayoutEffect } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -7,7 +9,7 @@ import { wsSend } from '../../hooks/useWebSocket';
 import { MentionPopover } from './MentionPopover';
 import { TypingIndicator } from './TypingIndicator';
 import { InputPopover, type InputPopoverTab } from './InputPopover';
-import { AttachmentProgress } from './AttachmentProgress';
+import { StagedTransferTiles } from './StagedTransferTiles';
 import { hasPermissionBit, PermissionBits } from '../../utils/permissions';
 import { MAX_MESSAGE_LENGTH } from '@backspace/shared';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -21,11 +23,6 @@ import { useAuthStore } from '../../stores/authStore';
 import { selfIdentityOf } from '../../utils/identity';
 import { findLastOwnEditableMessage } from './messageEditing';
 import { describeError } from '../../i18n/errors';
-import {
-  filterMentionCandidates,
-  useChannelMentionCandidates,
-  type ChannelUser,
-} from '../../utils/channelUser';
 
 interface MessageInputProps {
   channelId: string;
@@ -39,12 +36,6 @@ interface MessageInputProps {
    * when the group has no `dm.name` set.
    */
   placeholder?: string;
-}
-
-interface MentionState {
-  query: string;
-  startIndex: number;
-  selectedIndex: number;
 }
 
 // Default tus expiration window if a transfer doesn't yet have one (24h).
@@ -71,22 +62,19 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   // Transfer state — subscribe to the whole map so progress/state updates re-render
   const transfers = useTransferStore((s) => s.transfers);
   const startUpload = useTransferStore((s) => s.startUpload);
-  const pauseUpload = useTransferStore((s) => s.pauseUpload);
-  const resumeUpload = useTransferStore((s) => s.resumeUpload);
   const abortUpload = useTransferStore((s) => s.abortUpload);
 
   // UI-only state stays local
-  const [mentionState, setMentionState] = useState<MentionState | null>(null);
   const [activePopover, setActivePopover] = useState<InputPopoverTab | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const inputContainerRef = useRef<HTMLDivElement>(null);
+  const mentionAnchorRef = useRef<HTMLSpanElement>(null);
   // Note: this ref is intentionally typed `HTMLDivElement | null` (mutable
   // ref shape) rather than the more restrictive `RefObject<HTMLDivElement>`
   // because we assign to `.current` from a callback ref below — the
   // callback ref bridges the imperative `popoverAnchorRef` consumers
-  // (InputPopover / mention-popover anchoring) and the state-backed
+  // (InputPopover anchoring) and the state-backed
   // `composerEl` slot used by the clearance-measuring effect.
   const popoverAnchorRef = useRef<HTMLDivElement | null>(null);
 
@@ -102,8 +90,6 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   const chatSetReplyTo = useChatStore((s) => s.setReplyTo);
   const editingMessageId = useChatStore((s) => s.editingMessageId);
   const setEditingMessage = useChatStore((s) => s.setEditingMessage);
-  // Who can be mentioned here: this channel's people, with ids on its origin.
-  const mentionCandidates = useChannelMentionCandidates(channelId);
 
   const addToast = useUIStore((s) => s.addToast);
   const appendBubble = usePendingMessageStore((s) => s.append);
@@ -131,6 +117,9 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   }, [composerState.stagedTransferIds, transfers]);
 
   const draftText = composerState.draftText;
+  const { mentionState, setMentionState, mentionMatches, mentionModel, modelFor,
+    selectMention, handleMentionKey, updateMention } = useMentionComposer({ channelId, draftText, textareaRef });
+
   const remaining = MAX_MESSAGE_LENGTH - draftText.length;
   const isOverLimit = remaining < 0;
 
@@ -155,7 +144,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   useEffect(() => {
     setActivePopover(null);
     setMentionState(null);
-  }, [channelId]);
+  }, [channelId, setMentionState]);
 
   // Sync this channel's chatStore reply target into composerStore so reload restores it.
   // chatStore holds the live MessageWithUser; composerStore stores a flat snapshot.
@@ -204,12 +193,6 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
       }
     }
   }, [stagedTransfers, addToast, t]);
-
-  // The popover's rows; keyboard navigation indexes the same list.
-  const mentionMatches = useMemo(
-    () => (mentionState ? filterMentionCandidates(mentionCandidates, mentionState.query) : []),
-    [mentionCandidates, mentionState],
-  );
 
   const handleTyping = useCallback(() => {
     if (typingTimeoutRef.current) return;
@@ -396,60 +379,10 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     }
   };
 
-  const selectMention = useCallback(
-    (candidate: ChannelUser) => {
-      if (!mentionState) return;
-      const textarea = textareaRef.current;
-      const cursorPos = textarea?.selectionStart ?? draftText.length;
-      const before = draftText.slice(0, mentionState.startIndex);
-      const after = draftText.slice(cursorPos);
-      const insertion = `<@${candidate.userId}> `;
-      const newContent = before + insertion + after;
-      setDraft(channelId, newContent);
-      setMentionState(null);
-
-      // Restore cursor position after React re-renders
-      const newCursorPos = before.length + insertion.length;
-      requestAnimationFrame(() => {
-        if (textarea) {
-          textarea.focus();
-          textarea.selectionStart = newCursorPos;
-          textarea.selectionEnd = newCursorPos;
-        }
-      });
-    },
-    [mentionState, draftText, setDraft, channelId],
-  );
-
   const handleKeyDown = (e: React.KeyboardEvent): void => {
-    // Mention popover keyboard navigation
-    if (mentionState && mentionMatches.length > 0) {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        setMentionState((prev) =>
-          prev ? { ...prev, selectedIndex: Math.min(prev.selectedIndex + 1, mentionMatches.length - 1) } : null,
-        );
-        return;
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        setMentionState((prev) =>
-          prev ? { ...prev, selectedIndex: Math.max(prev.selectedIndex - 1, 0) } : null,
-        );
-        return;
-      }
-      if (e.key === 'Enter' || e.key === 'Tab') {
-        e.preventDefault();
-        const selected = mentionMatches[mentionState.selectedIndex];
-        if (selected) selectMention(selected);
-        return;
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        setMentionState(null);
-        return;
-      }
-    }
+    // IME confirmation must not select a candidate or send the message.
+    if (e.nativeEvent.isComposing) return;
+    if (handleMentionKey(e)) return;
 
     const isPlainArrowUp = e.key === 'ArrowUp'
       && !e.altKey
@@ -543,30 +476,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>): void => {
-    const value = e.target.value;
-    const cursorPos = e.target.selectionStart;
-    setDraft(channelId, value);
-
-    // Detect @mention trigger
-    const textBeforeCursor = value.slice(0, cursorPos);
-    const mentionMatch = textBeforeCursor.match(/@([^\s<]*)$/);
-
-    if (mentionMatch) {
-      const atIndex = cursorPos - mentionMatch[0].length;
-      // Only trigger at word boundary: start of input, after space, or after newline
-      const charBefore = atIndex > 0 ? value[atIndex - 1] : undefined;
-      if (charBefore === undefined || charBefore === ' ' || charBefore === '\n') {
-        setMentionState({
-          query: mentionMatch[1] ?? '',
-          startIndex: atIndex,
-          selectedIndex: 0,
-        });
-      } else {
-        setMentionState(null);
-      }
-    } else {
-      setMentionState(null);
-    }
+    updateMention(e);
 
     handleTyping();
 
@@ -583,22 +493,23 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
         setDraft(channelId, draftText + emoji.native);
         return;
       }
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
-      const before = draftText.slice(0, start);
-      const after = draftText.slice(end);
-      const newContent = before + emoji.native + after;
+      // A selection that touches a mention replaces its whole token.
+      const { value: newContent, wireCursor } = mentionModel.replace({
+        start: textarea.selectionStart,
+        end: textarea.selectionEnd,
+        text: emoji.native,
+      });
       setDraft(channelId, newContent);
 
       // Restore cursor position after the emoji
-      const newCursorPos = start + emoji.native.length;
+      const newCursorPos = modelFor(newContent).toDisplay(wireCursor);
       requestAnimationFrame(() => {
         textarea.focus();
         textarea.selectionStart = newCursorPos;
         textarea.selectionEnd = newCursorPos;
       });
     },
-    [draftText, setDraft, channelId],
+    [draftText, setDraft, channelId, mentionModel, modelFor],
   );
 
   const handleGifSelect = useCallback(
@@ -802,8 +713,8 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     if (composerEl) syncClearance(composerEl);
   }, [composerEl, syncClearance, isMobile, keyboardOpen, textInputFocused, chatReplyTo, stagedTransfers.length]);
 
-  // Combined ref: keep `popoverAnchorRef` populated (InputPopover / mention
-  // popover anchor + scroll-into-view targets) AND notify the
+  // Combined ref: keep `popoverAnchorRef` populated (InputPopover anchor +
+  // scroll-into-view targets) AND notify the
   // `composerEl` state slot so the clearance-measuring effect can re-run
   // when the element materializes / changes between conditional render
   // branches.
@@ -868,7 +779,6 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
         </div>
       )}
       <div
-        ref={inputContainerRef}
         className={`relative ${chatReplyTo ? 'rounded-b-lg' : ''} overflow-visible`}
         onDrop={canAttachFiles ? handleDrop : undefined}
         onDragOver={canAttachFiles ? handleDragOver : undefined}
@@ -879,82 +789,15 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
             candidates={mentionMatches}
             selectedIndex={mentionState.selectedIndex}
             onSelect={selectMention}
-            anchorRef={inputContainerRef}
+            anchorRef={mentionAnchorRef}
           />
         )}
 
-        {/* Staged transfer tiles */}
-        {stagedTransfers.length > 0 && (
-          <div className="p-4 flex flex-wrap gap-4 bg-surface-channel/30">
-            {stagedTransfers.map((transfer) => {
-              const isImage = transfer.file.mimetype.startsWith('image/');
-              const isFinal = transfer.state === 'completed';
-              const showOverlay = transfer.state !== 'completed';
-              const previewUrl = previewUrlsRef.current.get(transfer.id);
-              return (
-                <div
-                  key={transfer.id}
-                  className="relative group bg-surface-channel rounded-lg p-2 max-w-[200px] shadow-elevation-low border border-border-hard overflow-hidden"
-                >
-                  {isImage ? (
-                    <div className="w-[150px] h-[150px] bg-surface-input/40 rounded flex items-center justify-center text-txt-tertiary overflow-hidden">
-                      {previewUrl ? (
-                        <img
-                          src={previewUrl}
-                          alt={transfer.file.name}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <svg className="w-10 h-10 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                        </svg>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2 text-sm text-txt-secondary py-4 px-2">
-                      <svg className="w-8 h-8 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                        />
-                      </svg>
-                      <span className="truncate max-w-[120px] font-medium">{transfer.file.name}</span>
-                    </div>
-                  )}
-
-                  {/* Overlay: progress / paused / failed indicator (driven by AttachmentProgress) */}
-                  {showOverlay && (
-                    <AttachmentProgress
-                      loaded={transfer.progress.loaded}
-                      total={transfer.progress.total}
-                      state={transfer.state}
-                      filename={transfer.file.name}
-                      size="tile"
-                      onPause={transfer.state === 'active' ? () => pauseUpload(transfer.id) : undefined}
-                      onResume={transfer.state === 'paused' ? () => void resumeUpload(transfer.id) : undefined}
-                      onAbort={() => removeStagedTransfer(transfer.id)}
-                    />
-                  )}
-
-                  {/* Final-state remove button (top-right rose chip) — only when completed */}
-                  {isFinal && (
-                    <button
-                      onClick={() => removeStagedTransfer(transfer.id)}
-                      className="absolute -top-2 -right-2 w-7 h-7 bg-accent-rose hover:bg-accent-rose/80 shadow-elevation-high rounded-lg flex items-center justify-center text-white transition-colors z-10"
-                      aria-label={t('chat:composer.removeAttachment')}
-                    >
-                      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-                        <path d="M5 2a1 1 0 011-1h4a1 1 0 011 1v1h3a1 1 0 110 2h-.08L13 14a2 2 0 01-2 2H5a2 2 0 01-2-2L2.08 5H2a1 1 0 110-2h3V2zm2 0v1h2V2H7z" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+        <StagedTransferTiles
+          stagedTransfers={stagedTransfers}
+          previewUrls={previewUrlsRef.current}
+          onRemove={removeStagedTransfer}
+        />
 
         <div className="flex items-center gap-1 desktop:gap-0 pl-2 desktop:pl-[10px] pr-2 desktop:pr-1">
           {/* File attach button */}
@@ -985,9 +828,11 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
           />
 
           {/* Text input */}
-          <textarea
-            ref={textareaRef}
-            value={draftText}
+          <MentionTextarea
+            textareaRef={textareaRef}
+            mentionAnchorRef={mentionAnchorRef}
+            mentionStart={mentionState?.startIndex}
+            model={mentionModel}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
             onPaste={canAttachFiles ? handlePaste : undefined}
@@ -997,7 +842,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
                 ? t('chat:composer.placeholder.dm', { name: channelName.slice(1) })
                 : t('chat:composer.placeholder.channel', { name: channelName }))
             }
-            className="input-embedded flex-1 py-[10px] px-1 resize-none text-[15px] leading-[1.375rem] max-h-[calc(50*var(--app-vh))] scrollbar-thin"
+            className="input-embedded relative block w-full py-[10px] px-1 resize-none text-[15px] leading-[1.375rem] max-h-[calc(50*var(--app-vh))] scrollbar-thin"
             rows={1}
           />
 

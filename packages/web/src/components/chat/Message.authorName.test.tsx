@@ -94,3 +94,45 @@ describe('Message author names', () => {
     expect(nameIn(reply.id, shown)).toEqual({ text: shown, globe });
   });
 });
+
+// Inside a space a member is named by their nickname there; a DM names the
+// account even when the loaded space roster has a nickname for the same id.
+describe('Message author names in a space', () => {
+  function spaceMessage(id: string, author: User, replyTo: MessageWithUser | null): MessageWithUser {
+    return { ...dmMessage(id, author, replyTo), channelId: 'chan-1', dmChannelId: null } as unknown as MessageWithUser;
+  }
+
+  beforeEach(() => {
+    useSpaceStore.setState({
+      currentSpaceId: 'space-1',
+      members: [
+        { spaceId: 'space-1', userId: mira.id, nickname: 'Captain', joinedAt: 1, user: mira, roles: [] },
+        { spaceId: 'space-1', userId: zedNamed.id, nickname: null, joinedAt: 1, user: zedNamed, roles: [] },
+      ],
+    });
+  });
+
+  afterEach(() => {
+    useSpaceStore.setState({ currentSpaceId: null, members: [] });
+  });
+
+  it('names the author by their nickname', () => {
+    const message = spaceMessage('m-1', mira, null);
+    render(<Message message={message} isCompact={false} isFirstInGroup previousMessageId={null} />);
+    expect(nameIn(message.id, 'Captain').text).toBe('Captain');
+  });
+
+  it('names a replied-to author by their nickname and one without one by their display name', () => {
+    const original = spaceMessage('m-0', mira, null);
+    const reply = spaceMessage('m-2', zedNamed, original);
+    render(<Message message={reply} isCompact={false} isFirstInGroup previousMessageId={null} />);
+    expect(nameIn(reply.id, 'Captain').text).toBe('Captain');
+    expect(nameIn(reply.id, 'Zed').text).toBe('Zed');
+  });
+
+  it('names a DM author by the account name', () => {
+    const message = dmMessage('m-3', mira, null);
+    render(<Message message={message} isCompact={false} isFirstInGroup previousMessageId={null} />);
+    expect(nameIn(message.id, 'mira').text).toBe('mira');
+  });
+});

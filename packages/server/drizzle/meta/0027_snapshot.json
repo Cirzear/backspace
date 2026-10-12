@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "ce2ca99e-b553-4d73-a19a-4cf7a1d302ef",
+  "id": "74d930c0-ab2d-4119-a770-6cb0e2681533",
   "prevId": "d4d90673-9c61-4fc5-9273-ccd4e46280ce",
   "tables": {
     "attachments": {
@@ -856,6 +856,15 @@
         "idx_dm_messages_user_id": {
           "name": "idx_dm_messages_user_id",
           "columns": [
+            "user_id"
+          ],
+          "isUnique": false
+        },
+        "idx_dm_messages_channel_unread": {
+          "name": "idx_dm_messages_channel_unread",
+          "columns": [
+            "dm_channel_id",
+            "CAST(id AS INTEGER)",
             "user_id"
           ],
           "isUnique": false
@@ -3017,6 +3026,15 @@
             "user_id"
           ],
           "isUnique": false
+        },
+        "idx_messages_channel_unread": {
+          "name": "idx_messages_channel_unread",
+          "columns": [
+            "channel_id",
+            "CAST(id AS INTEGER)",
+            "user_id"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {
@@ -3967,13 +3985,6 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
-        },
-        "owner_title": {
-          "name": "owner_title",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
         }
       },
       "indexes": {
@@ -4579,6 +4590,21 @@
     "columns": {}
   },
   "internal": {
-    "indexes": {}
+    "indexes": {
+      "idx_dm_messages_channel_unread": {
+        "columns": {
+          "CAST(id AS INTEGER)": {
+            "isExpression": true
+          }
+        }
+      },
+      "idx_messages_channel_unread": {
+        "columns": {
+          "CAST(id AS INTEGER)": {
+            "isExpression": true
+          }
+        }
+      }
+    }
   }
 }
