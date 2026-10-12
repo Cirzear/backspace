@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { stickerUrl, type PersonalSticker } from '@backspace/shared/src/stickers';
+import { MAX_PERSONAL_STICKERS, stickerUrl, type PersonalSticker } from '@backspace/shared/src/stickers';
 import { api } from '../../api/client';
 import { useAuthStore } from '../../stores/authStore';
 import { StickerUploadForm } from './StickerUploadForm';
@@ -43,6 +43,8 @@ export function StickerPicker({ onSelect, mobile = false }: { onSelect: (token: 
     finally { setRemoving(null); }
   };
 
+  const full = items.length >= MAX_PERSONAL_STICKERS;
+
   const startUpload = () => {
     setError('');
     setNotice('');
@@ -52,27 +54,28 @@ export function StickerPicker({ onSelect, mobile = false }: { onSelect: (token: 
   return (
     <div className={`flex flex-col min-h-0 text-txt-primary ${mobile ? 'w-full flex-1' : 'w-[352px] max-w-[calc(100*var(--app-vw)-24px)] h-[456px]'}`}
       onKeyDown={event => { if (event.key !== 'Escape') event.stopPropagation(); }}>
-      {uploading ? <StickerUploadForm key={userId} onCancel={() => setUploading(false)} onAdded={added => {
-        const list = Array.isArray(added) ? added : [added];
-        setItems(rows => {
-          const ids = new Set(list.map(item => item.id));
-          return [...list, ...rows.filter(row => !ids.has(row.id))];
-        });
-        setUploading(false);
-        setManaging(false);
-        setNotice(t('stickers.saved'));
-      }} /> : <>
+      {uploading ? <StickerUploadForm key={userId} capacity={Math.max(0, MAX_PERSONAL_STICKERS - items.length)}
+        onCancel={() => setUploading(false)} onAdded={(added, complete) => {
+          setItems(rows => {
+            const ids = new Set(added.map(item => item.id));
+            return [...added, ...rows.filter(row => !ids.has(row.id))];
+          });
+          if (!complete) return;
+          setUploading(false);
+          setManaging(false);
+          setNotice(t('stickers.saved'));
+        }} /> : <>
         <div className="flex shrink-0 items-center justify-between gap-2 px-4 pt-3 pb-2">
           <h3 className="text-sm font-semibold">{t('stickers.title')} <span className="ml-1 text-xs font-normal text-txt-tertiary">{!loading && items.length}</span></h3>
           <div className="flex items-center gap-1">
             {items.length > 0 && <button type="button" disabled={!!removing} aria-pressed={managing}
               className="sticker-secondary-button" onClick={() => setManaging(!managing)}>{t(managing ? 'stickers.done' : 'stickers.manage')}</button>}
-            <button type="button" disabled={loading || !!removing} onClick={startUpload} className="sticker-primary-button">
+            <button type="button" disabled={loading || !!removing || full} onClick={startUpload} className="sticker-primary-button">
               <span aria-hidden="true" className="text-lg leading-none">+</span>{t('stickers.upload')}
             </button>
           </div>
         </div>
-        <p className="px-4 pb-3 text-xs text-txt-tertiary">{t(managing ? 'stickers.removeHint' : 'stickers.collectionHint')}</p>
+        <p className="px-4 pb-3 text-xs text-txt-tertiary">{t(managing ? 'stickers.removeHint' : full ? 'stickers.full' : 'stickers.collectionHint')}</p>
         {error && <p role="alert" className="mx-4 mb-3 rounded-lg bg-accent-rose/10 px-3 py-2 text-xs text-txt-danger">{error}</p>}
         {notice && <p role="status" className="mx-4 mb-2 text-xs text-txt-positive">{notice}</p>}
         <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin px-3 pb-3">

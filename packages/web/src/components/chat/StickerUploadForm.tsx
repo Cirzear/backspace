@@ -1,13 +1,25 @@
 import { StickerUploadPreview, type UploadItem } from './StickerUploadPreview';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { MAX_STICKER_BYTES, type PersonalSticker } from '@backspace/shared/src/stickers';
+import { MAX_STICKER_BATCH, MAX_STICKER_BYTES, MAX_STICKER_NAME_LENGTH, type PersonalSticker } from '@backspace/shared/src/stickers';
 import { uploadSticker } from './stickerUpload';
 import { describeError } from '../../i18n/errors';
+import { HttpError } from '../../api/client';
 
 interface StickerUploadFormProps {
-  onAdded: (stickers: PersonalSticker | PersonalSticker[]) => void;
+  /**
+   * The stickers the server accepted. `complete` is false when some images
+   * were refused; those stay in the form with their reason, so the form stays open.
+   */
+  onAdded: (stickers: PersonalSticker[], complete: boolean) => void;
   onCancel: () => void;
+  /** How many more stickers the collection can take. */
+  capacity: number;
+}
+
+/** A refusal that every later upload in the batch would meet too. */
+function stopsBatch(error: unknown): boolean {
+  return error instanceof HttpError && (error.status === 429 || error.code === 'sticker_collection_full');
 }
 
 /** Pre-validates each file before creating blob URLs to fail fast on invalid format or size. */
@@ -28,16 +40,19 @@ function createUploadItem(file: File): UploadItem {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
     file,
     preview: URL.createObjectURL(file),
-    name: file.name.replace(/\.[^.]+$/, '').slice(0, 100),
+    name: file.name.replace(/\.[^.]+$/, '').slice(0, MAX_STICKER_NAME_LENGTH),
     ready: false,
+    error: null,
   };
 }
 
 /**
  * Supports single and batch sticker uploads.
  * Original files stay local until explicit confirmation; animated previews are never flattened.
+ * A batch is sent one image at a time: what the server accepted leaves the
+ * form, what it refused stays with its reason.
  */
-export function StickerUploadForm({ onAdded, onCancel }: StickerUploadFormProps) {
+export function StickerUploadForm({ onAdded, onCancel, capacity }: StickerUploadFormProps) {
   const { t } = useTranslation('chat');
   const inputRef = useRef<HTMLInputElement>(null);
   const chooseRef = useRef<HTMLButtonElement>(null);
@@ -46,6 +61,7 @@ export function StickerUploadForm({ onAdded, onCancel }: StickerUploadFormProps)
   const [items, setItems] = useState<UploadItem[]>([]);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
   const [error, setError] = useState('');
 
   const itemsRef = useRef(items);
@@ -93,6 +109,14 @@ export function StickerUploadForm({ onAdded, onCancel }: StickerUploadFormProps)
       setError(t(errorKey));
       return;
     }
+    const limit = Math.min(MAX_STICKER_BATCH, capacity);
+    const total = mode === 'append' ? itemsRef.current.length + files.length : files.length;
+    if (total > limit) {
+      setError(limit < MAX_STICKER_BATCH
+        ? t('stickers.capacityLimit', { count: limit })
+        : t('stickers.batchLimit', { count: limit }));
+      return;
+    }
     const newItems = files.map(createUploadItem);
     if (mode === 'append') {
       updateItems(prev => [...prev, ...newItems]);
@@ -102,7 +126,7 @@ export function StickerUploadForm({ onAdded, onCancel }: StickerUploadFormProps)
   };
 
   const updateName = (id: string, name: string) => {
-    setItems(prev => prev.map(item => (item.id === id ? { ...item, name } : item)));
+    setItems(prev => prev.map(item => (item.id === id ? { ...item, name, error: null } : item)));
   };
 
   const markReady = (id: string, ready: boolean) => {
@@ -123,18 +147,41 @@ export function StickerUploadForm({ onAdded, onCancel }: StickerUploadFormProps)
     submitting.current = true;
     setBusy(true);
     setError('');
-    try {
-      const results = await Promise.all(
-        items.map(item => uploadSticker(item.file, item.name.trim()))
-      );
-      if (active.current) {
-        onAdded(results.length === 1 ? results[0]! : results);
+    const batch = items;
+    const added: PersonalSticker[] = [];
+    const accepted = new Set<string>();
+    const refused = new Map<string, string>();
+    let stopped: string | null = null;
+    for (const [index, item] of batch.entries()) {
+      if (!active.current) break;
+      setProgress({ current: index + 1, total: batch.length });
+      try {
+        added.push(await uploadSticker(item.file, item.name.trim()));
+        accepted.add(item.id);
+      } catch (err) {
+        if (stopsBatch(err)) {
+          stopped = describeError(err);
+          break;
+        }
+        refused.set(item.id, describeError(err));
       }
-    } catch (err) {
-      if (active.current) setError(describeError(err));
-    } finally {
-      submitting.current = false;
-      if (active.current) setBusy(false);
+    }
+    submitting.current = false;
+    if (!active.current) return;
+    setProgress(null);
+    setBusy(false);
+    updateItems(prev => prev
+      .filter(item => !accepted.has(item.id))
+      .map(item => ({ ...item, error: refused.get(item.id) ?? null })));
+    if (stopped) {
+      setError(stopped);
+    } else if (refused.size === 1 && batch.length === 1) {
+      setError([...refused.values()][0]!);
+    } else if (refused.size > 0) {
+      setError(t('stickers.batchFailed', { count: refused.size }));
+    }
+    if (added.length > 0 || (!stopped && refused.size === 0)) {
+      onAdded(added, !stopped && refused.size === 0);
     }
   };
 
@@ -203,7 +250,11 @@ export function StickerUploadForm({ onAdded, onCancel }: StickerUploadFormProps)
         </button>
         <button type="submit" disabled={!isAllReady || busy} className="sticker-primary-button">
           {busy && <span className="sticker-spinner" aria-hidden="true" />}
-          <span role={busy ? 'status' : undefined}>{t(busy ? 'stickers.uploading' : 'stickers.save')}</span>
+          <span role={busy ? 'status' : undefined}>
+            {progress && progress.total > 1
+              ? t('stickers.uploadingProgress', progress)
+              : t(busy ? 'stickers.uploading' : 'stickers.save')}
+          </span>
         </button>
       </div>
     </form>

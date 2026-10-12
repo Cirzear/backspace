@@ -202,7 +202,15 @@
     "selectedCount_other": "{{count}} stickers selected",
     "dropMore": "Click or drop more images here",
     "sticker": "Sticker",
-    "downloadFailed": "The image could not be loaded."
+    "downloadFailed": "The image could not be loaded.",
+    "batchLimit_one": "Choose up to {{count}} image at a time.",
+    "batchLimit_other": "Choose up to {{count}} images at a time.",
+    "capacityLimit_one": "Your collection has room for {{count}} more sticker.",
+    "capacityLimit_other": "Your collection has room for {{count}} more stickers.",
+    "full": "Your collection is full. Remove a sticker to add another.",
+    "batchFailed_one": "{{count}} image could not be added. It is still listed below.",
+    "batchFailed_other": "{{count}} images could not be added. They are still listed below.",
+    "uploadingProgress": "Adding {{current}} of {{total}}…"
   },
   "poke": {
     "action": "Poke",

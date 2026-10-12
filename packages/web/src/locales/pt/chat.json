@@ -207,7 +207,18 @@
     "dropMore": "Clique ou arraste mais imagens para cá",
     "selectedCount_many": "{{count}} figurinhas selecionadas",
     "sticker": "Figurinha",
-    "downloadFailed": "Não foi possível carregar a imagem."
+    "downloadFailed": "Não foi possível carregar a imagem.",
+    "batchLimit_one": "Escolha no máximo {{count}} imagem por vez.",
+    "batchLimit_many": "Escolha no máximo {{count}} imagens por vez.",
+    "batchLimit_other": "Escolha no máximo {{count}} imagens por vez.",
+    "capacityLimit_one": "Sua coleção tem espaço para mais {{count}} figurinha.",
+    "capacityLimit_many": "Sua coleção tem espaço para mais {{count}} figurinhas.",
+    "capacityLimit_other": "Sua coleção tem espaço para mais {{count}} figurinhas.",
+    "full": "Sua coleção está cheia. Remova uma figurinha para adicionar outra.",
+    "batchFailed_one": "Não foi possível adicionar {{count}} imagem. Ela continua na lista abaixo.",
+    "batchFailed_many": "Não foi possível adicionar {{count}} imagens. Elas continuam na lista abaixo.",
+    "batchFailed_other": "Não foi possível adicionar {{count}} imagens. Elas continuam na lista abaixo.",
+    "uploadingProgress": "Adicionando {{current}} de {{total}}…"
   },
   "poke": {
     "action": "Cutucar",

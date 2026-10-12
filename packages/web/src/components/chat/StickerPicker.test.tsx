@@ -4,6 +4,7 @@ import { StickerPicker } from './StickerPicker';
 import { StickerMessage } from './StickerMessage';
 import { api } from '../../api/client';
 import { uploadSticker } from './stickerUpload';
+import { MAX_PERSONAL_STICKERS } from '@backspace/shared/src/stickers';
 
 vi.mock('../../api/client', async importOriginal => ({
   ...await importOriginal<typeof import('../../api/client')>(),
@@ -93,6 +94,15 @@ describe('sticker controls', () => {
     await waitFor(() => expect(uploadSticker).toHaveBeenCalledTimes(2));
     expect(await screen.findByRole('button', { name: 'Happy' })).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: 'Cool' })).toBeInTheDocument();
+  });
+
+  it('turns uploading off once the collection is full', async () => {
+    vi.mocked(api.stickers.list).mockResolvedValue(Array.from({ length: MAX_PERSONAL_STICKERS }, (_, index) => ({
+      ...sticker, id: index.toString(16).padStart(64, '0'), name: `Sticker ${index}`,
+    })));
+    render(<StickerPicker onSelect={vi.fn()} />);
+    expect(await screen.findByText('Your collection is full. Remove a sticker to add another.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Upload image' })).toBeDisabled();
   });
 
   it('previews the full image without a permanent collection button', async () => {

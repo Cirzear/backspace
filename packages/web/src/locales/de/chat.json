@@ -202,7 +202,15 @@
     "selectedCount_other": "{{count}} Sticker ausgewählt",
     "dropMore": "Klicken oder weitere Bilder hierher ziehen",
     "sticker": "Sticker",
-    "downloadFailed": "Das Bild konnte nicht geladen werden."
+    "downloadFailed": "Das Bild konnte nicht geladen werden.",
+    "batchLimit_one": "Wähle höchstens {{count}} Bild auf einmal.",
+    "batchLimit_other": "Wähle höchstens {{count}} Bilder auf einmal.",
+    "capacityLimit_one": "In deiner Sammlung ist noch Platz für {{count}} Sticker.",
+    "capacityLimit_other": "In deiner Sammlung ist noch Platz für {{count}} Sticker.",
+    "full": "Deine Sammlung ist voll. Entferne einen Sticker, um einen neuen hinzuzufügen.",
+    "batchFailed_one": "{{count}} Bild konnte nicht hinzugefügt werden. Es steht weiter unten in der Liste.",
+    "batchFailed_other": "{{count}} Bilder konnten nicht hinzugefügt werden. Sie stehen weiter unten in der Liste.",
+    "uploadingProgress": "{{current}} von {{total}} wird hinzugefügt…"
   },
   "poke": {
     "action": "Anstupsen",

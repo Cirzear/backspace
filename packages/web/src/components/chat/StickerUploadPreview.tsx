@@ -1,6 +1,7 @@
 import { useId, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useFormatters } from '../../i18n/formatters';
+import { MAX_STICKER_NAME_LENGTH } from '@backspace/shared/src/stickers';
 
 export interface UploadItem {
   id: string;
@@ -8,6 +9,8 @@ export interface UploadItem {
   preview: string;
   name: string;
   ready: boolean;
+  /** Why the server refused this image on the last submit, already in the reader's language. */
+  error: string | null;
 }
 
 
@@ -132,7 +135,7 @@ export function StickerUploadPreview({
                 id={nameId}
                 value={singleItem.name}
                 disabled={busy}
-                maxLength={100}
+                maxLength={MAX_STICKER_NAME_LENGTH}
                 onChange={event => updateName(singleItem.id, event.target.value)}
                 className="input-search w-full"
                 placeholder={t('stickers.name')}
@@ -180,12 +183,13 @@ export function StickerUploadPreview({
                     <input
                       value={item.name}
                       disabled={busy}
-                      maxLength={100}
+                      maxLength={MAX_STICKER_NAME_LENGTH}
                       placeholder={t('stickers.name')}
                       aria-label={`${t('stickers.name')} #${index + 1}`}
                       onChange={event => updateName(item.id, event.target.value)}
                       className="input-search h-7 w-full text-xs px-2 py-1"
                     />
+                    {item.error && <p className="mt-1 text-[11px] leading-4 text-txt-danger">{item.error}</p>}
                   </div>
                   <button
                     type="button"

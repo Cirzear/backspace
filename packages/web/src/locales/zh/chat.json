@@ -197,7 +197,12 @@
     "selectedCount_other": "已选择 {{count}} 个表情",
     "dropMore": "点击或拖入更多图片",
     "sticker": "表情",
-    "downloadFailed": "无法加载该图片。"
+    "downloadFailed": "无法加载该图片。",
+    "batchLimit_other": "每次最多选择 {{count}} 张图片。",
+    "capacityLimit_other": "“我的表情”还可以添加 {{count}} 个。",
+    "full": "“我的表情”已满。请先移除一个再添加。",
+    "batchFailed_other": "有 {{count}} 张图片未能添加，仍保留在下方列表中。",
+    "uploadingProgress": "正在添加第 {{current}} 个，共 {{total}} 个…"
   },
   "poke": {
     "action": "戳一戳",
