@@ -302,11 +302,13 @@ A user's notification setting for a space (`channelId` NULL) or for one channel 
 | level | text | | `all` / `mentions` / `nothing`; NULL = not chosen (a channel inherits its space, a space uses `mentions`) |
 | muted | integer NOT NULL | 0 | 1 = muted |
 | mutedUntil | integer | | Epoch ms (server clock) a timed mute ends; NULL with `muted = 1` = until lifted. An ended mute is read as none and dropped at the next write |
+| suppressEveryone | integer NOT NULL | 0 | 1 = `@everyone` and `@here` do not alert on `mentions` (space rows only; migration `0028_mass_mention_preferences`) |
+| suppressRoles | integer NOT NULL | 0 | 1 = role mentions do not alert on `mentions` (space rows only; migration `0028_mass_mention_preferences`) |
 | updatedAt | integer NOT NULL | | Server write time, strictly increasing per row; clients merge last-write-wins on it |
 
 **Indexes:** `idx_notification_settings_space_row` UNIQUE `(user_id, space_id) WHERE channel_id IS NULL` and `idx_notification_settings_channel_row` UNIQUE `(user_id, channel_id) WHERE channel_id IS NOT NULL`: one space row and one row per channel, per user. Two partial indexes because a plain unique index never treats two NULL `channel_id`s as equal. No primary key: the rowid is the row's identity.
 
-A row with nothing chosen (level NULL and not muted) is deleted rather than stored. Rows are kept when the user leaves the space or loses sight of the channel (the list route filters them out), so they apply again on rejoin.
+A row with nothing chosen (level NULL, not muted and neither suppress flag set) is deleted rather than stored. The suppress flags are written only on the space row: the channel route refuses them, so a channel row always holds 0. Rows are kept when the user leaves the space or loses sight of the channel (the list route filters them out), so they apply again on rejoin.
 
 ### space_folders
 | Column | Type | Default | Notes |
