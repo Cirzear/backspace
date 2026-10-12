@@ -40,12 +40,12 @@ describe('mass mention rendering', () => {
   });
   it('does not resolve another space role with the same id', () => {
     const { container } = render(<MarkdownRenderer channelId="channel-b" content="<@&role>" />);
-    expect(container.textContent).toBe('@&role');
+    expect(container.textContent).toBe('@Unknown Role');
   });
   it('renders everyone, here and role tokens as non-profile labels', () => {
     const { container } = render(<MarkdownRenderer content="@everyone @here <@&role>" />);
     expect(container.querySelector('a')).toBeNull();
-    expect(container.textContent).toContain('@everyone @here @&role');
+    expect(container.textContent).toContain('@everyone @here @Unknown Role');
   });
   it('keeps mass tokens literal inside code', () => {
     const { container } = render(<MarkdownRenderer content={'\x60@everyone <@&role>\x60'} />);
@@ -53,7 +53,7 @@ describe('mass mention rendering', () => {
   });
   it('uses the same token and code rules for reply previews', () => {
     const { container } = render(<InlineMessageText channelId={null} content={'@here <@&role> \x60@everyone\x60'} />);
-    expect(container.textContent).toBe('@here @&role \x60@everyone\x60');
+    expect(container.textContent).toBe('@here @Unknown Role \x60@everyone\x60');
     expect(container.querySelectorAll('span')).toHaveLength(2);
   });
 });

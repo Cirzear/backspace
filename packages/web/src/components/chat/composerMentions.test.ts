@@ -42,12 +42,21 @@ describe('composer mention display and wire offsets', () => {
     expect(model(value).text).toBe(value);
     expect(model(value).parts.every((p) => !p.mention)).toBe(true);
   });
-  it('shows only what the sent message shows as a mention', () => {
-    // No role tokens and no @everyone exist on the wire, so the composer
-    // paints neither: they are text in the sent message too.
-    const value = '<@&123> @everyone @here';
+  it('shows role tokens by name and paints @everyone and @here, as the sent message does', () => {
+    const roles = new Map([['r1', 'Mods']]);
+    const withRoles = (value: string) => composerMentions(value, (userId) => names.get(userId) ?? null, (roleId) => roles.get(roleId) ?? null);
+    const result = withRoles('<@&r1> @everyone @here <@&gone>');
+    expect(result.text).toBe('@Mods @everyone @here <@&gone>');
+    expect(result.parts.filter((p) => p.painted).map((p) => p.text)).toEqual(['@Mods', '@everyone', '@here']);
+    // A role is one unit like a user; @everyone stays text to edit.
+    expect(result.parts.filter((p) => p.mention).map((p) => p.text)).toEqual(['@Mods']);
+    expect(result.update('@Mods @every @here <@&gone>', 12).value).toBe('<@&r1> @every @here <@&gone>');
+    expect(result.update('@Mod @everyone @here <@&gone>', 4).value).toBe(' @everyone @here <@&gone>');
+  });
+  it('paints nothing inside code, and no role without a role resolver', () => {
+    const value = '\x60@everyone <@&r1>\x60 <@&r1>';
     expect(model(value).text).toBe(value);
-    expect(model(value).parts.every((p) => !p.mention)).toBe(true);
+    expect(model(value).parts.every((p) => !p.painted)).toBe(true);
   });
   it('maps a draft offset inside a token to the shown mention start', () => {
     const result = model('Hi <@123> !');

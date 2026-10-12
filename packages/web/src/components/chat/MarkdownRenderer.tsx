@@ -7,7 +7,7 @@ import { MassMentionBadge } from './MassMentionBadge';
 import { MentionBadge } from './MentionBadge';
 import { remarkEmojiShortcodes } from '../../utils/remarkEmojiShortcodes';
 import { useEmojiShortcodeNames } from '../../utils/emojiShortcodes';
-import { replaceMentionTokens } from '../../utils/mentionTokens';
+import { splitMentions } from '../../utils/mentionTokens';
 
 // ─── Remark Plugin: Tag Bare Fenced Blocks ─────────────────────────────────
 // react-markdown v9 removed the `inline` prop from <code>. Fenced blocks
@@ -42,22 +42,21 @@ function walkTree(node: MdastNode) {
 // remark-parse mangles <@userId> (treats as autolink or escapes the angle
 // brackets) before remark plugins can see the text nodes. We solve this by
 // converting mention tokens to standard markdown links BEFORE the parser
-// runs. The `a` component override then detects the mention:// scheme.
-// Code spans and fenced blocks are kept as-is by the shared token scan
+// runs. The `a` component override then detects the mention:// scheme (a
+// user) and the mass-mention:// scheme (`everyone`, `here`, or `&` and a role
+// id). Code spans and fenced blocks are kept as-is by the shared token scan
 // (utils/mentionTokens.ts), the same scan the reply preview, the mention
-// highlight and the alert rule use.
+// highlight, the composer and the alert rule use.
 
 function preprocessMentions(raw: string): string {
-  // Add mass tokens without replacing the upstream scan for user mentions.
-  const withMassMentions = raw.replace(
-    /(```[\s\S]*?```|`[^`]+`)|<@(&[a-zA-Z0-9_-]+)>|(?<![\w@])@(everyone|here)(?![\w-])/g,
-    (match, code: string | undefined, role: string | undefined, mass: string | undefined) => {
-      if (code) return code;
-      const token = mass ?? role;
-      return '[@' + token + '](mass-mention://' + token + ')';
-    },
-  );
-  return replaceMentionTokens(withMassMentions, (userId) => `[@${userId}](mention://${userId})`);
+  return splitMentions(raw).map((part) => {
+    switch (part.kind) {
+      case 'text': return part.text;
+      case 'user': return `[@${part.userId}](mention://${part.userId})`;
+      case 'role': return `[@&${part.roleId}](mass-mention://&${part.roleId})`;
+      case 'everyone': return `[@${part.keyword}](mass-mention://${part.keyword})`;
+    }
+  }).join('');
 }
 
 // ─── URL Transform: Allow mention:// Scheme ─────────────────────────────────
@@ -127,9 +126,12 @@ const MemoizedCodeBlock = React.memo(CodeBlock);
 
 const MentionChannelContext = createContext<string | null>(null);
 
-function ChannelMassMentionBadge({ token }: { token: string }) {
+/** A `mass-mention://` target: `everyone`, `here`, or `&` and a role id. */
+function ChannelMassMentionBadge({ target }: { target: string }) {
   const channelId = useContext(MentionChannelContext);
-  return <MassMentionBadge token={token} channelId={channelId} />;
+  if (target.startsWith('&')) return <MassMentionBadge roleId={target.slice(1)} channelId={channelId} />;
+  if (target === 'everyone' || target === 'here') return <MassMentionBadge keyword={target} channelId={channelId} />;
+  return <>{'@' + target}</>;
 }
 
 function ChannelMentionBadge({ userId }: { userId: string }) {
@@ -147,7 +149,7 @@ function buildComponents(): Components {
     // so we intercept that pattern here instead of using a remark plugin.
     a: ({ href, children }) => {
       if (href?.startsWith('mass-mention://')) {
-        return <ChannelMassMentionBadge token={href.slice('mass-mention://'.length)} />;
+        return <ChannelMassMentionBadge target={href.slice('mass-mention://'.length)} />;
       }
       if (href?.startsWith('mention://')) {
         return <ChannelMentionBadge userId={href.slice('mention://'.length)} />;

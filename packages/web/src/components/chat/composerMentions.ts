@@ -1,11 +1,16 @@
-import { splitMentionTokens } from '../../utils/mentionTokens';
+import { splitMentions } from '../../utils/mentionTokens';
 
 /** One run of the draft, as stored (`wire`) and as shown (`text`), with where each starts. */
 interface ComposerPart {
   wire: string;
   text: string;
-  /** A `<@id>` token shown by name. Unknown ids are shown as written and are not mentions here. */
+  /**
+   * A `<@id>` or `<@&id>` token shown by name: one unit for the caret and for
+   * edits. Unknown ids are shown as written and are not mentions here.
+   */
   mention: boolean;
+  /** Painted as a mention: a `mention` part, or `@everyone` / `@here`, which stay ordinary text to edit. */
+  painted: boolean;
   start: number;
   wireStart: number;
 }
@@ -14,32 +19,43 @@ interface ComposerPart {
  * The composer's draft as the textarea shows it, and the offset maps between
  * that text and the stored draft.
  *
- * The draft keeps the wire format: a mention is a `<@id>` token, cut out by the
- * shared scan (`utils/mentionTokens.ts`), so a token inside code stays text here
- * just as it does in the sent message. A token whose id `nameOf` knows is shown
- * as `@name`; any other token is shown as written.
+ * The draft keeps the wire format: a mention is a `<@id>` or `<@&id>` token,
+ * cut out by the shared scan (`utils/mentionTokens.ts`), so a token inside
+ * code stays text here just as it does in the sent message. A token whose id
+ * `nameOf` (a user) or `roleNameOf` (a role) knows is shown as `@name`; any
+ * other token is shown as written. `@everyone` and `@here` are painted where
+ * the sent message shows them as mentions.
  *
  * @param nameOf The shown name of the user a token's id names in this channel,
  *   or null when the channel does not know the id.
+ * @param roleNameOf The shown name of the role a token's id names in the
+ *   channel's space, or null when there is none (a DM, an unknown id).
  */
-export function composerMentions(value: string, nameOf: (userId: string) => string | null) {
+export function composerMentions(
+  value: string,
+  nameOf: (userId: string) => string | null,
+  roleNameOf: (roleId: string) => string | null = () => null,
+) {
   const parts: ComposerPart[] = [];
   let wireEnd = 0;
   let displayEnd = 0;
-  const append = (wire: string, text: string, mention: boolean): void => {
-    parts.push({ wire, text, mention, start: displayEnd, wireStart: wireEnd });
+  const append = (wire: string, text: string, mention: boolean, painted = mention): void => {
+    parts.push({ wire, text, mention, painted, start: displayEnd, wireStart: wireEnd });
     wireEnd += wire.length;
     displayEnd += text.length;
   };
-  for (const segment of splitMentionTokens(value)) {
-    if (segment.kind === 'text') {
-      append(segment.text, segment.text, false);
+  for (const part of splitMentions(value)) {
+    if (part.kind === 'text') {
+      append(part.text, part.text, false);
       continue;
     }
-    const wire = `<@${segment.userId}>`;
-    const name = nameOf(segment.userId);
-    if (name === null) append(wire, wire, false);
-    else append(wire, '@' + name, true);
+    if (part.kind === 'everyone') {
+      append(part.token, part.token, false, true);
+      continue;
+    }
+    const name = part.kind === 'user' ? nameOf(part.userId) : roleNameOf(part.roleId);
+    if (name === null) append(part.token, part.token, false);
+    else append(part.token, '@' + name, true);
   }
   const text = parts.map((p) => p.text).join('');
 
