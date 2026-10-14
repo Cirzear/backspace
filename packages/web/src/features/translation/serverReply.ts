@@ -6,7 +6,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isConnection(value: unknown): value is AiConnection {
   if (!isRecord(value) || 'apiKey' in value) return false;
   return ['id', 'name', 'baseUrl', 'model'].every(key => typeof value[key] === 'string') &&
-    ['openai-chat', 'openai-responses', 'anthropic', 'gemini'].includes(String(value.protocol)) &&
+    ['openai-chat', 'openai-responses', 'anthropic', 'gemini', 'google-translate', 'microsoft-translator'].includes(String(value.protocol)) &&
     typeof value.hasKey === 'boolean';
 }
 function isPreferences(value: unknown): value is TranslationPreferences {

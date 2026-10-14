@@ -78,10 +78,11 @@ describe('local encrypted credential vault', () => {
         automatic: true,
       }),
     ).toThrow('missing-connection');
+    const conn = vault.saveConnection(scope, profile).connections[0]!;
     expect(() =>
       vault.savePreferences(scope, {
         ...settings.preferences,
-        engine: 'google-free',
+        engine: conn.id,
         consent: true,
         automatic: true,
       }),

@@ -123,8 +123,8 @@ describe('translation semantic identity', () => {
     ]) {
       expect(translationResultKey({ ...input, ...change })).not.toBe(key);
     }
-    expect(translationResultKey({ ...input, engine: 'google-free', connection: undefined })).not.toBe(
-      translationResultKey({ ...input, engine: 'microsoft-free', connection: undefined }),
+    expect(translationResultKey({ ...input, engine: 'engine-a', connection: undefined })).not.toBe(
+      translationResultKey({ ...input, engine: 'engine-b', connection: undefined }),
     );
   });
 });

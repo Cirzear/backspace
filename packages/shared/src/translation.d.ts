@@ -1,5 +1,10 @@
-/** Private translation commands: native IPC or authenticated home-instance HTTP, never federation. */
-export type TranslationProtocol = 'openai-chat' | 'openai-responses' | 'anthropic' | 'gemini';
+export type TranslationProtocol =
+  | 'openai-chat'
+  | 'openai-responses'
+  | 'anthropic'
+  | 'gemini'
+  | 'google-translate'
+  | 'microsoft-translator';
 export type TranslationEngine = string;
 export type TranslationLanguage =
   | 'zh-CN'

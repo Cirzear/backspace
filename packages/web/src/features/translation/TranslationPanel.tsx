@@ -37,6 +37,7 @@ function ScopedTranslationPanel({ context }: { context: ReturnType<typeof useTra
   const { scope, accountId, settings } = context;
   const loadError = useTranslationStore((s) => s.loadError);
   const automaticError = useTranslationStore((s) => s.automaticError);
+  const [activeTab, setActiveTab] = useState<'all' | 'plugins' | 'connections'>('all');
   const [preferences, setPreferences] = useState<TranslationPreferences | null>(null);
   const [editor, setEditor] = useState<AiConnection | 'new' | null>(null);
   const [busy, setBusy] = useState(false);
@@ -103,70 +104,193 @@ function ScopedTranslationPanel({ context }: { context: ReturnType<typeof useTra
         )}
       </section>
     );
+
+  const showPlugins = activeTab === 'all' || activeTab === 'plugins';
+  const showConnections = activeTab === 'all' || activeTab === 'connections';
+
   return (
     <section className="space-y-5 text-txt-primary">
       <TranslationPrivacyNotice />
+
+      {/* Tab Switcher */}
+      <div className="flex bg-white/[0.04] rounded-md p-0.5 w-fit border border-white/[0.06]">
+        <button
+          type="button"
+          onClick={() => setActiveTab('all')}
+          className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+            activeTab === 'all'
+              ? 'bg-white/[0.08] text-txt-primary shadow-sm'
+              : 'text-txt-tertiary hover:text-txt-secondary'
+          }`}
+        >
+          {t('tabAll')}
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('plugins')}
+          className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+            activeTab === 'plugins'
+              ? 'bg-white/[0.08] text-txt-primary shadow-sm'
+              : 'text-txt-tertiary hover:text-txt-secondary'
+          }`}
+        >
+          {t('tabPlugins')}
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('connections')}
+          className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+            activeTab === 'connections'
+              ? 'bg-white/[0.08] text-txt-primary shadow-sm'
+              : 'text-txt-tertiary hover:text-txt-secondary'
+          }`}
+        >
+          {t('tabConnections')}
+        </button>
+      </div>
+
       {error && (
         <p role="alert" className="text-sm text-txt-danger">
           {error}
         </p>
       )}
-      <div className="space-y-3">
-        <h3 className="text-[11px] font-semibold text-txt-tertiary uppercase tracking-wider">{t('connections')}</h3>
-        {!settings.connections.length && !editor && <p className="rounded-lg border border-dashed border-white/[0.1] p-4 text-sm text-txt-tertiary">{t('noConnections')}</p>}
-        {settings.connections.map((connection) => (
-          <div key={connection.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-white/[0.03] border border-white/[0.04] p-3.5">
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-medium">{connection.name}</div>
-              <div className="truncate text-xs text-txt-tertiary">
-                {connection.protocol} · {connection.model} · {connection.baseUrl}
+
+      {/* AI Plugins Section */}
+      {showPlugins && (
+        <div className="space-y-4">
+          <div>
+            <h3 className="text-[11px] font-semibold text-txt-tertiary uppercase tracking-wider">
+              {t('pluginsSectionTitle')}
+            </h3>
+            <p className="text-xs text-txt-tertiary mt-0.5">{t('pluginsSectionDesc')}</p>
+          </div>
+
+          {/* Translation Plugin Card */}
+          <div className="rounded-lg bg-white/[0.03] border border-white/[0.06] p-4 space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3 min-w-0">
+                <div className="w-9 h-9 rounded-lg bg-accent-primary/10 text-accent-primary flex items-center justify-center shrink-0 mt-0.5 border border-accent-primary/20">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12.87 15.07l-2.54-2.51.03-.08c1.74-1.94 2.98-4.17 3.71-6.48H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z" />
+                  </svg>
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-txt-primary">{t('translationPluginName')}</span>
+                    <span className="glass-pill px-2 py-0.5 text-[10px] text-accent-lavender font-medium">{t('builtInPlugin')}</span>
+                  </div>
+                  <p className="text-xs text-txt-tertiary mt-1 leading-relaxed">{t('translationPluginDesc')}</p>
+                </div>
               </div>
             </div>
-            <button disabled={busy} className="rounded px-2 py-1.5 text-xs text-txt-secondary hover:bg-white/[0.06] transition-colors" onClick={() => setEditor(connection)}>
-              {t('edit')}
-            </button>
-            <button
-              disabled={busy}
-              className="rounded px-2 py-1.5 text-xs text-txt-danger hover:bg-accent-rose/10 transition-colors"
-              onClick={() => void removeConnection(connection.id)}
-            >
-              {t('delete')}
-            </button>
+
+            <div className="pt-2 border-t border-white/[0.06]">
+              <TranslationPreferenceControls
+                preferences={preferences}
+                settings={settings}
+                busy={busy}
+                onChange={setPreferences}
+                onSave={() => void savePreferences()}
+              />
+            </div>
+
+            {automaticError && (
+              <div role="alert" className="text-sm text-txt-danger pt-1">
+                {t('automaticPaused')} {translationErrorText(automaticError)}{' '}
+                <button className="underline" onClick={resumeAutomaticTranslation}>
+                  {t('resume')}
+                </button>
+              </div>
+            )}
           </div>
-        ))}
-        {!editor && (
-          <button disabled={busy} className="rounded px-3 py-2 text-sm text-txt-secondary bg-white/[0.06] hover:bg-white/[0.1] transition-colors" onClick={() => setEditor('new')}>
-            {t('addConnection')}
-          </button>
-        )}
-        {editor && (
-          <SelectedConnectionEditor
-            editor={editor}
-            busy={busy}
-            onSave={saveConnection}
-            onDiagnose={command => sendTranslationCommand({ ...command, accountId }).then(reply =>
-              useTranslationStore.getState().scope === scope ? reply : { ok: false, code: 'stale-settings' })}
-            onCancel={() => setEditor(null)}
-          />
-        )}
-      </div>
-      <div className="space-y-4">
-        <TranslationPreferenceControls
-          preferences={preferences}
-          settings={settings}
-          busy={busy}
-          onChange={setPreferences}
-          onSave={() => void savePreferences()}
-        />
-        {automaticError && (
-          <div role="alert" className="text-sm text-txt-danger">
-            {t('automaticPaused')} {translationErrorText(automaticError)}{' '}
-            <button className="underline" onClick={resumeAutomaticTranslation}>
-              {t('resume')}
-            </button>
+
+          {/* Upcoming Plugin: Chat Summarizer */}
+          <div className="rounded-lg bg-white/[0.02] border border-white/[0.04] p-4 flex items-start justify-between gap-3 opacity-75">
+            <div className="flex items-start gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-lg bg-white/[0.04] text-txt-tertiary flex items-center justify-center shrink-0 mt-0.5 border border-white/[0.06]">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z" />
+                </svg>
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-txt-secondary">{t('summarizerPluginName')}</span>
+                  <span className="glass-pill px-2 py-0.5 text-[10px] text-txt-tertiary">{t('comingSoon')}</span>
+                </div>
+                <p className="text-xs text-txt-tertiary mt-1 leading-relaxed">{t('summarizerPluginDesc')}</p>
+              </div>
+            </div>
           </div>
-        )}
-      </div>
+
+          {/* Upcoming Plugin: Composer Assistant */}
+          <div className="rounded-lg bg-white/[0.02] border border-white/[0.04] p-4 flex items-start justify-between gap-3 opacity-75">
+            <div className="flex items-start gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-lg bg-white/[0.04] text-txt-tertiary flex items-center justify-center shrink-0 mt-0.5 border border-white/[0.06]">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
+                </svg>
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-txt-secondary">{t('composerPluginName')}</span>
+                  <span className="glass-pill px-2 py-0.5 text-[10px] text-txt-tertiary">{t('comingSoon')}</span>
+                </div>
+                <p className="text-xs text-txt-tertiary mt-1 leading-relaxed">{t('composerPluginDesc')}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI Connections Section */}
+      {showConnections && (
+        <div className="space-y-3 pt-2">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-[11px] font-semibold text-txt-tertiary uppercase tracking-wider">{t('connections')}</h3>
+              <p className="text-xs text-txt-tertiary mt-0.5">{t('connectionsSectionDesc')}</p>
+            </div>
+            {!editor && (
+              <button disabled={busy} className="rounded px-3 py-1.5 text-xs font-medium text-txt-secondary bg-white/[0.06] hover:bg-white/[0.1] transition-colors" onClick={() => setEditor('new')}>
+                {t('addConnection')}
+              </button>
+            )}
+          </div>
+          {!settings.connections.length && !editor && (
+            <p className="rounded-lg border border-dashed border-white/[0.1] p-4 text-sm text-txt-tertiary">{t('noConnections')}</p>
+          )}
+          {settings.connections.map((connection) => (
+            <div key={connection.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-white/[0.03] border border-white/[0.04] p-3.5">
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium">{connection.name}</div>
+                <div className="truncate text-xs text-txt-tertiary">
+                  {connection.protocol} · {connection.model} · {connection.baseUrl}
+                </div>
+              </div>
+              <button disabled={busy} className="rounded px-2 py-1.5 text-xs text-txt-secondary hover:bg-white/[0.06] transition-colors" onClick={() => setEditor(connection)}>
+                {t('edit')}
+              </button>
+              <button
+                disabled={busy}
+                className="rounded px-2 py-1.5 text-xs text-txt-danger hover:bg-accent-rose/10 transition-colors"
+                onClick={() => void removeConnection(connection.id)}
+              >
+                {t('delete')}
+              </button>
+            </div>
+          ))}
+          {editor && (
+            <SelectedConnectionEditor
+              editor={editor}
+              busy={busy}
+              onSave={saveConnection}
+              onDiagnose={command => sendTranslationCommand({ ...command, accountId }).then(reply =>
+                useTranslationStore.getState().scope === scope ? reply : { ok: false, code: 'stale-settings' })}
+              onCancel={() => setEditor(null)}
+            />
+          )}
+        </div>
+      )}
     </section>
   );
 }

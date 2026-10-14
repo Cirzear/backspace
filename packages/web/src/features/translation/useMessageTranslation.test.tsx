@@ -21,10 +21,19 @@ import { acceptTranslationSettings, resetTranslationScope, useTranslationStore }
 import { TranslationText } from './TranslationText';
 const settings: TranslationSettings = {
   revision: 1,
-  connections: [],
+  connections: [
+    {
+      id: 'conn-1',
+      name: 'Google Translate',
+      protocol: 'google-translate',
+      baseUrl: 'https://translation.googleapis.com',
+      model: 'nmt',
+      hasKey: true,
+    },
+  ],
   preferences: {
-    defaultConnection: null,
-    engine: 'google-free',
+    defaultConnection: 'conn-1',
+    engine: 'conn-1',
     targetLanguage: 'zh-CN',
     automatic: true,
     consent: true,

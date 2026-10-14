@@ -374,6 +374,14 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
 
     const items = buildMessageMenuItems({
       onTranslate: translation.translate,
+      translationStatus: translation.isTranslated
+        ? {
+            isTranslated: true,
+            showOriginal: translation.showOriginal,
+            isCollapsed: translation.isCollapsed,
+            toggleCollapse: translation.toggleCollapse,
+          }
+        : undefined,
       message,
       selectedText,
       previousMessageId,
