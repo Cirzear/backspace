@@ -8,7 +8,24 @@ import { translationErrorText } from './errorText';
 const PROTOCOLS = {
   'openai-chat': 'OpenAI Chat Completions', 'openai-responses': 'OpenAI Responses',
   anthropic: 'Anthropic Messages', gemini: 'Google Gemini',
+  'google-translate': 'Google Cloud Translation', 'microsoft-translator': 'Microsoft / Azure Translator',
 } as const;
+const DEFAULT_BASE_URLS: Record<TranslationProtocol, string> = {
+  'openai-chat': 'https://api.openai.com/v1',
+  'openai-responses': 'https://api.openai.com/v1',
+  anthropic: 'https://api.anthropic.com/v1',
+  gemini: 'https://generativelanguage.googleapis.com/v1beta',
+  'google-translate': 'https://translation.googleapis.com',
+  'microsoft-translator': 'https://api.cognitive.microsofttranslator.com',
+};
+const DEFAULT_MODELS: Record<TranslationProtocol, string> = {
+  'openai-chat': '',
+  'openai-responses': '',
+  anthropic: '',
+  gemini: '',
+  'google-translate': 'nmt',
+  'microsoft-translator': 'general',
+};
 const EMPTY_CONNECTION = { name: '', protocol: 'openai-chat' as const, baseUrl: 'https://api.openai.com/v1', model: '', hasKey: false };
 function recipientChanged(connection: AiConnection | undefined, baseUrl: string, protocol: TranslationProtocol): boolean {
   return !!connection?.hasKey &&
@@ -40,6 +57,18 @@ export function ConnectionEditor({ connection, busy, onSave, onDiagnose, onCance
   const draft: ConnectionProbe = { id: connection?.id, protocol, baseUrl, apiKey: clearKey ? '' : apiKey || undefined };
   // Results describe this unsaved recipient; changing its credentials invalidates discovery and tests.
   const resetDiagnostics = () => { setModels(null); setFailure(null); setTest(null); };
+  const onProtocolChange = (nextProtocol: TranslationProtocol) => {
+    setProtocol(nextProtocol);
+    resetDiagnostics();
+    const knownUrls = Object.values(DEFAULT_BASE_URLS);
+    if (!baseUrl.trim() || knownUrls.includes(baseUrl.trim())) {
+      setBaseUrl(DEFAULT_BASE_URLS[nextProtocol]);
+    }
+    const defaultModel = DEFAULT_MODELS[nextProtocol];
+    if (defaultModel && (!model.trim() || Object.values(DEFAULT_MODELS).includes(model.trim()))) {
+      setModel(defaultModel);
+    }
+  };
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (locked || blocked) return;
@@ -74,11 +103,12 @@ export function ConnectionEditor({ connection, busy, onSave, onDiagnose, onCance
           <label className="block text-xs font-medium text-txt-secondary">
             {t('protocol')}
             <select className="input-standard mt-1.5 w-full" value={protocol}
-              onChange={event => { setProtocol(event.target.value as TranslationProtocol); resetDiagnostics(); }}>
+              onChange={event => onProtocolChange(event.target.value as TranslationProtocol)}>
               {Object.entries(PROTOCOLS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
           </label>
         </div>
+
         <ConnectionCredentials baseUrl={baseUrl} apiKey={apiKey} clearKey={clearKey}
           hasKey={initial.hasKey} changedRecipient={changedRecipient}
           onBaseUrl={value => { setBaseUrl(value); resetDiagnostics(); }}

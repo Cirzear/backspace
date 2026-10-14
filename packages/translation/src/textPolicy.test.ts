@@ -66,6 +66,31 @@ describe('protected message fragments', () => {
     expect(naturalText(source)).toContain('Please read');
     expect(restoreText(prepared.text, prepared)).toBe(source);
   });
+  it('masks mentions and emojis and normalizes model formatting variants', () => {
+    const source = 'Hello @alice and @张三, look at :smile: and this 😀 and <https://example.com>!';
+    const prepared = protectText(source);
+    expect(prepared.text).not.toContain('@alice');
+    expect(prepared.text).not.toContain('@张三');
+    expect(prepared.text).not.toContain(':smile:');
+    expect(prepared.text).not.toContain('😀');
+    expect(prepared.text).not.toContain('https://example.com');
+    expect(naturalText(source)).toContain('Hello');
+    expect(naturalText(source)).toContain('look at');
+
+    // Simulates an AI model converting __BS_...__ to **BS_...** and adding spaces __ BS_... __
+    const keys = [...prepared.protectedParts.keys()];
+    let mangled = prepared.text
+      .replace(keys[0]!, keys[0]!.replace(/__/g, '**'))
+      .replace(keys[1]!, `__ ${keys[1]!.slice(2, -2)} __`);
+    expect(restoreText(mangled, prepared)).toBe(source);
+  });
+  it('allows manual translation for short or uncertain text', () => {
+    expect(translationEligibility('bonjour', 'en', true)).toEqual({
+      kind: 'skipped',
+      reason: 'uncertain-language',
+    });
+    expect(translationEligibility('bonjour', 'en', false)).toBeNull();
+  });
   it('rejects lost, duplicated or invented placeholders', () => {
     const prepared = protectText('Read `hello()`');
     const token = [...prepared.protectedParts.keys()][0]!;

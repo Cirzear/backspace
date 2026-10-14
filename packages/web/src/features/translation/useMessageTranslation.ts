@@ -117,11 +117,20 @@ export function useMessageTranslation(input: { identity: string; text: string; e
       automatic: false,
     });
   };
+  const isTranslated = entry?.state === 'done' && entry.result.kind === 'translated';
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => {
+    setCollapsed(false);
+  }, [key]);
+
   return {
     anchorRef,
     entry: eligible ? entry : undefined,
     translate: eligible ? translate : undefined,
     showOriginal: settings?.preferences.showOriginal ?? true,
     cacheKey: key,
+    isTranslated,
+    isCollapsed: collapsed,
+    toggleCollapse: () => setCollapsed((v) => !v),
   };
 }

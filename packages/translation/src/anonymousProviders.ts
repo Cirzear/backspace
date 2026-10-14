@@ -76,13 +76,6 @@ async function microsoft(options: AnonymousRequest): Promise<string> {
   if (typeof text !== 'string') throw new TranslationError('anonymous-unavailable');
   return text;
 }
-export async function translateAnonymous(options: AnonymousRequest): Promise<string> {
-  // Web endpoints have smaller practical limits. Do not silently split/send additional requests.
-  if (options.text.length > 3000) throw new TranslationError('invalid-input');
-  try {
-    return await (options.engine === 'google-free' ? google(options) : microsoft(options));
-  } catch (error) {
-    if (error instanceof TranslationError) throw error;
-    throw new TranslationError('anonymous-unavailable');
-  }
+export async function translateAnonymous(_options: AnonymousRequest): Promise<string> {
+  throw new TranslationError('anonymous-unavailable');
 }

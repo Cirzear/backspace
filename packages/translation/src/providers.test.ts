@@ -27,7 +27,8 @@ const responses = {
     candidates: [{ finishReason: 'STOP', content: { parts: [{ text: result }] } }],
   },
 };
-const protocolCases: [TranslationProtocol, string, string][] = [
+type LlmProtocol = 'openai-chat' | 'openai-responses' | 'anthropic' | 'gemini';
+const protocolCases: [LlmProtocol, string, string][] = [
   ['openai-chat', '/chat/completions', 'Authorization'],
   ['openai-responses', '/responses', 'Authorization'],
   ['anthropic', '/messages', 'x-api-key'],
@@ -144,62 +145,81 @@ describe('bounded native HTTP transport', () => {
   });
 });
 
-describe('explicit experimental no-key providers', () => {
-  it('parses Google segments without any user credentials', async () => {
+describe('Machine translation providers with custom key', () => {
+  it('translates via Google Cloud Translation v2 with user API key', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({
+        data: {
+          translations: [{ translatedText: '你好&#39;世界' }],
+        },
+      }),
+    );
+    const googleConn = {
+      ...connection,
+      protocol: 'google-translate' as TranslationProtocol,
+      baseUrl: 'https://translation.googleapis.com',
+      model: 'nmt',
+      apiKey: 'test-google-key',
+    };
+    expect(
+      await translateAi({
+        connection: googleConn,
+        text: "Hello'world",
+        target: 'zh-CN',
+        fetcher,
+      }),
+    ).toBe("你好'世界");
+    const [url, init] = fetcher.mock.calls[0]!;
+    expect(url).toBe('https://translation.googleapis.com/language/translate/v2');
+    expect(new Headers(init?.headers).get('x-goog-api-key')).toBe('test-google-key');
+    expect(JSON.parse(String(init?.body))).toEqual({
+      q: ["Hello'world"],
+      target: 'zh-CN',
+      format: 'text',
+      model: 'nmt',
+    });
+  });
+
+  it('translates via Microsoft / Azure Translator v3 with user API key', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
       Response.json([
-        [
-          ['你好', 'Hello'],
-          ['世界', 'world'],
-        ],
+        {
+          translations: [{ text: '你好世界', to: 'zh-Hans' }],
+        },
       ]),
     );
+    const msConn = {
+      ...connection,
+      protocol: 'microsoft-translator' as TranslationProtocol,
+      baseUrl: 'https://api.cognitive.microsofttranslator.com',
+      model: 'eastus',
+      apiKey: 'test-ms-key',
+    };
     expect(
-      await translateAnonymous({
-        engine: 'google-free',
+      await translateAi({
+        connection: msConn,
         text: 'Hello world',
         target: 'zh-CN',
         fetcher,
       }),
     ).toBe('你好世界');
-    const url = new URL(String(fetcher.mock.calls[0]![0]));
-    expect(url.hostname).toBe('translate.googleapis.com');
-    expect(url.searchParams.get('q')).toBe('Hello world');
-    expect(new Headers(fetcher.mock.calls[0]![1]?.headers).has('Authorization')).toBe(false);
+    const [url, init] = fetcher.mock.calls[0]!;
+    expect(String(url)).toBe('https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=zh-Hans');
+    expect(new Headers(init?.headers).get('Ocp-Apim-Subscription-Key')).toBe('test-ms-key');
+    expect(new Headers(init?.headers).get('Ocp-Apim-Subscription-Region')).toBe('eastus');
+    expect(JSON.parse(String(init?.body))).toEqual([{ Text: 'Hello world' }]);
   });
-  it('uses a temporary Bing web session and maps Chinese language tags', async () => {
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        new Response(
-          'params_AbusePreventionHelper = [123,"temporary-token",1000]; IG:"ABC123" data-iid="translator.5023"',
-        ),
-      )
-      .mockResolvedValueOnce(Response.json([{ translations: [{ text: '你好' }] }]));
-    expect(
-      await translateAnonymous({
-        engine: 'microsoft-free',
-        text: 'Hello',
-        target: 'zh-TW',
-        fetcher,
-      }),
-    ).toBe('你好');
-    const [url, init] = fetcher.mock.calls[1]!;
-    expect(String(url)).toContain('https://www.bing.com/ttranslatev3?');
-    expect(new URLSearchParams(String(init?.body)).get('to')).toBe('zh-Hant');
-    expect(new URLSearchParams(String(init?.body)).get('token')).toBe('temporary-token');
-  });
-  it('stops when Bing presents a challenge; no alternate endpoint', async () => {
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response('<html>CAPTCHA</html>'));
+
+  it('rejects anonymous translation calls since free versions are removed', async () => {
+    const fetcher = vi.fn<typeof fetch>();
     await expect(
       translateAnonymous({
-        engine: 'microsoft-free',
+        engine: 'google-free',
         text: 'Hello',
         target: 'en',
         fetcher,
       }),
     ).rejects.toMatchObject({ code: 'anonymous-unavailable' });
-    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });
 

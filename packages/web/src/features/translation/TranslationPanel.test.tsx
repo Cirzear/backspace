@@ -71,3 +71,21 @@ it('runs model discovery and a live test through the Web bridge without saving d
   expect(commands[2]).toMatchObject({ accountId: 'alice', connection: { apiKey: 'draft-test-key', model: 'chat-draft' } });
   expect(settings).toMatchObject({ revision: 0, connections: [], preferences: { consent: false } });
 });
+
+it('supports tab switching between plugins and connections overview', async () => {
+  render(<TranslationPanel />);
+  expect(await screen.findByText('pluginsSectionTitle')).toBeInTheDocument();
+  expect(screen.getByText('translationPluginName')).toBeInTheDocument();
+  expect(screen.getByText('summarizerPluginName')).toBeInTheDocument();
+  expect(screen.getByText('composerPluginName')).toBeInTheDocument();
+
+  // Switch to plugins tab
+  fireEvent.click(screen.getByText('tabPlugins'));
+  expect(screen.getByText('pluginsSectionTitle')).toBeInTheDocument();
+  expect(screen.queryByText('connectionsSectionDesc')).not.toBeInTheDocument();
+
+  // Switch to connections tab
+  fireEvent.click(screen.getByText('tabConnections'));
+  expect(screen.queryByText('pluginsSectionTitle')).not.toBeInTheDocument();
+  expect(screen.getByText('connectionsSectionDesc')).toBeInTheDocument();
+});

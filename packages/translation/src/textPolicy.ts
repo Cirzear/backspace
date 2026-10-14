@@ -3,10 +3,10 @@ import { detectAll } from 'tinyld';
 import type { TranslationLanguage, TranslationResult } from '../../shared/src/translation';
 import { MAX_TEXT_LENGTH, TranslationError } from './validation';
 
-// Keep code, URLs, emails and chat tokens out of model input, not just out of its instructions.
+// Keep code, URLs, emails, mentions and emojis out of model input, not just out of its instructions.
 // Bound email components and reject nested sticker brackets so scans stay linear on hostile text.
 const PROTECTED =
-  /```[\s\S]*?(?:```|$)|`[^`\n]+`|sticker:https?:\/\/[^\s<>]+|https?:\/\/[^\s<>]+|[\w.+-]{1,64}@[\w.-]{1,253}\.[a-z]{2,63}|<[@#][!&]?[\w:-]+>|<a?:[\w-]+:[\w-]+>|\[sticker:[^\[\]]+\]/gi;
+  /```[\s\S]*?(?:```|$)|`[^`\n]+`|sticker:https?:\/\/[^\s<>]+|<https?:\/\/[^\s>]+>|https?:\/\/[^\s<>]+|[\w.+-]{1,64}@[\w.-]{1,253}\.[a-z]{2,63}|<[@#][!&]?[\w:-]+>|<a?:[\w-]+:[\w-]+>|\[sticker:[^\[\]]+\]|(?<![\w@])@(everyone|here|[\p{L}\p{N}_-]+(?:@[\w.-]+)?)(?<![.,!?])|\p{Extended_Pictographic}(?:\u200D\p{Extended_Pictographic}|\uFE0F|\p{Emoji_Modifier})*|(?<![a-zA-Z0-9]):[a-zA-Z0-9_+-]*[a-zA-Z_+-][a-zA-Z0-9_+-]*:(?![a-zA-Z0-9])/giu;
 const SHORT_ENGLISH = /^(hello|thanks|thank you|goodbye|good morning|good night|please|yes|no)[.!?\s]*$/i;
 export interface PreparedText {
   text: string;
@@ -49,7 +49,11 @@ function detectedLanguage(natural: string): string | null {
   }
   return best.lang;
 }
-export function translationEligibility(text: string, target: TranslationLanguage): TranslationResult | null {
+export function translationEligibility(
+  text: string,
+  target: TranslationLanguage,
+  automatic = true,
+): TranslationResult | null {
   if (!text || text.length > MAX_TEXT_LENGTH) throw new TranslationError('invalid-input');
   const natural = naturalText(text);
   if (looksLikeCode(natural) || !/\p{L}/u.test(natural)) return { kind: 'skipped', reason: 'not-text' };
@@ -61,6 +65,8 @@ export function translationEligibility(text: string, target: TranslationLanguage
   const language = detectedLanguage(natural);
   if (language === preferred) return { kind: 'skipped', reason: 'same-language' };
   if (language) return null;
+  // Manual translation skips uncertainty checks so user-requested translations proceed
+  if (!automatic) return null;
   return { kind: 'skipped', reason: 'uncertain-language' };
 }
 export function protectText(text: string): PreparedText {
@@ -75,11 +81,16 @@ export function protectText(text: string): PreparedText {
 }
 export function restoreText(output: string, prepared: PreparedText): string {
   if (!output.trim() || output.length > MAX_TEXT_LENGTH * 4) throw new TranslationError('invalid-response');
+  // Normalize markdown bold/spacing/casing variants that LLMs and translators introduce into tokens
+  const normalized = output.replace(
+    /(?:__|(?:\*\*))\s*BS_([a-f0-9]{16})_(\d+)\s*(?:__|(?:\*\*))/gi,
+    (_, nonce, idx) => `__BS_${nonce.toLowerCase()}_${idx}__`,
+  );
   for (const token of prepared.protectedParts.keys()) {
-    if (output.split(token).length !== 2) throw new TranslationError('protected-content');
+    if (normalized.split(token).length !== 2) throw new TranslationError('protected-content');
   }
   // Replacement uses a callback: code containing "$&" must remain literal.
-  return output.replace(/__BS_[a-f0-9]{16}_\d+__/g, (token) => {
+  return normalized.replace(/__BS_[a-f0-9]{16}_\d+__/g, (token) => {
     const original = prepared.protectedParts.get(token);
     if (original === undefined) throw new TranslationError('protected-content');
     return original;

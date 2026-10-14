@@ -92,7 +92,11 @@ export class TranslationService {
   private async translate(scope: string, input: Record<string, unknown>): Promise<TranslationReply> {
     const data = this.authorizeTranslation(scope, input);
     const { preferences } = data;
-    const skipped = translationEligibility(input.text as string, preferences.targetLanguage);
+    const skipped = translationEligibility(
+      input.text as string,
+      preferences.targetLanguage,
+      input.automatic === true,
+    );
     if (skipped) return { ok: true, result: skipped };
     const { engine, connection } = this.selectedProvider(data);
     const key = translationResultKey({

@@ -33,6 +33,12 @@ function modelPageUrl(connection: StoredConnection, cursor?: string): string {
   return url.href;
 }
 export async function listModels({ connection, fetcher }: DiagnosticRequest): Promise<string[]> {
+  if (connection.protocol === 'google-translate') {
+    return ['base', 'nmt'];
+  }
+  if (connection.protocol === 'microsoft-translator') {
+    return ['general'];
+  }
   const models = new Set<string>();
   const cursors = new Set<string>();
   let cursor: string | undefined;

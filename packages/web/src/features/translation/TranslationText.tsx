@@ -30,18 +30,29 @@ function TranslationFeedback({ translation }: Pick<TextProps, 'translation'>) {
       </div>
     );
   if (!entry.automatic && entry.result.kind === 'skipped')
-    return <div className="mt-1 text-xs text-txt-tertiary">{t(SKIP_LABELS[entry.result.reason])}</div>;
+    return (
+      <div className="mt-1 text-xs text-txt-tertiary">
+        {t(SKIP_LABELS[entry.result.reason])}{' '}
+        {entry.result.reason !== 'same-language' && translation.translate && (
+          <button className="underline ml-1" onClick={translation.translate}>
+            {t('retry')}
+          </button>
+        )}
+      </div>
+    );
   return null;
 }
 function TranslatedBody({ translation, text, children }: TextProps & { text: string }) {
   const { t } = useTranslation('translation');
-  const [originalKey, setOriginalKey] = useState<string | null>(null);
-  const { cacheKey, showOriginal } = translation;
-  const viewingOriginal = originalKey === cacheKey;
+  const [localCollapsed, setLocalCollapsed] = useState(false);
+  const { showOriginal } = translation;
+  const isCollapsed = translation.isCollapsed !== undefined ? translation.isCollapsed : localCollapsed;
+  const toggleCollapse = translation.toggleCollapse ?? (() => setLocalCollapsed((v) => !v));
+
   return (
     <>
-      {(showOriginal || viewingOriginal) && children}
-      {(!viewingOriginal || showOriginal) && (
+      {(showOriginal || isCollapsed) && children}
+      {!isCollapsed && (
         // Model output is text, never active Markdown/HTML: no injected links, images or mentions.
         <div
           className={
@@ -56,12 +67,19 @@ function TranslatedBody({ translation, text, children }: TextProps & { text: str
       )}
       <div className="mt-1 flex gap-2 text-xs text-txt-tertiary select-none">
         <span>{t('translated')}</span>
-        {!showOriginal && (
+        {showOriginal ? (
           <button
             className="hover:underline"
-            onClick={() => setOriginalKey(viewingOriginal ? null : cacheKey)}
+            onClick={toggleCollapse}
           >
-            {viewingOriginal ? t('viewTranslation') : t('viewOriginal')}
+            {isCollapsed ? t('expandTranslation') : t('collapseTranslation')}
+          </button>
+        ) : (
+          <button
+            className="hover:underline"
+            onClick={toggleCollapse}
+          >
+            {isCollapsed ? t('viewTranslation') : t('viewOriginal')}
           </button>
         )}
       </div>

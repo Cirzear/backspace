@@ -27,8 +27,16 @@ export const TARGET_LANGUAGES: readonly TranslationLanguage[] = [
   'ru',
   'ar',
 ];
-export const ANONYMOUS_ENGINES = ['google-free', 'microsoft-free'];
-export const MAX_TEXT_LENGTH = 6000;
+export const ANONYMOUS_ENGINES: readonly string[] = [];
+export const SUPPORTED_PROTOCOLS = [
+  'openai-chat',
+  'openai-responses',
+  'anthropic',
+  'gemini',
+  'google-translate',
+  'microsoft-translator',
+] as const;
+export const MAX_TEXT_LENGTH = 15000;
 export function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new TranslationError('invalid-input');
@@ -60,7 +68,7 @@ export function baseUrl(value: unknown): string {
 }
 export function connectionProbe(value: unknown): ConnectionProbe {
   const v = record(value);
-  if (!['openai-chat', 'openai-responses', 'anthropic', 'gemini'].includes(String(v.protocol)))
+  if (!SUPPORTED_PROTOCOLS.includes(String(v.protocol) as (typeof SUPPORTED_PROTOCOLS)[number]))
     throw new TranslationError('invalid-input');
   if (
     v.apiKey !== undefined &&
@@ -86,9 +94,11 @@ export function preferencesInput(value: unknown): TranslationPreferences {
   for (const key of ['automatic', 'showOriginal', 'consent']) {
     if (typeof v[key] !== 'boolean') throw new TranslationError('invalid-input');
   }
+  const rawEngine = v.engine === null ? null : string(v.engine, 64);
+  const engine = rawEngine === 'google-free' || rawEngine === 'microsoft-free' ? null : rawEngine;
   return {
     defaultConnection: v.defaultConnection === null ? null : string(v.defaultConnection, 64),
-    engine: v.engine === null ? null : string(v.engine, 64),
+    engine,
     targetLanguage: v.targetLanguage as TranslationLanguage,
     automatic: v.automatic as boolean,
     showOriginal: v.showOriginal as boolean,

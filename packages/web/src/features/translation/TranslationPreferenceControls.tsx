@@ -36,12 +36,9 @@ export function TranslationPreferenceControls({ preferences, settings, busy, onC
               onChange={event => update('engine', event.target.value || null)}>
               <option value="">{t('inherit')}</option>
               {settings.connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              <option value="google-free">{t('googleFree')}</option>
-              <option value="microsoft-free">{t('microsoftFree')}</option>
             </select>
           </label>
         </div>
-        {preferences.engine?.endsWith('-free') && <p className="text-xs text-txt-danger leading-relaxed">{t('anonymousWarning')}</p>}
         <label className="block text-xs font-medium text-txt-secondary">
           {t('targetLanguage')}
           <select className="input-standard mt-1.5 w-full" value={preferences.targetLanguage}

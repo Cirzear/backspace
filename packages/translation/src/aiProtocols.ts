@@ -69,7 +69,8 @@ function joinedText(parts: Record<string, unknown>[]): string {
     })
     .join('');
 }
-const RESPONSE_READERS: Record<StoredConnection['protocol'], (response: Record<string, unknown>) => unknown> =
+type LlmProtocol = 'openai-chat' | 'openai-responses' | 'anthropic' | 'gemini';
+const RESPONSE_READERS: Record<LlmProtocol, (response: Record<string, unknown>) => unknown> =
   {
     'openai-chat': (response) => {
       const choice = responseParts(response.choices)[0];
@@ -110,19 +111,108 @@ export function aiHeaders(connection: StoredConnection): Record<string, string> 
     'Content-Type': 'application/json',
   };
   if (connection.protocol === 'anthropic') headers['anthropic-version'] = '2023-06-01';
+  if (connection.protocol === 'microsoft-translator') {
+    if (connection.apiKey) headers['Ocp-Apim-Subscription-Key'] = connection.apiKey;
+    if (connection.model && connection.model !== 'general' && connection.model !== 'default') {
+      headers['Ocp-Apim-Subscription-Region'] = connection.model;
+    }
+    return headers;
+  }
   const authHeader = {
     'openai-chat': 'Authorization',
     'openai-responses': 'Authorization',
     anthropic: 'x-api-key',
     gemini: 'x-goog-api-key',
+    'google-translate': 'x-goog-api-key',
   }[connection.protocol];
-  if (connection.apiKey)
+  if (connection.apiKey && authHeader)
     headers[authHeader] = authHeader === 'Authorization' ? `Bearer ${connection.apiKey}` : connection.apiKey;
   return headers;
 }
+
+function unescapeHtml(str: string): string {
+  return str
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x27;/g, "'")
+    .replace(/&#x2F;/g, '/');
+}
+
+async function translateGoogle(options: AiRequest): Promise<string> {
+  const { connection, text, target, fetcher } = options;
+  const url = `${connection.baseUrl.replace(/\/+$/, '')}/language/translate/v2`;
+  const headers = aiHeaders(connection);
+  const body = JSON.stringify({
+    q: [text],
+    target,
+    format: 'text',
+    model: connection.model && connection.model !== 'default' ? connection.model : 'nmt',
+  });
+  const response = await requestText({
+    url,
+    init: { method: 'POST', headers, body },
+    fetcher,
+  });
+  try {
+    const res = record(parseJson(response));
+    const data = record(res.data);
+    if (!Array.isArray(data.translations) || !data.translations.length) {
+      throw new TranslationError('invalid-response');
+    }
+    const item = record(data.translations[0]);
+    if (typeof item.translatedText !== 'string' || !item.translatedText.trim()) {
+      throw new TranslationError('invalid-response');
+    }
+    return unescapeHtml(item.translatedText);
+  } catch (e) {
+    if (e instanceof TranslationError) throw e;
+    throw new TranslationError('invalid-response');
+  }
+}
+
+async function translateMicrosoft(options: AiRequest): Promise<string> {
+  const { connection, text, target, fetcher } = options;
+  const msTarget = { 'zh-CN': 'zh-Hans', 'zh-TW': 'zh-Hant' }[target as 'zh-CN' | 'zh-TW'] ?? target;
+  const url = `${connection.baseUrl.replace(/\/+$/, '')}/translate?api-version=3.0&to=${encodeURIComponent(msTarget)}`;
+  const headers = aiHeaders(connection);
+  const body = JSON.stringify([{ Text: text }]);
+  const response = await requestText({
+    url,
+    init: { method: 'POST', headers, body },
+    fetcher,
+  });
+  try {
+    const list = parseJson(response);
+    if (!Array.isArray(list) || !list.length) {
+      throw new TranslationError('invalid-response');
+    }
+    const first = record(list[0]);
+    if (!Array.isArray(first.translations) || !first.translations.length) {
+      throw new TranslationError('invalid-response');
+    }
+    const item = record(first.translations[0]);
+    if (typeof item.text !== 'string' || !item.text.trim()) {
+      throw new TranslationError('invalid-response');
+    }
+    return item.text;
+  } catch (e) {
+    if (e instanceof TranslationError) throw e;
+    throw new TranslationError('invalid-response');
+  }
+}
+
 export async function translateAi(options: AiRequest): Promise<string> {
+  if (options.connection.protocol === 'google-translate') {
+    return await translateGoogle(options);
+  }
+  if (options.connection.protocol === 'microsoft-translator') {
+    return await translateMicrosoft(options);
+  }
   const { connection, fetcher } = options;
-  const request = payloadFor(options);
+  const request = payloadFor(options)!;
   const headers = aiHeaders(connection);
   const response = await requestText({
     url: `${connection.baseUrl}${request.path}`,
@@ -130,7 +220,7 @@ export async function translateAi(options: AiRequest): Promise<string> {
     fetcher,
   });
   try {
-    const text = RESPONSE_READERS[connection.protocol](record(parseJson(response)));
+    const text = RESPONSE_READERS[connection.protocol as keyof typeof RESPONSE_READERS](record(parseJson(response)));
     if (typeof text !== 'string') throw new TranslationError('invalid-response');
     const output = record(parseJson(text));
     if (Object.keys(output).length !== 1)
@@ -140,3 +230,4 @@ export async function translateAi(options: AiRequest): Promise<string> {
     throw new TranslationError('invalid-response');
   }
 }
+

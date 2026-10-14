@@ -85,3 +85,14 @@ it('locks the form during a live request and clears success after model edits', 
   fireEvent.change(screen.getByLabelText('model'), { target: { value: 'other' } });
   expect(screen.queryByText('connectionReady')).not.toBeInTheDocument();
 });
+
+it('switches to Google Cloud Translation and Microsoft Translator with their default settings', () => {
+  render(<ConnectionEditor busy={false} onSave={vi.fn()} onDiagnose={vi.fn()} onCancel={vi.fn()} />);
+  fireEvent.change(screen.getByLabelText('protocol'), { target: { value: 'google-translate' } });
+  expect(screen.getByLabelText('baseUrl')).toHaveValue('https://translation.googleapis.com');
+  expect(screen.getByLabelText('model')).toHaveValue('nmt');
+
+  fireEvent.change(screen.getByLabelText('protocol'), { target: { value: 'microsoft-translator' } });
+  expect(screen.getByLabelText('baseUrl')).toHaveValue('https://api.cognitive.microsofttranslator.com');
+  expect(screen.getByLabelText('model')).toHaveValue('general');
+});

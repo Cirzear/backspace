@@ -187,7 +187,9 @@ export function enqueueTranslation(
 ): () => void {
   const task: Task = { ...input, background: input.background ?? input.automatic, scopeEpoch };
   const entry = useTranslationStore.getState().entries[task.key];
-  if ((entry && entry.state !== 'error') || queue.some((item) => item.key === task.key)) return () => {};
+  const isManual = !task.background;
+  if (!isManual && ((entry && entry.state !== 'error') || queue.some((item) => item.key === task.key))) return () => {};
+  if (isManual && (entry?.state === 'loading' || queue.some((item) => item.key === task.key))) return () => {};
   if (task.background && entry?.state === 'error') return () => {};
   if (task.background) queue.push(task);
   else queue.unshift(task);
