@@ -279,8 +279,23 @@
     "viewPack": "View Pack",
     "saveDraft": "Save as Draft",
     "packCreated": "Pack created successfully",
-    "reviewSubmitted": "Submitted for admin review"
-
+    "reviewSubmitted": "Submitted for admin review",
+    "reviews": "Review",
+    "noReviews": "No sticker packs waiting for review",
+    "approve": "Approve",
+    "reject": "Reject",
+    "rejectTitle": "Reject Sticker Pack",
+    "rejectReason": "Rejection reason",
+    "rejectPlaceholder": "Enter reason for rejection (e.g. inappropriate content, poor quality)",
+    "rejectConfirm": "Confirm Rejection",
+    "approvedSuccess": "Sticker pack approved successfully",
+    "rejectedSuccess": "Sticker pack rejected",
+    "reviewNotes": "Rejection reason",
+    "creator": "Creator",
+    "sourceInstance": "Instance",
+    "localInstance": "Local instance",
+    "viewStickers": "View stickers",
+    "pendingReviewHint": "Under admin review, will be listed on Explore once approved"
   },
   "poke": {
     "action": "Poke",

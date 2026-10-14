@@ -92,9 +92,11 @@ export function ReactionPickerPopover({
   // Close on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      const target = e.target as Node;
+      const target = e.target as Node | null;
+      if (!target) return;
       if (popoverRef.current?.contains(target)) return;
       if (anchorEl?.contains(target)) return;
+      if ((target as Element).closest?.('[aria-modal="true"], [data-modal]')) return;
       onClose();
     };
     document.addEventListener('mousedown', handler);
@@ -104,7 +106,10 @@ export function ReactionPickerPopover({
   // Capture Escape before the emoji search input stops keyboard-event bubbling.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        if (document.querySelector('[aria-modal="true"]')) return;
+        onClose();
+      }
     };
     document.addEventListener('keydown', handler, true);
     return () => document.removeEventListener('keydown', handler, true);

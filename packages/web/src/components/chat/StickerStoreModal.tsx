@@ -6,6 +6,8 @@ import { api } from '../../api/client';
 import { describeError } from '../../i18n/errors';
 import { usePortalContainer } from '../../hooks/usePortalContainer';
 import { registerNativeDismiss } from '../../mobile/nativeBack';
+import { useAuthStore } from '../../stores/authStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { StickerPackManageModal } from './StickerPackManageModal';
 import './stickers.css';
 
@@ -16,13 +18,21 @@ interface StickerStoreModalProps {
 
 export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModalProps) {
   const { t } = useTranslation(['chat', 'common']);
-  const [activeTab, setActiveTab] = useState<'explore' | 'myPacks'>('explore');
+  const isAdmin = useSettingsStore(s => s.isAdmin) || useAuthStore(s => !!s.user?.isAdmin);
+  const [activeTab, setActiveTab] = useState<'explore' | 'myPacks' | 'reviews'>('explore');
   const [search, setSearch] = useState('');
 
   const [packs, setPacks] = useState<StickerPackSummary[]>([]);
   const [myPacks, setMyPacks] = useState<StickerPackSummary[]>([]);
+  const [reviews, setReviews] = useState<StickerPackSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [actionSuccess, setActionSuccess] = useState('');
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+
+  // Reject dialog state
+  const [rejectingPack, setRejectingPack] = useState<{ id: string; name: string } | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
 
   // Selected pack for preview modal
   const [previewPack, setPreviewPack] = useState<StickerPackDetail | null>(null);
@@ -34,6 +44,7 @@ export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModal
   const fetchExplorePacks = async (query = '') => {
     setLoading(true);
     setError('');
+    setActionSuccess('');
     try {
       const data = await api.stickerStore.listPacks({ q: query || undefined });
       setPacks(data);
@@ -47,6 +58,7 @@ export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModal
   const fetchMyCreatedPacks = async () => {
     setLoading(true);
     setError('');
+    setActionSuccess('');
     try {
       const data = await api.stickerStore.listCreated();
       setMyPacks(data);
@@ -57,11 +69,34 @@ export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModal
     }
   };
 
+  const fetchReviews = async () => {
+    if (!isAdmin) return;
+    setLoading(true);
+    setError('');
+    setActionSuccess('');
+    try {
+      const data = await api.admin.stickerPacks.listReviews();
+      setReviews(data);
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isAdmin) {
+      api.admin.stickerPacks.listReviews().then(setReviews).catch(() => {});
+    }
+  }, [isAdmin]);
+
   useEffect(() => {
     if (activeTab === 'explore') {
       fetchExplorePacks(search);
-    } else {
+    } else if (activeTab === 'myPacks') {
       fetchMyCreatedPacks();
+    } else if (activeTab === 'reviews') {
+      fetchReviews();
     }
   }, [activeTab]);
 
@@ -118,17 +153,67 @@ export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModal
     }
   };
 
+  const handleApprove = async (packId: string) => {
+    setActionLoading(packId);
+    setError('');
+    setActionSuccess('');
+    try {
+      await api.admin.stickerPacks.approve(packId);
+      setActionSuccess(t('stickers.approvedSuccess'));
+      setReviews(prev => prev.filter(p => p.id !== packId));
+      if (previewPack && previewPack.id === packId) {
+        setPreviewPack(prev => prev ? { ...prev, status: 'approved' } : null);
+      }
+      onPacksChanged?.();
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleStartReject = (pack: { id: string; name: string }) => {
+    setRejectingPack(pack);
+    setRejectReason('');
+  };
+
+  const handleConfirmReject = async () => {
+    if (!rejectingPack) return;
+    const packId = rejectingPack.id;
+    setActionLoading(packId);
+    setError('');
+    setActionSuccess('');
+    try {
+      await api.admin.stickerPacks.reject(packId, rejectReason.trim() || undefined);
+      setActionSuccess(t('stickers.rejectedSuccess'));
+      setReviews(prev => prev.filter(p => p.id !== packId));
+      if (previewPack && previewPack.id === packId) {
+        setPreviewPack(prev => prev ? { ...prev, status: 'rejected', reviewNotes: rejectReason.trim() || null } : null);
+      }
+      setRejectingPack(null);
+      setRejectReason('');
+      onPacksChanged?.();
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const portalContainer = usePortalContainer();
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.key === 'Escape') {
-      if (previewPack) {
+      e.stopPropagation();
+      if (rejectingPack) {
+        setRejectingPack(null);
+      } else if (previewPack) {
         setPreviewPack(null);
       } else {
         onClose();
       }
     }
-  }, [onClose, previewPack]);
+  }, [onClose, previewPack, rejectingPack]);
 
   useEffect(() => {
     document.addEventListener('keydown', handleKeyDown);
@@ -136,15 +221,18 @@ export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModal
   }, [handleKeyDown]);
 
   useEffect(() => registerNativeDismiss(() => {
-    if (previewPack) setPreviewPack(null);
+    if (rejectingPack) setRejectingPack(null);
+    else if (previewPack) setPreviewPack(null);
     else onClose();
-  }), [onClose, previewPack]);
+  }), [onClose, previewPack, rejectingPack]);
 
   return createPortal(
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-[200] flex items-center justify-center animate-fade-in"
+      aria-label={t('stickers.store')}
+      className="fixed inset-0 z-[500] flex items-center justify-center animate-fade-in"
+      onMouseDown={e => e.stopPropagation()}
     >
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
       <div className="relative w-full max-w-3xl h-[620px] max-h-[calc(calc(100*var(--app-vh))-2rem)] mx-4 glass-modal rounded-xl shadow-2xl flex flex-col overflow-hidden animate-slide-up">
@@ -177,6 +265,20 @@ export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModal
               >
                 {t('stickers.myPacks')}
               </button>
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('reviews')}
+                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors ${activeTab === 'reviews' ? 'bg-surface-elevated text-txt-primary shadow-sm' : 'text-txt-tertiary hover:text-txt-primary'}`}
+                >
+                  <span>{t('stickers.reviews')}</span>
+                  {reviews.length > 0 && (
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-accent-amber/20 text-accent-amber font-bold">
+                      {reviews.length}
+                    </span>
+                  )}
+                </button>
+              )}
             </div>
           </div>
 
@@ -197,6 +299,12 @@ export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModal
           {error && (
             <div role="alert" className="mb-4 p-3 rounded-xl bg-accent-rose/10 border border-accent-rose/20 text-xs text-txt-danger">
               {error}
+            </div>
+          )}
+          {actionSuccess && (
+            <div role="status" className="mb-4 p-3 rounded-xl bg-accent-mint/10 border border-accent-mint/20 text-xs text-accent-mint flex items-center justify-between">
+              <span>{actionSuccess}</span>
+              <button type="button" onClick={() => setActionSuccess('')} className="text-accent-mint/70 hover:text-accent-mint font-bold">✕</button>
             </div>
           )}
 
@@ -287,7 +395,7 @@ export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModal
                 </div>
               )}
             </div>
-          ) : (
+          ) : activeTab === 'myPacks' ? (
             <div>
               {/* Creator Packs Tab */}
               <div className="flex items-center justify-between mb-5">
@@ -323,10 +431,117 @@ export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModal
                   {myPacks.map(pack => (
                     <div
                       key={pack.id}
-                      className="p-4 rounded-xl border border-border-soft bg-surface-base/60 flex items-center justify-between gap-4"
+                      className="p-4 rounded-xl border border-border-soft bg-surface-base/60 flex flex-col gap-3"
                     >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="h-12 w-12 shrink-0 rounded-lg bg-surface-elevated flex items-center justify-center overflow-hidden border border-border-soft">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="h-12 w-12 shrink-0 rounded-lg bg-surface-elevated flex items-center justify-center overflow-hidden border border-border-soft">
+                            {pack.coverUrl ? (
+                              <img src={pack.coverUrl} alt={pack.name} className="h-full w-full object-contain p-1" />
+                            ) : (
+                              <span className="text-lg">🎨</span>
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <h4 className="text-sm font-semibold text-txt-primary truncate">{pack.name}</h4>
+                              <span className={`px-2 py-0.5 text-[10px] font-medium rounded-full ${
+                                pack.status === 'approved' || pack.status === 'active' ? 'bg-accent-mint/10 text-accent-mint border border-accent-mint/20' :
+                                pack.status === 'pending_review' ? 'bg-accent-amber/10 text-accent-amber border border-accent-amber/20' :
+                                pack.status === 'rejected' ? 'bg-accent-rose/10 text-accent-rose border border-accent-rose/20' :
+                                'bg-surface-input text-txt-tertiary'
+                              }`}>
+                                {pack.status === 'approved' || pack.status === 'active' ? t('stickers.approved') :
+                                 pack.status === 'pending_review' ? t('stickers.pendingReview') :
+                                 pack.status === 'rejected' ? t('stickers.rejected') :
+                                 t('stickers.draft')}
+                              </span>
+                            </div>
+                            <p className="text-xs text-txt-tertiary truncate">
+                              {/* i18n-check: allow-literal */}
+                              v{pack.currentVersion} · {t('stickers.stickersCount', { count: pack.itemCount })}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenPreview(pack.id)}
+                            className="sticker-secondary-button text-xs"
+                          >
+                            {t('stickers.viewStickers')}
+                          </button>
+                          {pack.status === 'approved' ? (
+                            <button
+                              type="button"
+                              onClick={() => handleNewVersion(pack.id)}
+                              className="sticker-secondary-button text-xs"
+                            >
+                              {t('stickers.newVersion')}
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setEditingPackId(pack.id)}
+                              className="sticker-secondary-button text-xs"
+                            >
+                              {t('stickers.editPack')}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleDeletePack(pack.id)}
+                            className="sticker-icon-button text-txt-danger hover:bg-accent-rose/10"
+                            aria-label={t('stickers.deletePack')}
+                          >
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+
+                      {pack.status === 'pending_review' && (
+                        <div className="text-[11px] text-accent-amber/90 flex items-center gap-1.5 pl-1">
+                          <span>⏳</span>
+                          <span>{t('stickers.pendingReviewHint')}</span>
+                        </div>
+                      )}
+
+                      {pack.status === 'rejected' && pack.reviewNotes && (
+                        <div className="p-2.5 rounded-lg bg-accent-rose/10 border border-accent-rose/20 text-xs text-txt-danger">
+                          <span className="font-semibold">{t('stickers.reviewNotes')}: </span>
+                          <span>{pack.reviewNotes}</span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div>
+              {/* Admin Reviews Tab */}
+              {loading ? (
+                <div className="space-y-3">
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <div key={i} className="h-24 rounded-xl bg-surface-base animate-pulse border border-border-soft" />
+                  ))}
+                </div>
+              ) : reviews.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-center text-txt-tertiary">
+                  <p className="text-sm">{t('stickers.noReviews')}</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {reviews.map(pack => (
+                    <div
+                      key={pack.id}
+                      className="p-4 rounded-xl border border-border-soft bg-surface-base/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                    >
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className="h-12 w-12 shrink-0 rounded-lg bg-surface-elevated flex items-center justify-center overflow-hidden border border-border-soft mt-0.5">
                           {pack.coverUrl ? (
                             <img src={pack.coverUrl} alt={pack.name} className="h-full w-full object-contain p-1" />
                           ) : (
@@ -336,52 +551,47 @@ export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModal
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
                             <h4 className="text-sm font-semibold text-txt-primary truncate">{pack.name}</h4>
-                            <span className={`px-2 py-0.5 text-[10px] font-medium rounded-full ${
-                              pack.status === 'approved' || pack.status === 'active' ? 'bg-accent-mint/10 text-accent-mint border border-accent-mint/20' :
-                              pack.status === 'pending_review' ? 'bg-accent-amber/10 text-accent-amber border border-accent-amber/20' :
-                              pack.status === 'rejected' ? 'bg-accent-rose/10 text-accent-rose border border-accent-rose/20' :
-                              'bg-surface-input text-txt-tertiary'
-                            }`}>
-                              {pack.status === 'approved' || pack.status === 'active' ? t('stickers.approved') :
-                               pack.status === 'pending_review' ? t('stickers.pendingReview') :
-                               pack.status === 'rejected' ? t('stickers.rejected') :
-                               t('stickers.draft')}
+                            <span className="px-2 py-0.5 text-[10px] font-medium rounded-full bg-accent-amber/10 text-accent-amber border border-accent-amber/20">
+                              {t('stickers.pendingReview')}
                             </span>
                           </div>
-                          <p className="text-xs text-txt-tertiary truncate">
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs text-txt-tertiary">
+                            <span>{t('stickers.creator')}: <strong className="text-txt-secondary font-medium">{pack.creatorName || '—'}</strong></span>
+                            <span>•</span>
+                            <span>{t('stickers.sourceInstance')}: <strong className="text-txt-secondary font-medium">{pack.sourceInstance || t('stickers.localInstance')}</strong></span>
+                            <span>•</span>
                             {/* i18n-check: allow-literal */}
-                            v{pack.currentVersion} · {t('stickers.stickersCount', { count: pack.itemCount })}
-                          </p>
+                            <span>v{pack.currentVersion} · {t('stickers.stickersCount', { count: pack.itemCount })}</span>
+                          </div>
+                          {pack.description && (
+                            <p className="text-xs text-txt-secondary mt-1.5 line-clamp-2">{pack.description}</p>
+                          )}
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2 shrink-0">
-                        {pack.status === 'approved' ? (
-                          <button
-                            type="button"
-                            onClick={() => handleNewVersion(pack.id)}
-                            className="sticker-secondary-button text-xs"
-                          >
-                            {t('stickers.newVersion')}
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => setEditingPackId(pack.id)}
-                            className="sticker-secondary-button text-xs"
-                          >
-                            {t('stickers.editPack')}
-                          </button>
-                        )}
+                      <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
                         <button
                           type="button"
-                          onClick={() => handleDeletePack(pack.id)}
-                          className="sticker-icon-button text-txt-danger hover:bg-accent-rose/10"
-                          aria-label={t('stickers.deletePack')}
+                          onClick={() => handleOpenPreview(pack.id)}
+                          className="sticker-secondary-button text-xs"
                         >
-                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                          </svg>
+                          {t('stickers.viewStickers')}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={actionLoading === pack.id}
+                          onClick={() => handleStartReject(pack)}
+                          className="px-3 py-1.5 text-xs font-medium rounded-lg text-txt-danger bg-accent-rose/10 hover:bg-accent-rose/20 border border-accent-rose/20 transition-colors disabled:opacity-50"
+                        >
+                          {t('stickers.reject')}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={actionLoading === pack.id}
+                          onClick={() => handleApprove(pack.id)}
+                          className="px-3 py-1.5 text-xs font-medium rounded-lg text-accent-mint bg-accent-mint/10 hover:bg-accent-mint/20 border border-accent-mint/20 transition-colors disabled:opacity-50"
+                        >
+                          {actionLoading === pack.id ? '…' : t('stickers.approve')}
                         </button>
                       </div>
                     </div>
@@ -398,17 +608,19 @@ export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModal
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-[210] flex items-center justify-center animate-fade-in"
+          className="fixed inset-0 z-[510] flex items-center justify-center animate-fade-in"
+          onMouseDown={e => e.stopPropagation()}
         >
           <div className="absolute inset-0 bg-black/60" onClick={() => setPreviewPack(null)} />
           <div className="relative w-full max-w-md mx-4 glass-modal rounded-xl shadow-2xl p-6 flex flex-col max-h-[80vh] animate-slide-up">
             <div className="flex items-start justify-between gap-3 mb-4">
               <div>
                 <h4 className="text-base font-bold text-txt-primary">{previewPack.name}</h4>
-                <p className="text-xs text-txt-tertiary mt-0.5">
-                  {previewPack.creatorName || ''}
-                  {previewPack.sourceInstance ? ` · ${previewPack.sourceInstance}` : ''}
-                </p>
+                <div className="flex flex-wrap items-center gap-x-2 text-xs text-txt-tertiary mt-1">
+                  <span>{t('stickers.creator')}: <strong className="text-txt-secondary font-medium">{previewPack.creatorName || '—'}</strong></span>
+                  <span>•</span>
+                  <span>{t('stickers.sourceInstance')}: <strong className="text-txt-secondary font-medium">{previewPack.sourceInstance || t('stickers.localInstance')}</strong></span>
+                </div>
                 {previewPack.description && (
                   <p className="text-xs text-txt-secondary mt-1.5">{previewPack.description}</p>
                 )}
@@ -438,12 +650,98 @@ export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModal
               <span className="text-xs text-txt-tertiary">
                 {t('stickers.stickersCount', { count: previewPack.items.length })}
               </span>
+              {isAdmin && (previewPack.status === 'pending_review' || reviews.some(r => r.id === previewPack.id)) ? (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={actionLoading === previewPack.id}
+                    onClick={() => handleStartReject(previewPack)}
+                    className="px-3 py-1.5 text-xs font-medium rounded-lg text-txt-danger bg-accent-rose/10 hover:bg-accent-rose/20 border border-accent-rose/20 transition-colors disabled:opacity-50"
+                  >
+                    {t('stickers.reject')}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={actionLoading === previewPack.id}
+                    onClick={() => handleApprove(previewPack.id)}
+                    className="px-3 py-1.5 text-xs font-medium rounded-lg text-accent-mint bg-accent-mint/10 hover:bg-accent-mint/20 border border-accent-mint/20 transition-colors disabled:opacity-50"
+                  >
+                    {actionLoading === previewPack.id ? '…' : t('stickers.approve')}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={e => handleToggleInstall(e, previewPack)}
+                  className={previewPack.isInstalled ? 'sticker-secondary-button' : 'sticker-primary-button'}
+                >
+                  {previewPack.isInstalled ? `✓ ${t('stickers.installed')}` : `+ ${t('stickers.install')}`}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reject Reason Modal */}
+      {rejectingPack && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('stickers.rejectTitle')}
+          className="fixed inset-0 z-[520] flex items-center justify-center animate-fade-in"
+          onMouseDown={e => e.stopPropagation()}
+        >
+          <div className="absolute inset-0 bg-black/60" onClick={() => setRejectingPack(null)} />
+          <div className="relative w-full max-w-md mx-4 glass-modal rounded-xl shadow-2xl p-6 flex flex-col animate-slide-up">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-base font-bold text-txt-primary flex items-center gap-2">
+                <span className="text-accent-rose">⚠️</span>
+                {t('stickers.rejectTitle')}
+              </h4>
               <button
                 type="button"
-                onClick={e => handleToggleInstall(e, previewPack)}
-                className={previewPack.isInstalled ? 'sticker-secondary-button' : 'sticker-primary-button'}
+                onClick={() => setRejectingPack(null)}
+                className="p-1 rounded-lg text-txt-tertiary hover:text-txt-primary transition-colors"
+                aria-label={t('common:actions.close')}
               >
-                {previewPack.isInstalled ? `✓ ${t('stickers.installed')}` : `+ ${t('stickers.install')}`}
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <p className="text-xs text-txt-secondary mb-3">
+              {t('stickers.packName')}: <strong className="text-txt-primary">{rejectingPack.name}</strong>
+            </p>
+
+            <label className="block text-xs font-medium text-txt-secondary mb-1.5">
+              {t('stickers.rejectReason')}
+            </label>
+            <textarea
+              rows={4}
+              value={rejectReason}
+              onChange={e => setRejectReason(e.target.value)}
+              placeholder={t('stickers.rejectPlaceholder')}
+              className="w-full rounded-lg border border-border-soft bg-surface-base/80 p-2.5 text-xs text-txt-primary placeholder:text-txt-tertiary focus:border-accent-primary focus:outline-none resize-none mb-4"
+              autoFocus
+            />
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setRejectingPack(null)}
+                className="sticker-secondary-button text-xs"
+              >
+                {t('common:actions.cancel')}
+              </button>
+              <button
+                type="button"
+                disabled={actionLoading === rejectingPack.id}
+                onClick={handleConfirmReject}
+                className="px-3.5 py-1.5 text-xs font-medium rounded-lg text-white bg-accent-rose hover:bg-accent-rose/90 transition-colors disabled:opacity-50"
+              >
+                {actionLoading === rejectingPack.id ? '…' : t('stickers.rejectConfirm')}
               </button>
             </div>
           </div>

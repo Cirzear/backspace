@@ -227,4 +227,23 @@ describe('personal stickers', () => {
     expect(blank.statusCode).toBe(400);
     expect(blank.json()).toMatchObject({ code: 'validation_failed' });
   });
+
+  it('respects instance_settings max_sticker_size_bytes limit', async () => {
+    // Set custom sticker size limit to 10 MB in instance_settings
+    db.insert(schema.instanceSettings).values({ id: 1, maxStickerSizeBytes: 10 * 1024 * 1024, updatedAt: Date.now() }).onConflictDoUpdate({
+      target: schema.instanceSettings.id,
+      set: { maxStickerSizeBytes: 10 * 1024 * 1024 },
+    }).run();
+
+    // Over 10MB fails
+    await expect(encodeSticker(Buffer.alloc(10 * 1024 * 1024 + 1))).rejects.toThrow();
+
+    const overLimit = await app.inject({
+      method: 'POST',
+      url: '/api/stickers',
+      headers: { authorization: 'alice' },
+      payload: { name: 'huge', image: Buffer.alloc(10 * 1024 * 1024 + 4096).toString('base64') },
+    });
+    expect(overLimit.statusCode).toBe(413);
+  });
 });

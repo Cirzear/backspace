@@ -24,6 +24,7 @@ const settings: InstanceAdminSettings = {
   federatedRegistrationOpen: true,
   discoveryEnabled: true,
   maxUploadSizeMb: 100,
+  maxStickerSizeMb: 5,
   federationRelayEnabled: true,
   federationRelayTtlDays: 30,
   defaultAutoRotateIntervalDays: 90,

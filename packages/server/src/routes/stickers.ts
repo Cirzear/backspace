@@ -8,6 +8,7 @@ import {
   MAX_PERSONAL_STICKERS, MAX_STICKER_BYTES, MAX_STICKER_NAME_LENGTH, STICKER_ID_PATTERN, STICKER_PREFIX,
   STICKER_UPLOADS_PER_MINUTE, type PersonalSticker,
 } from '@backspace/shared/src/stickers.js';
+import { config } from '../config.js';
 import { getDb, schema } from '../db/index.js';
 import { authenticate } from '../utils/auth.js';
 import { getOurOrigin } from '../utils/federationAuth.js';
@@ -16,7 +17,20 @@ import { sendError } from '../utils/httpErrors.js';
 import { createFixedWindowLimit } from '../utils/fixedWindowLimit.js';
 
 export const tokenFor = (id: string) => `${STICKER_PREFIX}${getOurOrigin()}/api/stickers/assets/${id}.webp`;
-const MAX_STICKER_MB = MAX_STICKER_BYTES / (1024 * 1024);
+
+/**
+ * Returns the effective sticker upload size limit in bytes, configured by the instance admin
+ * in storage settings or falling back to MAX_STICKER_SIZE / default 5MB.
+ */
+export function getMaxStickerSizeBytes(): number {
+  try {
+    const row = getDb().select({ maxStickerSizeBytes: schema.instanceSettings.maxStickerSizeBytes })
+      .from(schema.instanceSettings).where(eq(schema.instanceSettings.id, 1)).get();
+    return row?.maxStickerSizeBytes ?? config.maxStickerSize ?? MAX_STICKER_BYTES;
+  } catch {
+    return config.maxStickerSize ?? MAX_STICKER_BYTES;
+  }
+}
 /** Stored stickers fit this box; the largest place one is shown is a 240 px message row. */
 const MAX_STICKER_DIMENSION = 512;
 /** Bound decoded pixels across animation frames, not only the compressed upload size. */
@@ -88,8 +102,9 @@ export async function saveStickerAsset(encoded: Buffer): Promise<string> {
  * when it is still larger than an upload may be, so a stored asset is never
  * bigger than the bytes the account sent.
  */
-export async function encodeSticker(bytes: Buffer): Promise<Buffer> {
-  if (!bytes.length || bytes.length > MAX_STICKER_BYTES) throw new StickerImageError();
+export async function encodeSticker(bytes: Buffer, maxBytes?: number): Promise<Buffer> {
+  const limit = maxBytes ?? getMaxStickerSizeBytes();
+  if (!bytes.length || bytes.length > limit) throw new StickerImageError();
   let encoded: Buffer;
   try {
     const image = sharp(bytes, { animated: true, limitInputPixels: MAX_DECODED_PIXELS });
@@ -105,7 +120,7 @@ export async function encodeSticker(bytes: Buffer): Promise<Buffer> {
     if (error instanceof StickerImageError) throw error;
     throw new StickerImageError();
   }
-  if (encoded.length > MAX_STICKER_BYTES) throw new StickerImageError();
+  if (encoded.length > limit) throw new StickerImageError();
   return encoded;
 }
 
@@ -120,7 +135,16 @@ export async function stickerRoutes(app: FastifyInstance): Promise<void> {
   // JSON uses the existing authenticated API client; the body limit accounts for base64 expansion.
   app.post<{ Body: { name: string; image: string } }>('/api/stickers', {
     preHandler: authenticate,
-    bodyLimit: Math.ceil(MAX_STICKER_BYTES / 3) * 4 + 4096,
+    bodyLimit: 500 * 1024 * 1024,
+    preParsing: async (request, reply, payload) => {
+      const maxBytes = getMaxStickerSizeBytes();
+      const maxBodyLimit = Math.ceil(maxBytes / 3) * 4 + 4096;
+      const contentLength = Number(request.headers['content-length']);
+      if (contentLength && contentLength > maxBodyLimit) {
+        return reply.code(413).send({ statusCode: 413, error: 'Payload Too Large', message: 'Request body is too large' });
+      }
+      return payload;
+    },
     schema: { body: { type: 'object', required: ['name', 'image'], additionalProperties: false,
       properties: { name: { type: 'string', minLength: 1, maxLength: MAX_STICKER_NAME_LENGTH }, image: { type: 'string', minLength: 4 } } } },
   }, async (request, reply) => {
@@ -134,11 +158,18 @@ export async function stickerRoutes(app: FastifyInstance): Promise<void> {
     if (!/^[A-Za-z0-9+/]*={0,2}$/.test(image)) return sendError(reply, 400, 'validation_failed');
     const bytes = Buffer.from(image, 'base64');
     if (bytes.toString('base64') !== image) return sendError(reply, 400, 'validation_failed');
+
+    const maxBytes = getMaxStickerSizeBytes();
+    const maxMb = Math.round(maxBytes / (1024 * 1024));
+    if (bytes.length > maxBytes) {
+      return reply.code(413).send({ statusCode: 413, error: 'Payload Too Large', message: 'Request body is too large' });
+    }
+
     // Only decode failures become validation errors; filesystem/database failures stay server errors.
     let encoded: Buffer;
-    try { encoded = await encodeSticker(bytes); }
+    try { encoded = await encodeSticker(bytes, maxBytes); }
     catch (error) {
-      if (error instanceof StickerImageError) return sendError(reply, 400, 'sticker_invalid_image', { max: MAX_STICKER_MB });
+      if (error instanceof StickerImageError) return sendError(reply, 400, 'sticker_invalid_image', { max: maxMb });
       throw error;
     }
     const id = await saveStickerAsset(encoded);

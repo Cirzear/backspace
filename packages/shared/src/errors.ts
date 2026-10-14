@@ -136,6 +136,7 @@ export const ERROR_CODES = [
   'instance_settings_reload_failed',
   'instance_name_length',
   'upload_limit_out_of_range',
+  'sticker_limit_out_of_range',
   'relay_ttl_out_of_range',
   'rotation_interval_out_of_range',
   'streaming_max_bitrate_out_of_range',

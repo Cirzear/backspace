@@ -24,6 +24,7 @@ export function MobilePickerSheet({ onClose, header, label, children }: MobilePi
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        if (document.querySelector('[aria-modal="true"]')) return;
         e.stopPropagation();
         onClose();
       }

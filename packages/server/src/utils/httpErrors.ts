@@ -129,6 +129,7 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   instance_settings_reload_failed: 'Failed to read updated settings',
   instance_name_length: 'Instance name must be {{min}}-{{max}} characters',
   upload_limit_out_of_range: 'maxUploadSizeMb must be a positive integer ({{min}} - {{max}})',
+  sticker_limit_out_of_range: 'maxStickerSizeMb must be a positive integer ({{min}} - {{max}})',
   relay_ttl_out_of_range: 'federationRelayTtlDays must be an integer between {{min}} and {{max}}',
   rotation_interval_out_of_range: 'defaultAutoRotateIntervalDays must be an integer between {{min}} and {{max}}',
   streaming_max_bitrate_out_of_range: 'maxBitrateKbps must be between {{min}} and {{max}}',

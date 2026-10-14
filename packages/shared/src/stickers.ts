@@ -1,6 +1,7 @@
 /** Namespaced values reuse message/reaction transport without colliding with native emoji. */
 export const STICKER_PREFIX = 'sticker:';
-export const MAX_STICKER_BYTES = 5 * 1024 * 1024;
+export const DEFAULT_MAX_STICKER_BYTES = 5 * 1024 * 1024;
+export const MAX_STICKER_BYTES = DEFAULT_MAX_STICKER_BYTES;
 /** Longest collection name, after trimming. */
 export const MAX_STICKER_NAME_LENGTH = 100;
 /** Most stickers one account keeps in its collection. */
@@ -75,6 +76,9 @@ export interface StickerPackSummary {
   status: StickerPackStatus;
   itemCount: number;
   isInstalled?: boolean;
+  reviewNotes?: string | null;
+  reviewedBy?: string | null;
+  reviewedAt?: number | null;
   createdAt: number;
   updatedAt: number;
 }

@@ -230,6 +230,6 @@
   "sticker_pack_not_found": "该表情包已不存在。",
   "sticker_pack_invalid_state": "该表情包当前状态不允许此操作。",
   "sticker_peer_blocked": "来自该实例的表情同步已被屏蔽。",
-  "sticker_pack_limit_exceeded": "该表情包已达到最大表情数量上限。"
-
+  "sticker_pack_limit_exceeded": "该表情包已达到最大表情数量上限。",
+  "sticker_limit_out_of_range": "表情大小限制必须介于 {{min}} 到 {{max}} MB 之间。"
 }

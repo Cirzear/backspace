@@ -1154,6 +1154,7 @@ export interface InstanceAdminSettings {
   gifApiKey?: string;
   gifEnabled?: boolean;
   maxUploadSizeMb: number;
+  maxStickerSizeMb: number;
   federationRelayEnabled: boolean;
   federationRelayTtlDays: number;
   defaultAutoRotateIntervalDays: number;
@@ -1260,6 +1261,10 @@ export interface InstanceInfoResponse {
    * Defaults to MAX_MESSAGE_LENGTH (10000).
    */
   maxMessageLength?: number;
+  /**
+   * Maximum custom sticker / emoji upload size in megabytes.
+   */
+  maxStickerSizeMb?: number;
 }
 
 /**

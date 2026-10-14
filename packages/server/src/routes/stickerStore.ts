@@ -16,7 +16,7 @@ import { getDb, schema } from '../db/index.js';
 import { authenticate, requireAdmin } from '../utils/auth.js';
 import { buildFederationHeaders, getOurOrigin } from '../utils/federationAuth.js';
 import { sendError } from '../utils/httpErrors.js';
-import { encodeSticker, saveStickerAsset, StickerImageError, tokenFor } from './stickers.js';
+import { encodeSticker, getMaxStickerSizeBytes, saveStickerAsset, StickerImageError, tokenFor } from './stickers.js';
 import { syncRemotePack } from '../utils/stickerSync.js';
 
 const MAX_STICKER_MB = MAX_STICKER_BYTES / (1024 * 1024);
@@ -128,11 +128,23 @@ export async function stickerStoreRoutes(app: FastifyInstance): Promise<void> {
       }
     }
 
-    const version = db.select().from(schema.stickerPackVersions)
-      .where(and(
-        eq(schema.stickerPackVersions.packId, pack.id),
-        eq(schema.stickerPackVersions.version, pack.currentVersion),
-      )).get();
+    let version = (pack.status === 'pending_review' || pack.status === 'rejected')
+      ? db.select().from(schema.stickerPackVersions)
+          .where(and(
+            eq(schema.stickerPackVersions.packId, pack.id),
+            or(eq(schema.stickerPackVersions.status, 'pending_review'), eq(schema.stickerPackVersions.status, 'rejected')),
+          ))
+          .orderBy(desc(schema.stickerPackVersions.version))
+          .get()
+      : null;
+
+    if (!version) {
+      version = db.select().from(schema.stickerPackVersions)
+        .where(and(
+          eq(schema.stickerPackVersions.packId, pack.id),
+          eq(schema.stickerPackVersions.version, pack.currentVersion),
+        )).get();
+    }
 
     const items = version ? db.select().from(schema.stickerPackItems)
       .where(and(
@@ -387,6 +399,9 @@ export async function stickerStoreRoutes(app: FastifyInstance): Promise<void> {
         currentVersion: pack.currentVersion,
         status: pack.status as any,
         itemCount: items.length,
+        reviewNotes: pack.reviewNotes,
+        reviewedBy: pack.reviewedBy,
+        reviewedAt: pack.reviewedAt,
         createdAt: pack.createdAt,
         updatedAt: pack.updatedAt,
       };
@@ -469,7 +484,16 @@ export async function stickerStoreRoutes(app: FastifyInstance): Promise<void> {
    */
   app.post<{ Params: { id: string }; Body: { name: string; image: string } }>('/api/sticker-packs/:id/items', {
     preHandler: authenticate,
-    bodyLimit: Math.ceil(MAX_STICKER_BYTES / 3) * 4 + 4096,
+    bodyLimit: 500 * 1024 * 1024,
+    preParsing: async (request, reply, payload) => {
+      const maxBytes = getMaxStickerSizeBytes();
+      const maxBodyLimit = Math.ceil(maxBytes / 3) * 4 + 4096;
+      const contentLength = Number(request.headers['content-length']);
+      if (contentLength && contentLength > maxBodyLimit) {
+        return reply.code(413).send({ statusCode: 413, error: 'Payload Too Large', message: 'Request body is too large' });
+      }
+      return payload;
+    },
     schema: {
       body: {
         type: 'object',
@@ -522,12 +546,18 @@ export async function stickerStoreRoutes(app: FastifyInstance): Promise<void> {
     const bytes = Buffer.from(request.body.image, 'base64');
     if (bytes.toString('base64') !== request.body.image) return sendError(reply, 400, 'validation_failed');
 
+    const maxBytes = getMaxStickerSizeBytes();
+    const maxMb = Math.round(maxBytes / (1024 * 1024));
+    if (bytes.length > maxBytes) {
+      return reply.code(413).send({ statusCode: 413, error: 'Payload Too Large', message: 'Request body is too large' });
+    }
+
     let encoded: Buffer;
     try {
-      encoded = await encodeSticker(bytes);
+      encoded = await encodeSticker(bytes, maxBytes);
     } catch (error) {
       if (error instanceof StickerImageError) {
-        return sendError(reply, 400, 'sticker_invalid_image', { max: MAX_STICKER_MB });
+        return sendError(reply, 400, 'sticker_invalid_image', { max: maxMb });
       }
       throw error;
     }

@@ -13,6 +13,7 @@ import {
 import { api } from '../../api/client';
 import { describeError } from '../../i18n/errors';
 import { usePortalContainer } from '../../hooks/usePortalContainer';
+import { useHomeInstanceInfo } from '../../hooks/useHomeInstanceInfo';
 import { registerNativeDismiss } from '../../mobile/nativeBack';
 import './stickers.css';
 
@@ -24,6 +25,9 @@ interface StickerPackManageModalProps {
 
 export function StickerPackManageModal({ packId, onClose, onSaved }: StickerPackManageModalProps) {
   const { t } = useTranslation(['chat', 'common']);
+  const homeInfo = useHomeInstanceInfo();
+  const maxMb = homeInfo?.maxStickerSizeMb ?? 5;
+  const maxBytes = maxMb * 1024 * 1024;
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [name, setName] = useState('');
@@ -91,8 +95,8 @@ export function StickerPackManageModal({ packId, onClose, onSaved }: StickerPack
     setUploadingItem(true);
 
     for (const file of filesToUpload) {
-      if (file.size > MAX_STICKER_BYTES) {
-        setError(t('stickers.invalidSize'));
+      if (file.size > maxBytes) {
+        setError(t('stickers.invalidSize', { max: maxMb }));
         continue;
       }
 
@@ -180,6 +184,7 @@ export function StickerPackManageModal({ packId, onClose, onSaved }: StickerPack
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.key === 'Escape' && !submitting) {
+      e.stopPropagation();
       onClose();
     }
   }, [onClose, submitting]);
@@ -195,7 +200,8 @@ export function StickerPackManageModal({ packId, onClose, onSaved }: StickerPack
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-[210] flex items-center justify-center animate-fade-in"
+      className="fixed inset-0 z-[520] flex items-center justify-center animate-fade-in"
+      onMouseDown={e => e.stopPropagation()}
     >
       <div className="absolute inset-0 bg-black/50" onClick={() => { if (!submitting) onClose(); }} />
       <div className="relative w-full max-w-lg mx-4 glass-modal rounded-xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden animate-slide-up">

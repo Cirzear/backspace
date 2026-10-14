@@ -65,7 +65,6 @@ export const users = sqliteTable('users', {
 }));
 
 export const spaces = sqliteTable('spaces', {
-  ownerTitle: text('owner_title'),
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   icon: text('icon'),
@@ -114,7 +113,6 @@ export const channels = sqliteTable('channels', {
 }));
 
 export const messages = sqliteTable('messages', {
-  type: text('type', { enum: ['user', 'system'] }).notNull().default('user'),
   id: text('id').primaryKey(),
   channelId: text('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
   userId: text('user_id').notNull().references(() => users.id),
@@ -414,6 +412,7 @@ export const instanceSettings = sqliteTable('instance_settings', {
   bitrateMatrixOverrides: text('bitrate_matrix_overrides'),
   allowCustomBitrate: integer('allow_custom_bitrate').notNull().default(1),
   maxUploadSizeBytes: integer('max_upload_size_bytes'),
+  maxStickerSizeBytes: integer('max_sticker_size_bytes'),
   federationRelayEnabled: integer('federation_relay_enabled').notNull().default(1),
   federationRelayTtlDays: integer('federation_relay_ttl_days').notNull().default(30),
   defaultAutoRotateIntervalDays: integer('default_auto_rotate_interval_days').notNull().default(90),

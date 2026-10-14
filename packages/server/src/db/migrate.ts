@@ -171,5 +171,12 @@ export function healLegacyColumns(db: Database.Database): void {
       db.exec("ALTER TABLE `spaces` ADD `owner_title` text DEFAULT NULL");
     }
   }
+  const settingsTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'instance_settings'").get();
+  if (settingsTable) {
+    const cols = db.prepare("PRAGMA table_info('instance_settings')").all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === 'max_sticker_size_bytes')) {
+      db.exec("ALTER TABLE `instance_settings` ADD `max_sticker_size_bytes` integer DEFAULT NULL");
+    }
+  }
 }
 

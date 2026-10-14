@@ -246,6 +246,13 @@
       "when": 1792000000000,
       "tag": "0034_federated_sticker_store",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1792100000000,
+      "tag": "0035_max_sticker_size",
+      "breakpoints": true
     }
   ]
 }

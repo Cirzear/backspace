@@ -302,6 +302,7 @@ export const config = {
   tusStragglerSweepMs: envInt('TUS_STRAGGLER_SWEEP_HOURS', 48) * 60 * 60 * 1000,
   dbPath: env('DB_PATH', resolve(__dirname, '../../../data/backspace.db')),
   maxUploadSize: envInt('MAX_UPLOAD_SIZE', 104857600),
+  maxStickerSize: envInt('MAX_STICKER_SIZE', 5242880),
   maxMessageLength: envCount('MAX_MESSAGE_LENGTH', MAX_MESSAGE_LENGTH),
   registrationOpen: envBool('REGISTRATION_OPEN', true),
 
