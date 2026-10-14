@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { MAX_PERSONAL_STICKERS, stickerUrl, type PersonalSticker } from '@backspace/shared/src/stickers';
+import { MAX_PERSONAL_STICKERS, stickerUrl, type PersonalSticker, type StickerPackDetail } from '@backspace/shared/src/stickers';
 import { api } from '../../api/client';
 import { useAuthStore } from '../../stores/authStore';
 import { useContextMenuStore } from '../../stores/contextMenuStore';
 import { StickerUploadForm } from './StickerUploadForm';
+import { StickerStoreModal } from './StickerStoreModal';
 import { describeError } from '../../i18n/errors';
 import './stickers.css';
+
 
 interface StickerRenameDialogProps {
   sticker: PersonalSticker;
@@ -253,10 +255,124 @@ function StickerGrid({
   );
 }
 
+interface PackStickerGridProps {
+  pack: StickerPackDetail;
+  onSelect: (token: string) => void;
+}
+
+function PackStickerGrid({ pack, onSelect }: PackStickerGridProps) {
+  const { t } = useTranslation(['chat', 'common']);
+  const [search, setSearch] = useState('');
+  const query = search.trim().toLowerCase();
+  const items = pack.items || [];
+  const filtered = query ? items.filter(it => it.name.toLowerCase().includes(query)) : items;
+
+  return (
+    <>
+      <div className="flex shrink-0 items-center justify-between gap-2 px-4 pt-3 pb-2">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold truncate">{pack.name}</h3>
+          <p className="text-[11px] text-txt-tertiary truncate">
+            {pack.creatorName || (pack.originType === 'replica' ? pack.sourceInstance : '')}
+          </p>
+        </div>
+        <span className="text-xs font-normal text-txt-tertiary shrink-0">
+          {items.length}
+        </span>
+      </div>
+
+      {items.length > 0 && (
+        <div className="px-4 pb-2.5 shrink-0">
+          <div className="relative flex items-center">
+            <svg
+              className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-txt-tertiary"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              aria-hidden="true"
+            >
+              <circle cx="11" cy="11" r="8" />
+              <path d="m21 21-4.35-4.35" />
+            </svg>
+            <input
+              type="search"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder={t('stickers.search')}
+              aria-label={t('stickers.search')}
+              className="input-search w-full pl-8 pr-7 py-1.5 text-xs"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="absolute right-2 text-txt-tertiary hover:text-txt-primary"
+                aria-label={t('common:actions.clear')}
+              >
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {items.length === 0 ? (
+        <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin px-3 pb-3">
+          <div className="flex h-40 flex-col items-center justify-center text-center px-4">
+            <p className="text-xs text-txt-tertiary">{t('stickers.empty')}</p>
+          </div>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin px-3 pb-3">
+          <div className="flex h-40 flex-col items-center justify-center text-center px-4">
+            <p className="text-xs text-txt-tertiary">{t('stickers.noResults')}</p>
+          </div>
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin px-3 pb-3">
+          <div className="grid grid-cols-4 gap-1.5">
+            {filtered.map(item => {
+              const url = stickerUrl(item.token);
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onSelect(item.token)}
+                  title={item.name}
+                  aria-label={item.name}
+                  className="sticker-tile group w-full p-2"
+                >
+                  {url ? (
+                    <img
+                      src={url}
+                      alt={item.name}
+                      className="aspect-square w-full object-contain transition-transform group-hover:scale-105"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="aspect-square w-full rounded bg-interactive-hover" />
+                  )}
+                  <span className="mt-1 block truncate text-[10px] text-txt-tertiary">{item.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 export function StickerPicker({ onSelect, mobile = false }: { onSelect: (token: string) => void; mobile?: boolean }) {
   const { t } = useTranslation(['chat', 'common']);
   const userId = useAuthStore(s => s.user?.id);
   const [items, setItems] = useState<PersonalSticker[]>([]);
+  const [installedPacks, setInstalledPacks] = useState<StickerPackDetail[]>([]);
+  const [activeTab, setActiveTab] = useState<'personal' | string>('personal');
+  const [showStore, setShowStore] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -265,6 +381,16 @@ export function StickerPicker({ onSelect, mobile = false }: { onSelect: (token: 
   const [notice, setNotice] = useState('');
   const [search, setSearch] = useState('');
   const [editingSticker, setEditingSticker] = useState<PersonalSticker | null>(null);
+
+  const loadInstalledPacks = () => {
+    if (!api.stickerStore?.myPacks) return;
+    api.stickerStore.myPacks()
+      .then(packs => {
+        setInstalledPacks(packs);
+        setActiveTab(prev => (prev === 'personal' || packs.some(p => p.id === prev) ? prev : 'personal'));
+      })
+      .catch(() => {});
+  };
 
   useEffect(() => {
     let active = true;
@@ -279,8 +405,10 @@ export function StickerPicker({ onSelect, mobile = false }: { onSelect: (token: 
     api.stickers.list().then(rows => { if (active) setItems(rows); })
       .catch((err: unknown) => { if (active) setError(describeError(err)); })
       .finally(() => { if (active) setLoading(false); });
+    loadInstalledPacks();
     return () => { active = false; };
   }, [userId]);
+
 
   const remove = async (id: string) => {
     setRemoving(id);
@@ -306,6 +434,8 @@ export function StickerPicker({ onSelect, mobile = false }: { onSelect: (token: 
   const filteredItems = query
     ? items.filter(item => item.name.toLowerCase().includes(query))
     : items;
+
+  const currentPack = activeTab !== 'personal' ? installedPacks.find(p => p.id === activeTab) : null;
 
   return (
     <div
@@ -339,93 +469,167 @@ export function StickerPicker({ onSelect, mobile = false }: { onSelect: (token: 
         />
       ) : (
         <>
-          <div className="flex shrink-0 items-center justify-between gap-2 px-4 pt-3 pb-2">
-            <h3 className="text-sm font-semibold">
-              {t('stickers.title')}{' '}
-              <span className="ml-1 text-xs font-normal text-txt-tertiary">{!loading && items.length}</span>
-            </h3>
-            <div className="flex items-center gap-1">
-              {items.length > 0 && (
-                <button
-                  type="button"
-                  disabled={!!removing}
-                  aria-pressed={managing}
-                  className="sticker-secondary-button"
-                  onClick={() => setManaging(!managing)}
-                >
-                  {t(managing ? 'stickers.done' : 'stickers.manage')}
-                </button>
-              )}
-              <button
-                type="button"
-                disabled={loading || !!removing || full}
-                onClick={startUpload}
-                className="sticker-primary-button"
-              >
-                <span aria-hidden="true" className="text-lg leading-none">+</span>
-                {t('stickers.upload')}
-              </button>
-            </div>
-          </div>
-          <p className="px-4 pb-2 text-xs text-txt-tertiary">
-            {t(managing ? 'stickers.removeHint' : full ? 'stickers.full' : 'stickers.collectionHint')}
-          </p>
-
-          {items.length > 0 && (
-            <div className="px-4 pb-2.5 shrink-0">
-              <div className="relative flex items-center">
-                <svg
-                  className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-txt-tertiary"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  aria-hidden="true"
-                >
-                  <circle cx="11" cy="11" r="8" />
-                  <path d="m21 21-4.35-4.35" />
-                </svg>
-                <input
-                  type="search"
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  placeholder={t('stickers.search')}
-                  aria-label={t('stickers.search')}
-                  className="input-search w-full pl-8 pr-7 py-1.5 text-xs"
-                />
-                {search && (
+          {activeTab === 'personal' ? (
+            <>
+              <div className="flex shrink-0 items-center justify-between gap-2 px-4 pt-3 pb-2">
+                <h3 className="text-sm font-semibold">
+                  {t('stickers.title')}{' '}
+                  <span className="ml-1 text-xs font-normal text-txt-tertiary">{!loading && items.length}</span>
+                </h3>
+                <div className="flex items-center gap-1">
+                  {items.length > 0 && (
+                    <button
+                      type="button"
+                      disabled={!!removing}
+                      aria-pressed={managing}
+                      className="sticker-secondary-button"
+                      onClick={() => setManaging(!managing)}
+                    >
+                      {t(managing ? 'stickers.done' : 'stickers.manage')}
+                    </button>
+                  )}
                   <button
                     type="button"
-                    onClick={() => setSearch('')}
-                    className="absolute right-2 text-txt-tertiary hover:text-txt-primary"
-                    aria-label={t('common:actions.clear')}
+                    disabled={loading || !!removing || full}
+                    onClick={startUpload}
+                    className="sticker-primary-button"
                   >
-                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M18 6 6 18M6 6l12 12" />
-                    </svg>
+                    <span aria-hidden="true" className="text-lg leading-none">+</span>
+                    {t('stickers.upload')}
                   </button>
-                )}
+                </div>
               </div>
+              <p className="px-4 pb-2 text-xs text-txt-tertiary">
+                {t(managing ? 'stickers.removeHint' : full ? 'stickers.full' : 'stickers.collectionHint')}
+              </p>
+
+              {items.length > 0 && (
+                <div className="px-4 pb-2.5 shrink-0">
+                  <div className="relative flex items-center">
+                    <svg
+                      className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-txt-tertiary"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      aria-hidden="true"
+                    >
+                      <circle cx="11" cy="11" r="8" />
+                      <path d="m21 21-4.35-4.35" />
+                    </svg>
+                    <input
+                      type="search"
+                      value={search}
+                      onChange={e => setSearch(e.target.value)}
+                      placeholder={t('stickers.search')}
+                      aria-label={t('stickers.search')}
+                      className="input-search w-full pl-8 pr-7 py-1.5 text-xs"
+                    />
+                    {search && (
+                      <button
+                        type="button"
+                        onClick={() => setSearch('')}
+                        className="absolute right-2 text-txt-tertiary hover:text-txt-primary"
+                        aria-label={t('common:actions.clear')}
+                      >
+                        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M18 6 6 18M6 6l12 12" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {error && <p role="alert" className="mx-4 mb-3 rounded-lg bg-accent-rose/10 px-3 py-2 text-xs text-txt-danger">{error}</p>}
+              {notice && <p role="status" className="mx-4 mb-2 text-xs text-txt-positive">{notice}</p>}
+
+              <StickerGrid
+                items={items}
+                filteredItems={filteredItems}
+                loading={loading}
+                error={error}
+                managing={managing}
+                removing={removing}
+                onSelect={onSelect}
+                onStartRename={setEditingSticker}
+                onRemove={id => void remove(id)}
+                onStartUpload={startUpload}
+              />
+
+              <div className="shrink-0 border-t border-border-soft px-4 py-1.5 text-[11px] text-txt-tertiary">{t('stickers.limits')}</div>
+            </>
+          ) : currentPack ? (
+            <PackStickerGrid pack={currentPack} onSelect={onSelect} />
+          ) : (
+            <div className="flex-1 flex items-center justify-center p-4">
+              <p className="text-xs text-txt-tertiary">{t('stickers.empty')}</p>
             </div>
           )}
 
-          {error && <p role="alert" className="mx-4 mb-3 rounded-lg bg-accent-rose/10 px-3 py-2 text-xs text-txt-danger">{error}</p>}
-          {notice && <p role="status" className="mx-4 mb-2 text-xs text-txt-positive">{notice}</p>}
+          {/* Bottom Tabs & Store Button */}
+          <div className="shrink-0 flex items-center justify-between border-t border-border-soft px-3 py-1.5 bg-surface-base/50">
+            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5">
+              {/* Personal Stickers tab */}
+              <button
+                type="button"
+                onClick={() => setActiveTab('personal')}
+                title={t('stickers.title')}
+                aria-label={t('stickers.title')}
+                className={`flex h-7 w-7 items-center justify-center rounded-lg transition-colors ${
+                  activeTab === 'personal'
+                    ? 'bg-interactive-active text-accent-primary shadow-sm'
+                    : 'text-txt-tertiary hover:bg-interactive-hover hover:text-txt-primary'
+                }`}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                </svg>
+              </button>
 
-          <StickerGrid
-            items={items}
-            filteredItems={filteredItems}
-            loading={loading}
-            error={error}
-            managing={managing}
-            removing={removing}
-            onSelect={onSelect}
-            onStartRename={setEditingSticker}
-            onRemove={id => void remove(id)}
-            onStartUpload={startUpload}
-          />
+              {/* Installed packs tabs */}
+              {installedPacks.map(pack => {
+                const cover = pack.coverUrl || (pack.items?.[0] ? stickerUrl(pack.items[0].token) : null);
+                const isActive = activeTab === pack.id;
+                return (
+                  <button
+                    key={pack.id}
+                    type="button"
+                    onClick={() => setActiveTab(pack.id)}
+                    title={pack.name}
+                    aria-label={pack.name}
+                    className={`flex h-7 w-7 items-center justify-center rounded-lg overflow-hidden transition-colors ${
+                      isActive
+                        ? 'bg-interactive-active ring-1 ring-accent-primary text-txt-primary'
+                        : 'opacity-70 hover:opacity-100 hover:bg-interactive-hover'
+                    }`}
+                  >
+                    {cover ? (
+                      <img src={cover} alt={pack.name} className="h-5 w-5 object-contain" />
+                    ) : (
+                      <span className="text-[11px] font-bold">{pack.name[0]}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
 
-          <div className="shrink-0 border-t border-border-soft px-4 py-2.5 text-[11px] text-txt-tertiary">{t('stickers.limits')}</div>
+            {/* Sticker Store modal button */}
+            <button
+              type="button"
+              onClick={() => setShowStore(true)}
+              title={t('stickers.store')}
+              aria-label={t('stickers.store')}
+              className="flex h-7 px-2 items-center gap-1.5 rounded-lg text-xs font-medium text-accent-primary hover:bg-accent-primary/10 transition-colors shrink-0 ml-1"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <path d="M16 10a4 4 0 0 1-8 0" />
+              </svg>
+              <span className="hidden sm:inline">{t('stickers.store')}</span>
+            </button>
+          </div>
 
           {editingSticker && (
             <StickerRenameDialog
@@ -434,6 +638,13 @@ export function StickerPicker({ onSelect, mobile = false }: { onSelect: (token: 
               onRenamed={updated => {
                 setItems(rows => rows.map(r => r.id === updated.id ? { ...r, name: updated.name } : r));
               }}
+            />
+          )}
+
+          {showStore && (
+            <StickerStoreModal
+              onClose={() => setShowStore(false)}
+              onPacksChanged={loadInstalledPacks}
             />
           )}
         </>

@@ -180,6 +180,11 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   sticker_not_local: 'Only stickers from this instance can be added to a collection',
   sticker_not_found: 'Sticker not found',
   sticker_collection_full: 'A sticker collection holds at most {{max}} stickers',
+  // federated sticker store
+  sticker_pack_not_found: 'Sticker pack not found',
+  sticker_pack_invalid_state: 'Sticker pack is not in a valid state for this action',
+  sticker_peer_blocked: 'Sticker synchronization is blocked for this peer',
+  sticker_pack_limit_exceeded: 'Sticker pack has reached the maximum number of stickers',
   // spaces
   space_owner_title_invalid: 'Owner titles can be 1 to {{max}} characters on one line, with at least one visible character and no control characters.',
   member_nickname_invalid: 'Nicknames can be at most {{max}} characters on one line, with at least one visible character and no control characters.',

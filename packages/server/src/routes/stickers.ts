@@ -15,7 +15,7 @@ import { stickerAssetPath as assetPath } from '../utils/stickerAssets.js';
 import { sendError } from '../utils/httpErrors.js';
 import { createFixedWindowLimit } from '../utils/fixedWindowLimit.js';
 
-const tokenFor = (id: string) => `${STICKER_PREFIX}${getOurOrigin()}/api/stickers/assets/${id}.webp`;
+export const tokenFor = (id: string) => `${STICKER_PREFIX}${getOurOrigin()}/api/stickers/assets/${id}.webp`;
 const MAX_STICKER_MB = MAX_STICKER_BYTES / (1024 * 1024);
 /** Stored stickers fit this box; the largest place one is shown is a 240 px message row. */
 const MAX_STICKER_DIMENSION = 512;
@@ -67,6 +67,22 @@ function collectSticker(input: { userId: string; id: string; name: string }): Pe
 }
 
 /**
+ * Persist an encoded sticker asset atomically and record it in sticker_assets.
+ */
+export async function saveStickerAsset(encoded: Buffer): Promise<string> {
+  const id = createHash('sha256').update(encoded).digest('hex');
+  const now = Date.now();
+  getDb().insert(schema.stickerAssets).values({ id, createdAt: now })
+    .onConflictDoUpdate({ target: schema.stickerAssets.id, set: { createdAt: now } }).run();
+  await mkdir(path.dirname(assetPath(id)), { recursive: true });
+  const temporaryPath = `${assetPath(id)}.${randomUUID()}.tmp`;
+  await writeFile(temporaryPath, encoded);
+  await rename(temporaryPath, assetPath(id));
+  return id;
+}
+
+/**
+
  * Re-encode instead of trusting MIME/extension; decode all frames to preserve
  * animations safely. The result fits MAX_STICKER_DIMENSION and is refused
  * when it is still larger than an upload may be, so a stored asset is never
@@ -125,22 +141,12 @@ export async function stickerRoutes(app: FastifyInstance): Promise<void> {
       if (error instanceof StickerImageError) return sendError(reply, 400, 'sticker_invalid_image', { max: MAX_STICKER_MB });
       throw error;
     }
-    const id = createHash('sha256').update(encoded).digest('hex');
-    // The row is written, or made fresh again, before the file: the janitor
-    // never removes an asset inside its grace period, so it cannot delete this
-    // file between the write below and the collection entry after it.
-    const now = Date.now();
-    getDb().insert(schema.stickerAssets).values({ id, createdAt: now })
-      .onConflictDoUpdate({ target: schema.stickerAssets.id, set: { createdAt: now } }).run();
-    await mkdir(path.dirname(assetPath(id)), { recursive: true });
-    // Publish atomically: concurrent duplicate uploads must never expose a truncated image.
-    const temporaryPath = `${assetPath(id)}.${randomUUID()}.tmp`;
-    await writeFile(temporaryPath, encoded);
-    await rename(temporaryPath, assetPath(id));
+    const id = await saveStickerAsset(encoded);
     const sticker = collectSticker({ userId: request.userId, id, name: name.trim() });
     if (!sticker) return sendError(reply, 409, 'sticker_collection_full', { max: MAX_PERSONAL_STICKERS });
     return sticker;
   });
+
 
   app.post<{ Params: { id: string }; Body: { token: string; name: string } }>('/api/stickers/:id/collect', {
     preHandler: authenticate,

@@ -12,3 +12,4 @@ export function StickerMessage({ token }: { token: string }) {
     </button>
   </div>;
 }
+

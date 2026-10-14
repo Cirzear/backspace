@@ -40,3 +40,83 @@ export function stickerIdOf(value: string): string | null {
   if (!url) return null;
   return /\/api\/stickers\/assets\/([a-f0-9]{64})\.webp$/.exec(url)?.[1] ?? null;
 }
+
+/** Longest sticker pack name. */
+export const MAX_STICKER_PACK_NAME_LENGTH = 100;
+
+/** Longest sticker pack description. */
+export const MAX_STICKER_PACK_DESC_LENGTH = 500;
+/** Maximum number of stickers per sticker pack. */
+export const MAX_STICKERS_PER_PACK = 100;
+
+export type StickerPackOriginType = 'source' | 'replica';
+export type StickerPackStatus =
+  | 'draft'
+  | 'pending_review'
+  | 'approved'
+  | 'rejected'
+  | 'deleted'
+  | 'active'
+  | 'disabled'
+  | 'blocked';
+
+export interface StickerPackSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  creatorId: string | null;
+  creatorName: string | null;
+  coverAssetId: string | null;
+  coverUrl: string | null;
+  originType: StickerPackOriginType;
+  sourceInstance: string | null;
+  sourcePackId: string | null;
+  currentVersion: number;
+  status: StickerPackStatus;
+  itemCount: number;
+  isInstalled?: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface StickerPackItem {
+  id: string;
+  packId: string;
+  versionId: string;
+  assetId: string;
+  name: string;
+  token: string;
+  sortOrder: number;
+  status: 'active' | 'deleted';
+  createdAt: number;
+}
+
+export interface StickerPackDetail extends StickerPackSummary {
+  reviewNotes: string | null;
+  reviewedBy: string | null;
+  reviewedAt: number | null;
+  items: StickerPackItem[];
+}
+
+export interface StickerPeerPolicy {
+  id: string;
+  peerOrigin: string;
+  policy: 'allow' | 'block';
+  autoSync: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * Resolves a sticker asset URL to a local origin endpoint if the asset is known or local,
+ * otherwise falls back to the canonical token URL.
+ */
+export function resolveStickerAssetUrl(token: string, localOrigin?: string): string | null {
+  const assetId = stickerIdOf(token);
+  if (assetId && localOrigin) {
+    const origin = localOrigin.replace(/\/+$/, '');
+    return `${origin}/api/stickers/assets/${assetId}.webp`;
+  }
+  return stickerUrl(token);
+}
+

@@ -226,5 +226,10 @@
   "sticker_invalid_image": "请上传不超过 {{max}} MB 的 PNG、JPEG、WebP 或 GIF 图片。",
   "sticker_not_local": "暂时无法将其他服务器的表情添加到“我的表情”。",
   "sticker_not_found": "该表情已不存在。",
-  "sticker_collection_full": "“我的表情”最多可保存 {{max}} 个。请先移除一个再添加。"
+  "sticker_collection_full": "“我的表情”最多可保存 {{max}} 个。请先移除一个再添加。",
+  "sticker_pack_not_found": "该表情包已不存在。",
+  "sticker_pack_invalid_state": "该表情包当前状态不允许此操作。",
+  "sticker_peer_blocked": "来自该实例的表情同步已被屏蔽。",
+  "sticker_pack_limit_exceeded": "该表情包已达到最大表情数量上限。"
+
 }

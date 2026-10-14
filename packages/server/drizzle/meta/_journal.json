@@ -239,6 +239,13 @@
       "when": 1791810000000,
       "tag": "0033_messages_unread_index_with_type",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1792000000000,
+      "tag": "0034_federated_sticker_store",
+      "breakpoints": true
     }
   ]
 }
