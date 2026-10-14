@@ -349,6 +349,7 @@ export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModal
                             </span>
                           </div>
                           <p className="text-xs text-txt-tertiary truncate">
+                            {/* i18n-check: allow-literal */}
                             v{pack.currentVersion} · {t('stickers.stickersCount', { count: pack.itemCount })}
                           </p>
                         </div>
@@ -405,7 +406,7 @@ export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModal
               <div>
                 <h4 className="text-base font-bold text-txt-primary">{previewPack.name}</h4>
                 <p className="text-xs text-txt-tertiary mt-0.5">
-                  {previewPack.creatorName ? `by ${previewPack.creatorName}` : ''}
+                  {previewPack.creatorName || ''}
                   {previewPack.sourceInstance ? ` · ${previewPack.sourceInstance}` : ''}
                 </p>
                 {previewPack.description && (

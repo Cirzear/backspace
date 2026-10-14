@@ -226,5 +226,9 @@
   "sticker_invalid_image": "Envie uma imagem PNG, JPEG, WebP ou GIF de no máximo {{max}} MB.",
   "sticker_not_local": "Ainda não é possível adicionar à sua coleção figurinhas de outro servidor.",
   "sticker_not_found": "Essa figurinha não existe mais.",
-  "sticker_collection_full": "Sua coleção está cheia com {{max}} figurinhas. Remova uma para adicionar outra."
+  "sticker_collection_full": "Sua coleção está cheia com {{max}} figurinhas. Remova uma para adicionar outra.",
+  "sticker_pack_not_found": "Esse pacote de figurinhas não existe mais.",
+  "sticker_pack_invalid_state": "Esse pacote de figurinhas não está em um estado válido para esta ação.",
+  "sticker_peer_blocked": "A sincronização de figurinhas está bloqueada para esta instância.",
+  "sticker_pack_limit_exceeded": "O pacote de figurinhas atingiu o limite de figurinhas."
 }
