@@ -79,7 +79,7 @@ describe('protected message fragments', () => {
 
     // Simulates an AI model converting __BS_...__ to **BS_...** and adding spaces __ BS_... __
     const keys = [...prepared.protectedParts.keys()];
-    let mangled = prepared.text
+    const mangled = prepared.text
       .replace(keys[0]!, keys[0]!.replace(/__/g, '**'))
       .replace(keys[1]!, `__ ${keys[1]!.slice(2, -2)} __`);
     expect(restoreText(mangled, prepared)).toBe(source);

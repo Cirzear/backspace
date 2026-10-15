@@ -43,9 +43,10 @@ export function useMessageTranslation(input: { identity: string; text: string; e
   const anchorRef = useRef<HTMLDivElement>(null);
   const cancelManual = useRef<(() => void) | undefined>(undefined);
   const [visible, setVisible] = useState(false);
-  const eligible = eligibleMessage(input);
-  const automatic = !!settings?.preferences.automatic;
-  const watch = !!settings?.preferences.consent && (automatic || tracked);
+  const pluginEnabled = settings?.preferences.translationEnabled !== false;
+  const eligible = pluginEnabled && eligibleMessage(input);
+  const automatic = pluginEnabled && !!settings?.preferences.automatic;
+  const watch = pluginEnabled && !!settings?.preferences.consent && (automatic || tracked);
   useEffect(() => {
     if (entry?.state === 'done' && entry.result.kind === 'translated') trackTranslatedMessage(input.identity);
   }, [entry, input.identity]);
@@ -117,7 +118,7 @@ export function useMessageTranslation(input: { identity: string; text: string; e
       automatic: false,
     });
   };
-  const isTranslated = entry?.state === 'done' && entry.result.kind === 'translated';
+  const isTranslated = pluginEnabled && entry?.state === 'done' && entry.result.kind === 'translated';
   const [collapsed, setCollapsed] = useState(false);
   useEffect(() => {
     setCollapsed(false);

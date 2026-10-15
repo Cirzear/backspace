@@ -14,7 +14,7 @@ export async function translationRoutes(app: FastifyInstance): Promise<void> {
   const service = new TranslationService(new TranslationVault(storage.vault), serverProviderFetch, storage.cache);
   app.post('/api/translation/command', {
     preHandler: authenticate,
-    bodyLimit: 48 * 1024,
+    bodyLimit: 1024 * 1024,
     config: { rateLimit: { max: 90, timeWindow: '1 minute' } },
   }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');

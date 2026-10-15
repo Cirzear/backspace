@@ -1,6 +1,6 @@
 import type { TranslationReply } from '../../shared/src/translation';
 import { listModels, testConnection } from './connectionDiagnostics';
-import { translateAi } from './aiProtocols';
+import { generateAi, translateAi } from './aiProtocols';
 import { translateAnonymous } from './anonymousProviders';
 import { protectText, restoreText, translationEligibility } from './textPolicy';
 import type { TranslationFetch } from './transport';
@@ -54,6 +54,8 @@ export class TranslationService {
           return await this.diagnose(scope, input);
         case 'translate':
           return await this.translate(scope, input);
+        case 'aiGenerate':
+          return await this.aiGenerate(scope, input);
         default:
           throw new TranslationError('invalid-input');
       }
@@ -147,6 +149,22 @@ export class TranslationService {
     // Save validated work even if presentation/revision changed while waiting, but never after consent withdrawal.
     if (this.vault.read(input.scope).preferences.consent) this.cache.set(input.scope, input.key, text);
     return text;
+  }
+  private async aiGenerate(scope: string, input: Record<string, unknown>): Promise<TranslationReply> {
+    const userPrompt = string(input.userPrompt, 100000);
+    const systemPrompt = input.systemPrompt ? string(input.systemPrompt, 5000) : undefined;
+    const connectionId = input.connectionId ? string(input.connectionId, 64) : null;
+    const data = this.vault.read(scope);
+    const targetId = connectionId ?? data.preferences.defaultConnection;
+    const connection = data.connections.find((c) => c.id === targetId);
+    if (!connection) throw new TranslationError('missing-connection');
+    const text = await generateAi({
+      connection,
+      systemPrompt,
+      userPrompt,
+      fetcher: this.fetcher,
+    });
+    return { ok: true, outputText: text };
   }
 }
 

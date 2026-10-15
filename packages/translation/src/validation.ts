@@ -1,4 +1,5 @@
 import type {
+  ComposerAction,
   ConnectionInput,
   ConnectionProbe,
   TranslationErrorCode,
@@ -64,7 +65,7 @@ export function baseUrl(value: unknown): string {
     throw new TranslationError('invalid-input');
   // A credential must never hide in URL userinfo, query parameters or fragments.
   if (url.username || url.password || url.search || url.hash) throw new TranslationError('invalid-input');
-  return url.href.replace(/\/+$/, '');
+  return url.href.replace(/\/+$/, '').replace(/\/(chat\/completions|responses|messages)$/, '').replace(/\/+$/, '');
 }
 export function connectionProbe(value: unknown): ConnectionProbe {
   const v = record(value);
@@ -87,6 +88,17 @@ export function connectionInput(value: unknown): ConnectionInput {
   const v = record(value);
   return { ...connectionProbe(value), name: string(v.name, 80), model: string(v.model, 160) };
 }
+export function composerActionInput(value: unknown): ComposerAction {
+  const v = record(value);
+  return {
+    id: string(v.id, 64),
+    label: string(v.label, 80),
+    icon: v.icon === undefined || v.icon === null ? undefined : string(v.icon, 16),
+    systemPrompt: string(v.systemPrompt, 4000),
+    enabled: Boolean(v.enabled),
+    isCustom: v.isCustom === undefined ? undefined : Boolean(v.isCustom),
+  };
+}
 export function preferencesInput(value: unknown): TranslationPreferences {
   const v = record(value);
   if (!TARGET_LANGUAGES.includes(v.targetLanguage as TranslationLanguage))
@@ -96,6 +108,13 @@ export function preferencesInput(value: unknown): TranslationPreferences {
   }
   const rawEngine = v.engine === null ? null : string(v.engine, 64);
   const engine = rawEngine === 'google-free' || rawEngine === 'microsoft-free' ? null : rawEngine;
+  let composerActions: ComposerAction[] | undefined;
+  if (v.composerActions !== undefined) {
+    if (!Array.isArray(v.composerActions) || v.composerActions.length > 50) {
+      throw new TranslationError('invalid-input');
+    }
+    composerActions = v.composerActions.map(composerActionInput);
+  }
   return {
     defaultConnection: v.defaultConnection === null ? null : string(v.defaultConnection, 64),
     engine,
@@ -103,5 +122,11 @@ export function preferencesInput(value: unknown): TranslationPreferences {
     automatic: v.automatic as boolean,
     showOriginal: v.showOriginal as boolean,
     consent: v.consent as boolean,
+    translationEnabled: v.translationEnabled !== undefined ? Boolean(v.translationEnabled) : true,
+    summarizerEnabled: Boolean(v.summarizerEnabled),
+    summarizerConnection: v.summarizerConnection ? string(v.summarizerConnection, 64) : null,
+    composerEnabled: Boolean(v.composerEnabled),
+    composerConnection: v.composerConnection ? string(v.composerConnection, 64) : null,
+    composerActions,
   };
 }

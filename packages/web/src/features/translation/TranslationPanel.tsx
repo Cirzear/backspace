@@ -9,6 +9,9 @@ import type {
 } from '@backspace/shared/translation';
 import { TranslationPreferenceControls } from './TranslationPreferenceControls';
 import { ConnectionEditor } from './ConnectionEditor';
+import { ComposerActionEditor } from './ComposerActionEditor';
+import { DEFAULT_COMPOSER_ACTIONS } from './composerPresets';
+import { Toggle } from '../../components/ui/Toggle';
 import { translationErrorText } from './errorText';
 import { useTranslationSettings } from './useMessageTranslation';
 import {
@@ -182,62 +185,198 @@ function ScopedTranslationPanel({ context }: { context: ReturnType<typeof useTra
                   <p className="text-xs text-txt-tertiary mt-1 leading-relaxed">{t('translationPluginDesc')}</p>
                 </div>
               </div>
-            </div>
-
-            <div className="pt-2 border-t border-white/[0.06]">
-              <TranslationPreferenceControls
-                preferences={preferences}
-                settings={settings}
-                busy={busy}
-                onChange={setPreferences}
-                onSave={() => void savePreferences()}
+              <Toggle
+                ariaLabel={t('translationPluginName')}
+                enabled={preferences.translationEnabled !== false}
+                disabled={busy}
+                onChange={(enabled) => {
+                  const updated = { ...preferences, translationEnabled: enabled };
+                  setPreferences(updated);
+                  void execute({ action: 'savePreferences', accountId, preferences: updated }).then((reply) => {
+                    if (reply.ok && 'settings' in reply && useTranslationStore.getState().scope === scope) {
+                      acceptTranslationSettings(reply.settings);
+                    }
+                  });
+                }}
               />
             </div>
 
-            {automaticError && (
-              <div role="alert" className="text-sm text-txt-danger pt-1">
-                {t('automaticPaused')} {translationErrorText(automaticError)}{' '}
-                <button className="underline" onClick={resumeAutomaticTranslation}>
-                  {t('resume')}
-                </button>
-              </div>
+            {preferences.translationEnabled !== false ? (
+              <>
+                <div className="pt-2 border-t border-white/[0.06]">
+                  <TranslationPreferenceControls
+                    preferences={preferences}
+                    settings={settings}
+                    busy={busy}
+                    onChange={setPreferences}
+                    onSave={() => void savePreferences()}
+                  />
+                </div>
+
+                {automaticError && (
+                  <div role="alert" className="text-sm text-txt-danger pt-1">
+                    {t('automaticPaused')} {translationErrorText(automaticError)}{' '}
+                    <button className="underline" onClick={resumeAutomaticTranslation}>
+                      {t('resume')}
+                    </button>
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="text-xs text-txt-tertiary pt-2 border-t border-white/[0.06]">{t('pluginDisabledHint')}</p>
             )}
           </div>
 
-          {/* Upcoming Plugin: Chat Summarizer */}
-          <div className="rounded-lg bg-white/[0.02] border border-white/[0.04] p-4 flex items-start justify-between gap-3 opacity-75">
-            <div className="flex items-start gap-3 min-w-0">
-              <div className="w-9 h-9 rounded-lg bg-white/[0.04] text-txt-tertiary flex items-center justify-center shrink-0 mt-0.5 border border-white/[0.06]">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z" />
-                </svg>
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-txt-secondary">{t('summarizerPluginName')}</span>
-                  <span className="glass-pill px-2 py-0.5 text-[10px] text-txt-tertiary">{t('comingSoon')}</span>
+          {/* Plugin: Chat Summarizer */}
+          <div className="rounded-lg bg-white/[0.03] border border-white/[0.06] p-4 space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3 min-w-0">
+                <div className="w-9 h-9 rounded-lg bg-accent-sky/10 text-accent-sky flex items-center justify-center shrink-0 mt-0.5 border border-accent-sky/20">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z" />
+                  </svg>
                 </div>
-                <p className="text-xs text-txt-tertiary mt-1 leading-relaxed">{t('summarizerPluginDesc')}</p>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-txt-primary">{t('summarizerPluginName')}</span>
+                    <span className="glass-pill px-2 py-0.5 text-[10px] text-accent-lavender font-medium">{t('builtInPlugin')}</span>
+                  </div>
+                  <p className="text-xs text-txt-tertiary mt-1 leading-relaxed">{t('summarizerPluginDesc')}</p>
+                </div>
               </div>
+              <Toggle
+                ariaLabel={t('summarizerPluginName')}
+                enabled={!!preferences.summarizerEnabled}
+                disabled={busy}
+                onChange={(enabled) => {
+                  const updated = { ...preferences, summarizerEnabled: enabled };
+                  setPreferences(updated);
+                  void execute({ action: 'savePreferences', accountId, preferences: updated }).then((reply) => {
+                    if (reply.ok && 'settings' in reply && useTranslationStore.getState().scope === scope) {
+                      acceptTranslationSettings(reply.settings);
+                    }
+                  });
+                }}
+              />
             </div>
+
+            {preferences.summarizerEnabled ? (
+              <div className="pt-2 border-t border-white/[0.06] space-y-3">
+                <label className="block text-xs font-medium text-txt-secondary">
+                  {t('pluginAiConnection')}
+                  <select
+                    className="input-standard mt-1.5 w-full"
+                    value={preferences.summarizerConnection ?? ''}
+                    onChange={(e) => {
+                      const updated = { ...preferences, summarizerConnection: e.target.value || null };
+                      setPreferences(updated);
+                    }}
+                  >
+                    <option value="">
+                      {preferences.defaultConnection
+                        ? `${t('inherit')} (${settings.connections.find((c) => c.id === preferences.defaultConnection)?.name ?? preferences.defaultConnection})`
+                        : t('none')}
+                    </option>
+                    {settings.connections.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    className="px-4 py-2 rounded bg-accent-primary hover:bg-accent-primary-hover text-sm font-medium text-white transition-colors disabled:opacity-50"
+                    onClick={() => void savePreferences()}
+                    disabled={busy}
+                  >
+                    {t('saveSummarizerSettings')}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-txt-tertiary pt-2 border-t border-white/[0.06]">{t('pluginDisabledHint')}</p>
+            )}
           </div>
 
-          {/* Upcoming Plugin: Composer Assistant */}
-          <div className="rounded-lg bg-white/[0.02] border border-white/[0.04] p-4 flex items-start justify-between gap-3 opacity-75">
-            <div className="flex items-start gap-3 min-w-0">
-              <div className="w-9 h-9 rounded-lg bg-white/[0.04] text-txt-tertiary flex items-center justify-center shrink-0 mt-0.5 border border-white/[0.06]">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
-                </svg>
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-txt-secondary">{t('composerPluginName')}</span>
-                  <span className="glass-pill px-2 py-0.5 text-[10px] text-txt-tertiary">{t('comingSoon')}</span>
+          {/* Plugin: Composer Assistant */}
+          <div className="rounded-lg bg-white/[0.03] border border-white/[0.06] p-4 space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3 min-w-0">
+                <div className="w-9 h-9 rounded-lg bg-accent-lavender/10 text-accent-lavender flex items-center justify-center shrink-0 mt-0.5 border border-accent-lavender/20">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
+                  </svg>
                 </div>
-                <p className="text-xs text-txt-tertiary mt-1 leading-relaxed">{t('composerPluginDesc')}</p>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-txt-primary">{t('composerPluginName')}</span>
+                    <span className="glass-pill px-2 py-0.5 text-[10px] text-accent-lavender font-medium">{t('builtInPlugin')}</span>
+                  </div>
+                  <p className="text-xs text-txt-tertiary mt-1 leading-relaxed">{t('composerPluginDesc')}</p>
+                </div>
               </div>
+              <Toggle
+                ariaLabel={t('composerPluginName')}
+                enabled={!!preferences.composerEnabled}
+                disabled={busy}
+                onChange={(enabled) => {
+                  const updated = { ...preferences, composerEnabled: enabled };
+                  setPreferences(updated);
+                  void execute({ action: 'savePreferences', accountId, preferences: updated }).then((reply) => {
+                    if (reply.ok && 'settings' in reply && useTranslationStore.getState().scope === scope) {
+                      acceptTranslationSettings(reply.settings);
+                    }
+                  });
+                }}
+              />
             </div>
+
+            {preferences.composerEnabled ? (
+              <div className="pt-2 border-t border-white/[0.06] space-y-3">
+                <label className="block text-xs font-medium text-txt-secondary">
+                  {t('pluginAiConnection')}
+                  <select
+                    className="input-standard mt-1.5 w-full"
+                    value={preferences.composerConnection ?? ''}
+                    onChange={(e) => {
+                      const updated = { ...preferences, composerConnection: e.target.value || null };
+                      setPreferences(updated);
+                    }}
+                  >
+                    <option value="">
+                      {preferences.defaultConnection
+                        ? `${t('inherit')} (${settings.connections.find((c) => c.id === preferences.defaultConnection)?.name ?? preferences.defaultConnection})`
+                        : t('none')}
+                    </option>
+                    {settings.connections.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <ComposerActionEditor
+                  actions={preferences.composerActions ?? DEFAULT_COMPOSER_ACTIONS}
+                  disabled={busy}
+                  onChange={(composerActions) => {
+                    const updated = { ...preferences, composerActions };
+                    setPreferences(updated);
+                  }}
+                />
+
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    className="px-4 py-2 rounded bg-accent-primary hover:bg-accent-primary-hover text-sm font-medium text-white transition-colors disabled:opacity-50"
+                    onClick={() => void savePreferences()}
+                    disabled={busy}
+                  >
+                    {t('saveComposerSettings')}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-txt-tertiary pt-2 border-t border-white/[0.06]">{t('pluginDisabledHint')}</p>
+            )}
           </div>
         </div>
       )}
@@ -251,11 +390,44 @@ function ScopedTranslationPanel({ context }: { context: ReturnType<typeof useTra
               <p className="text-xs text-txt-tertiary mt-0.5">{t('connectionsSectionDesc')}</p>
             </div>
             {!editor && (
-              <button disabled={busy} className="rounded px-3 py-1.5 text-xs font-medium text-txt-secondary bg-white/[0.06] hover:bg-white/[0.1] transition-colors" onClick={() => setEditor('new')}>
+              <button
+                disabled={busy}
+                className="rounded px-3 py-1.5 text-xs font-medium text-txt-secondary bg-white/[0.06] hover:bg-white/[0.1] transition-colors whitespace-nowrap shrink-0"
+                onClick={() => setEditor('new')}
+              >
                 {t('addConnection')}
               </button>
             )}
           </div>
+
+          {settings.connections.length > 0 && !editor && (
+            <div className="flex items-center justify-between gap-4 p-3 rounded-lg bg-white/[0.03] border border-white/[0.04]">
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-txt-primary">{t('globalConnection')}</div>
+                <p className="text-xs text-txt-tertiary mt-0.5">{t('globalConnectionDesc')}</p>
+              </div>
+              <select
+                className="input-standard w-48 shrink-0 text-xs"
+                value={preferences.defaultConnection ?? ''}
+                disabled={busy}
+                onChange={(e) => {
+                  const val = e.target.value || null;
+                  const updated = { ...preferences, defaultConnection: val };
+                  setPreferences(updated);
+                  void execute({ action: 'savePreferences', accountId, preferences: updated }).then((reply) => {
+                    if (reply.ok && 'settings' in reply && useTranslationStore.getState().scope === scope) {
+                      acceptTranslationSettings(reply.settings);
+                    }
+                  });
+                }}
+              >
+                <option value="">{t('none')}</option>
+                {settings.connections.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           {!settings.connections.length && !editor && (
             <p className="rounded-lg border border-dashed border-white/[0.1] p-4 text-sm text-txt-tertiary">{t('noConnections')}</p>
           )}

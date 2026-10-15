@@ -29,6 +29,11 @@ export const DEFAULT_PREFERENCES: TranslationPreferences = {
   automatic: false,
   showOriginal: true,
   consent: false,
+  translationEnabled: true,
+  summarizerEnabled: false,
+  summarizerConnection: null,
+  composerEnabled: false,
+  composerConnection: null,
 };
 
 function prepareConnection(input: ConnectionInput, previous: StoredConnection | undefined): StoredConnection {

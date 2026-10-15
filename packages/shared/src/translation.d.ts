@@ -26,6 +26,14 @@ export interface AiConnection {
   model: string;
   hasKey: boolean;
 }
+export interface ComposerAction {
+  id: string;
+  label: string;
+  icon?: string;
+  systemPrompt: string;
+  enabled: boolean;
+  isCustom?: boolean;
+}
 export interface TranslationPreferences {
   defaultConnection: string | null;
   /** null inherits the global AI connection; anonymous services are explicit choices. */
@@ -34,6 +42,12 @@ export interface TranslationPreferences {
   automatic: boolean;
   showOriginal: boolean;
   consent: boolean;
+  translationEnabled?: boolean;
+  summarizerEnabled?: boolean;
+  summarizerConnection?: string | null;
+  composerEnabled?: boolean;
+  composerConnection?: string | null;
+  composerActions?: ComposerAction[];
 }
 export interface TranslationSettings {
   revision: number;
@@ -62,6 +76,13 @@ export type TranslationCommand =
       text: string;
       revision: number;
       automatic: boolean;
+    }
+  | {
+      action: 'aiGenerate';
+      accountId: string;
+      systemPrompt?: string;
+      userPrompt: string;
+      connectionId?: string | null;
     };
 export type TranslationResult =
   | { kind: 'translated'; text: string }
@@ -93,6 +114,7 @@ export type TranslationReply =
   | { ok: true; result: TranslationResult }
   | { ok: true; models: string[] }
   | { ok: true; test: { latencyMs: number; text: string } }
+  | { ok: true; outputText: string }
   | { ok: false; code: TranslationErrorCode; status?: number };
 export interface TranslationBridge {
   command(command: TranslationCommand): Promise<TranslationReply>;
