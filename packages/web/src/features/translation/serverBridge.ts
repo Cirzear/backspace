@@ -31,7 +31,7 @@ export const serverTranslationBridge: TranslationBridge = {
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
         body: JSON.stringify(command),
         credentials: 'omit', redirect: 'error', cache: 'no-store',
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(90_000),
       });
       return await readHttpReply(response);
     } catch (error) {

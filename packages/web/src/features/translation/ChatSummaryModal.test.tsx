@@ -100,4 +100,73 @@ describe('ChatSummaryModal', () => {
 
     expect(await screen.findByText('noMessagesToSummarize')).toBeInTheDocument();
   });
+
+  it('does not exceed update depth when channel messages are unpopulated in store', () => {
+    useChatStore.setState({ messages: new Map() });
+
+    const { rerender } = render(
+      <ChatSummaryModal
+        isOpen={false}
+        onClose={vi.fn()}
+        channelId="unloaded-channel-1"
+        channelName="unloaded-1"
+      />
+    );
+
+    // Switching channels while messages are still unloaded
+    expect(() => {
+      rerender(
+        <ChatSummaryModal
+          isOpen={false}
+          onClose={vi.fn()}
+          channelId="unloaded-channel-2"
+          channelName="unloaded-2"
+        />
+      );
+    }).not.toThrow();
+  });
+
+  it('supports switching between unread and date modes with language instructions', async () => {
+    const spy = vi.spyOn(translationStore, 'sendTranslationCommand').mockResolvedValue({
+      ok: true,
+      outputText: '日期摘要内容',
+    });
+
+    render(
+      <ChatSummaryModal
+        isOpen={true}
+        onClose={vi.fn()}
+        channelId="channel-1"
+        channelName="general"
+      />
+    );
+
+    // Initial unread mode
+    expect(screen.getByText(/summaryModeUnread/)).toBeInTheDocument();
+    expect(screen.getByText(/summaryModeDate/)).toBeInTheDocument();
+
+    // Initial render auto-generates with language instruction
+    expect(await screen.findByText('日期摘要内容')).toBeInTheDocument();
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'aiGenerate',
+        systemPrompt: expect.stringContaining('简体中文'),
+      }),
+    );
+
+    // Switch to date mode - automatically triggers regeneration for the selected date
+    fireEvent.click(screen.getByText(/summaryModeDate/));
+
+    await waitFor(() => {
+      expect(spy).toHaveBeenCalledTimes(2);
+    });
+
+    expect(spy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        action: 'aiGenerate',
+        userPrompt: expect.stringContaining('当天的对话记录'),
+      }),
+    );
+  });
 });
+

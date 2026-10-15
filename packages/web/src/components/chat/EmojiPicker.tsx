@@ -24,7 +24,7 @@ function HeartIcon({ className = 'w-4 h-4' }: { className?: string }) {
   );
 }
 
-export function EmojiPicker({ onEmojiSelect, mobile = false, stickers = true }: EmojiPickerProps) {
+export function EmojiPicker({ onEmojiSelect, mobile = false, stickers = false }: EmojiPickerProps) {
   const { t } = useTranslation('chat');
   const [showStickers, setShowStickers] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);

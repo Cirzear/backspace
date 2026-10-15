@@ -9,6 +9,13 @@ function isConnection(value: unknown): value is AiConnection {
     ['openai-chat', 'openai-responses', 'anthropic', 'gemini', 'google-translate', 'microsoft-translator'].includes(String(value.protocol)) &&
     typeof value.hasKey === 'boolean';
 }
+function isComposerAction(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return typeof value.id === 'string' && typeof value.label === 'string' &&
+    typeof value.systemPrompt === 'string' && typeof value.enabled === 'boolean' &&
+    (value.icon === undefined || typeof value.icon === 'string') &&
+    (value.isCustom === undefined || typeof value.isCustom === 'boolean');
+}
 function isPreferences(value: unknown): value is TranslationPreferences {
   if (!isRecord(value)) return false;
   const baseValid = ['defaultConnection', 'engine'].every(key => value[key] === null || typeof value[key] === 'string') &&
@@ -20,6 +27,10 @@ function isPreferences(value: unknown): value is TranslationPreferences {
   if (value.composerEnabled !== undefined && typeof value.composerEnabled !== 'boolean') return false;
   if (value.summarizerConnection !== undefined && value.summarizerConnection !== null && typeof value.summarizerConnection !== 'string') return false;
   if (value.composerConnection !== undefined && value.composerConnection !== null && typeof value.composerConnection !== 'string') return false;
+  if (value.composerActions !== undefined &&
+    (!Array.isArray(value.composerActions) || value.composerActions.length > 50 || !value.composerActions.every(isComposerAction))) {
+    return false;
+  }
   return true;
 }
 function isSettings(value: unknown): value is TranslationSettings {

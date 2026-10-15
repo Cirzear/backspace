@@ -81,10 +81,15 @@ const RESPONSE_READERS: Record<LlmProtocol, (response: Record<string, unknown>) 
   {
     'openai-chat': (response) => {
       const choice = responseParts(response.choices)[0];
+      if (choice?.finish_reason === 'content_filter') throw new TranslationError('protected-content');
       if (choice?.finish_reason !== 'stop') throw new TranslationError('invalid-response');
-      const message = record(choice.message);
+      const message = record(choice?.message);
       if (message.tool_calls || message.function_call) throw new TranslationError('invalid-response');
-      return message.content;
+      if (typeof message.content === 'string') return message.content;
+      if (typeof message.reasoning_content === 'string' && message.reasoning_content.trim()) {
+        return message.reasoning_content;
+      }
+      throw new TranslationError('invalid-response');
     },
     'openai-responses': (response) => {
       if (response.status !== 'completed') throw new TranslationError('invalid-response');
@@ -269,11 +274,16 @@ export async function generateAi(options: {
   fetcher: TranslationFetch;
 }): Promise<string> {
   const { connection, systemPrompt, userPrompt, fetcher } = options;
+  const isReasoner = connection.model?.toLowerCase().includes('reasoner');
   const messages: Array<{ role: string; content: string }> = [];
-  if (systemPrompt?.trim()) {
-    messages.push({ role: 'system', content: systemPrompt.trim() });
+  if (isReasoner && systemPrompt?.trim()) {
+    messages.push({ role: 'user', content: `${systemPrompt.trim()}\n\n${userPrompt}` });
+  } else {
+    if (systemPrompt?.trim()) {
+      messages.push({ role: 'system', content: systemPrompt.trim() });
+    }
+    messages.push({ role: 'user', content: userPrompt });
   }
-  messages.push({ role: 'user', content: userPrompt });
 
   let path = '/chat/completions';
   let body: Record<string, unknown> = {
@@ -321,6 +331,7 @@ export async function generateAi(options: {
   const response = await requestText({
     url: `${connection.baseUrl}${path}`,
     init: { method: 'POST', headers, body: JSON.stringify(body) },
+    timeoutMs: 90_000,
     fetcher,
   });
 

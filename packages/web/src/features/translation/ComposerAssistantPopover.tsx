@@ -6,50 +6,8 @@ import { useTranslationSettings } from './useMessageTranslation';
 import { sendTranslationCommand } from './translationStore';
 import { translationErrorText } from './errorText';
 
-const WRITING_ACTIONS = [
-  {
-    id: 'polish',
-    labelKey: 'polish',
-    icon: '✨',
-    systemPrompt:
-      '你是一个专业的写作助手。请对用户的聊天草稿进行润色与优化，提升语句流畅度与表达清晰度，保持原意不变。直接输出修改后的文本，不要添加任何说明或客套话。',
-  },
-  {
-    id: 'professional',
-    labelKey: 'professional',
-    icon: '💼',
-    systemPrompt:
-      '你是一个专业的职场沟通专家。请将用户的聊天草稿改写为礼貌、严谨、专业的商务职场语气。直接输出修改后的文本，不要添加任何解释。',
-  },
-  {
-    id: 'concise',
-    labelKey: 'concise',
-    icon: '⚡',
-    systemPrompt:
-      '你是一个沟通效率专家。请将用户的聊天草稿进行提炼和精简，去掉冗余字句，使其简明扼要。直接输出精简后的文本。',
-  },
-  {
-    id: 'elaborate',
-    labelKey: 'elaborate',
-    icon: '📝',
-    systemPrompt:
-      '你是一个内容丰富助手。请在保留原意的前提下，适当补充细节和上下文，使其表达更详实充分。直接输出改写后的文本。',
-  },
-  {
-    id: 'grammar',
-    labelKey: 'grammar',
-    icon: '🔍',
-    systemPrompt:
-      '你是一个严格的文字校对专家。请纠正用户草稿中的错别字、标点误用和语病。直接输出纠正后的文本。',
-  },
-  {
-    id: 'translateToEnglish',
-    labelKey: 'translateToEnglish',
-    icon: '🌐',
-    systemPrompt:
-      '你是一个专业翻译专家。请将用户的草稿翻译成地道、自然、准确的英文。直接输出翻译后的英文文本。',
-  },
-] as const;
+import type { ComposerAction } from '@backspace/shared/translation';
+import { DEFAULT_COMPOSER_ACTIONS, getActionDisplayLabel, getTargetLanguageName } from './composerPresets';
 
 interface ComposerAssistantPopoverProps {
   open: boolean;
@@ -100,7 +58,10 @@ export function ComposerAssistantPopover({
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [open, onClose]);
 
-  const handleAction = async (action: (typeof WRITING_ACTIONS)[number]) => {
+  const configuredActions = settings?.preferences.composerActions ?? DEFAULT_COMPOSER_ACTIONS;
+  const activeActions = configuredActions.filter((a) => a.enabled);
+
+  const handleAction = async (action: ComposerAction) => {
     if (!draftText.trim()) {
       setError(t('emptyDraftPrompt'));
       return;
@@ -110,10 +71,14 @@ export function ComposerAssistantPopover({
     setLoadingAction(action.id);
     setError(null);
 
+    const targetLang = settings?.preferences.targetLanguage || 'zh-CN';
+    const targetLangName = getTargetLanguageName(targetLang);
+    const systemPrompt = `${action.systemPrompt}\n\n【语言要求】：请严格使用【${targetLangName}】输出最终修改文本，直接输出文本内容，不要包含客套话或多余解释。`;
+
     const reply = await sendTranslationCommand({
       action: 'aiGenerate',
       accountId,
-      systemPrompt: action.systemPrompt,
+      systemPrompt,
       userPrompt: draftText,
       connectionId: settings?.preferences.composerConnection,
     });
@@ -156,8 +121,8 @@ export function ComposerAssistantPopover({
         </p>
       )}
 
-      <div className="grid grid-cols-2 gap-1.5">
-        {WRITING_ACTIONS.map((action) => {
+      <div className={activeActions.length === 1 ? 'flex flex-col gap-1.5' : 'grid grid-cols-2 gap-1.5'}>
+        {activeActions.map((action) => {
           const isLoading = loadingAction === action.id;
           return (
             <button
@@ -167,12 +132,18 @@ export function ComposerAssistantPopover({
               onClick={() => void handleAction(action)}
               className="flex items-center gap-2 p-2 rounded-lg bg-white/[0.03] hover:bg-white/[0.08] border border-white/[0.04] text-left transition-colors disabled:opacity-50 text-xs"
             >
-              <span className="text-sm shrink-0">{isLoading ? '⏳' : action.icon}</span>
-              <span className="truncate font-medium">{t(action.labelKey)}</span>
+              <span className="text-sm shrink-0">{isLoading ? '⏳' : action.icon ?? '✨'}</span>
+              <span className="truncate font-medium">{getActionDisplayLabel(action, t)}</span>
             </button>
           );
         })}
       </div>
+
+      {activeActions.length === 0 && (
+        <p className="text-xs text-txt-tertiary p-2 text-center">
+          {t('noEnabledActions')}
+        </p>
+      )}
 
       {loadingAction && (
         <div className="flex items-center justify-center gap-2 pt-1 text-xs text-txt-tertiary">

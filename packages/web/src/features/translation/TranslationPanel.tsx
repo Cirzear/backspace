@@ -9,6 +9,8 @@ import type {
 } from '@backspace/shared/translation';
 import { TranslationPreferenceControls } from './TranslationPreferenceControls';
 import { ConnectionEditor } from './ConnectionEditor';
+import { ComposerActionEditor } from './ComposerActionEditor';
+import { DEFAULT_COMPOSER_ACTIONS } from './composerPresets';
 import { Toggle } from '../../components/ui/Toggle';
 import { translationErrorText } from './errorText';
 import { useTranslationSettings } from './useMessageTranslation';
@@ -287,7 +289,7 @@ function ScopedTranslationPanel({ context }: { context: ReturnType<typeof useTra
                     onClick={() => void savePreferences()}
                     disabled={busy}
                   >
-                    {t('savePreferences')}
+                    {t('saveSummarizerSettings')}
                   </button>
                 </div>
               </div>
@@ -351,6 +353,16 @@ function ScopedTranslationPanel({ context }: { context: ReturnType<typeof useTra
                     ))}
                   </select>
                 </label>
+
+                <ComposerActionEditor
+                  actions={preferences.composerActions ?? DEFAULT_COMPOSER_ACTIONS}
+                  disabled={busy}
+                  onChange={(composerActions) => {
+                    const updated = { ...preferences, composerActions };
+                    setPreferences(updated);
+                  }}
+                />
+
                 <div className="flex justify-end">
                   <button
                     type="button"
@@ -358,7 +370,7 @@ function ScopedTranslationPanel({ context }: { context: ReturnType<typeof useTra
                     onClick={() => void savePreferences()}
                     disabled={busy}
                   >
-                    {t('savePreferences')}
+                    {t('saveComposerSettings')}
                   </button>
                 </div>
               </div>

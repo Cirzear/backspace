@@ -151,7 +151,7 @@ export class TranslationService {
     return text;
   }
   private async aiGenerate(scope: string, input: Record<string, unknown>): Promise<TranslationReply> {
-    const userPrompt = string(input.userPrompt, 30000);
+    const userPrompt = string(input.userPrompt, 100000);
     const systemPrompt = input.systemPrompt ? string(input.systemPrompt, 5000) : undefined;
     const connectionId = input.connectionId ? string(input.connectionId, 64) : null;
     const data = this.vault.read(scope);

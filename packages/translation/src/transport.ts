@@ -23,15 +23,17 @@ export async function requestText(options: {
   url: string;
   init?: RequestInit;
   maxBytes?: number;
+  timeoutMs?: number;
   fetcher: TranslationFetch;
 }): Promise<string> {
   const maxBytes = options.maxBytes ?? MAX_RESPONSE_BYTES;
+  const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
   try {
     const response = await options.fetcher(options.url, {
       ...options.init,
       redirect: 'error',
       credentials: 'omit',
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     // Do not surface provider error bodies: they may echo the key, source text or request headers.
     if (!response.ok) {

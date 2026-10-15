@@ -26,6 +26,14 @@ export interface AiConnection {
   model: string;
   hasKey: boolean;
 }
+export interface ComposerAction {
+  id: string;
+  label: string;
+  icon?: string;
+  systemPrompt: string;
+  enabled: boolean;
+  isCustom?: boolean;
+}
 export interface TranslationPreferences {
   defaultConnection: string | null;
   /** null inherits the global AI connection; anonymous services are explicit choices. */
@@ -39,6 +47,7 @@ export interface TranslationPreferences {
   summarizerConnection?: string | null;
   composerEnabled?: boolean;
   composerConnection?: string | null;
+  composerActions?: ComposerAction[];
 }
 export interface TranslationSettings {
   revision: number;

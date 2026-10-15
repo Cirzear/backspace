@@ -130,7 +130,7 @@ export function ReactionPickerPopover({
       }}
     >
       <div className="glass rounded-xl overflow-hidden max-h-[calc(100*var(--app-dvh)-16px)] flex flex-col">
-        <EmojiPicker onEmojiSelect={onEmojiSelect} />
+        <EmojiPicker onEmojiSelect={onEmojiSelect} stickers={false} />
       </div>
     </div>,
     document.body,

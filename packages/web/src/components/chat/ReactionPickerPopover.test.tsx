@@ -5,12 +5,16 @@ import React from 'react';
 import { ReactionPickerPopover } from './ReactionPickerPopover';
 
 // Mock EmojiPicker to keep test light and focused on positioning/interactions
+const mockEmojiPicker = vi.fn();
 vi.mock('./EmojiPicker', () => ({
-  EmojiPicker: ({ onEmojiSelect }: { onEmojiSelect: (emoji: { native: string }) => void }) => (
-    <div data-testid="mock-emoji-picker" onKeyDown={(event) => event.stopPropagation()} style={{ height: 440, width: 350 }}>
-      <button onClick={() => onEmojiSelect({ native: '🎉' })}>Select Emoji</button>
-    </div>
-  ),
+  EmojiPicker: (props: { onEmojiSelect: (emoji: { native: string }) => void; stickers?: boolean }) => {
+    mockEmojiPicker(props);
+    return (
+      <div data-testid="mock-emoji-picker" onKeyDown={(event) => event.stopPropagation()} style={{ height: 440, width: 350 }}>
+        <button onClick={() => props.onEmojiSelect({ native: '🎉' })}>Select Emoji</button>
+      </div>
+    );
+  },
 }));
 
 describe('ReactionPickerPopover', () => {
@@ -173,6 +177,20 @@ describe('ReactionPickerPopover', () => {
     expect(screen.getByRole('dialog').style.top).toBe('440px');
     act(() => { pickerHeight = 500; resized(); });
     expect(screen.getByRole('dialog').style.top).toBe('8px');
+  });
+
+  it('disables stickers in the emoji picker so only reactions can be added', () => {
+    const anchor = createAnchor({ top: 100, bottom: 132, left: 800, right: 832 });
+    render(
+      <ReactionPickerPopover
+        anchorEl={anchor}
+        onEmojiSelect={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(mockEmojiPicker).toHaveBeenCalledWith(
+      expect.objectContaining({ stickers: false }),
+    );
   });
 
 });

@@ -449,7 +449,7 @@ export function MainContent() {
           isDm={true}
           onJumpToMessage={(id) => { setJumpToMessageId(id); setSearchOpen(false); }}
         />
-        {summarizerEnabled && (
+        {summarizerEnabled && summaryOpen && (
           <ChatSummaryModal
             isOpen={summaryOpen}
             onClose={() => setSummaryOpen(false)}
@@ -606,7 +606,7 @@ export function MainContent() {
         isDm={false}
         onJumpToMessage={(id) => { setJumpToMessageId(id); setSearchOpen(false); }}
       />
-      {summarizerEnabled && (
+      {summarizerEnabled && summaryOpen && (
         <ChatSummaryModal
           isOpen={summaryOpen}
           onClose={() => setSummaryOpen(false)}
