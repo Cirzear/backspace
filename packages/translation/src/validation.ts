@@ -64,7 +64,7 @@ export function baseUrl(value: unknown): string {
     throw new TranslationError('invalid-input');
   // A credential must never hide in URL userinfo, query parameters or fragments.
   if (url.username || url.password || url.search || url.hash) throw new TranslationError('invalid-input');
-  return url.href.replace(/\/+$/, '');
+  return url.href.replace(/\/+$/, '').replace(/\/(chat\/completions|responses|messages)$/, '').replace(/\/+$/, '');
 }
 export function connectionProbe(value: unknown): ConnectionProbe {
   const v = record(value);
@@ -103,5 +103,10 @@ export function preferencesInput(value: unknown): TranslationPreferences {
     automatic: v.automatic as boolean,
     showOriginal: v.showOriginal as boolean,
     consent: v.consent as boolean,
+    translationEnabled: v.translationEnabled !== undefined ? Boolean(v.translationEnabled) : true,
+    summarizerEnabled: Boolean(v.summarizerEnabled),
+    summarizerConnection: v.summarizerConnection ? string(v.summarizerConnection, 64) : null,
+    composerEnabled: Boolean(v.composerEnabled),
+    composerConnection: v.composerConnection ? string(v.composerConnection, 64) : null,
   };
 }

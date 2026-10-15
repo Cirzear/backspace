@@ -8,6 +8,8 @@ describe('diagnostic response boundary', () => {
     expect(readServerReply({ ok: true, models: [] })).toEqual({ ok: true, models: [] });
     expect(readServerReply({ ok: true, test: { text: 'Hello!', latencyMs: 0, apiKey: 'not-for-the-page' } }))
       .toEqual({ ok: true, test: { text: 'Hello!', latencyMs: 0 } });
+    expect(readServerReply({ ok: true, outputText: 'Generated content' }))
+      .toEqual({ ok: true, outputText: 'Generated content' });
   });
   it.each([null, '<html>old server</html>', { ok: true }, { ok: true, models: {} },
     { ok: true, models: [1] }, { ok: true, models: [' '] }, { ok: true, models: ['bad\nmodel'] },

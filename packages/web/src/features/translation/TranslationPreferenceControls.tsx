@@ -23,29 +23,25 @@ export function TranslationPreferenceControls({ preferences, settings, busy, onC
       <div className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3.5 space-y-4">
         <div className="grid grid-cols-1 desktop:grid-cols-2 gap-3">
           <label className="block text-xs font-medium text-txt-secondary">
-            {t('globalConnection')}
-            <select className="input-standard mt-1.5 w-full" value={preferences.defaultConnection ?? ''}
-              onChange={event => update('defaultConnection', event.target.value || null)}>
-              <option value="">{t('none')}</option>
+            {t('translationEngine')}
+            <select className="input-standard mt-1.5 w-full" value={preferences.engine ?? ''}
+              onChange={event => update('engine', event.target.value || null)}>
+              <option value="">
+                {preferences.defaultConnection
+                  ? `${t('inherit')} (${settings.connections.find(c => c.id === preferences.defaultConnection)?.name ?? preferences.defaultConnection})`
+                  : t('none')}
+              </option>
               {settings.connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </label>
           <label className="block text-xs font-medium text-txt-secondary">
-            {t('translationEngine')}
-            <select className="input-standard mt-1.5 w-full" value={preferences.engine ?? ''}
-              onChange={event => update('engine', event.target.value || null)}>
-              <option value="">{t('inherit')}</option>
-              {settings.connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {t('targetLanguage')}
+            <select className="input-standard mt-1.5 w-full" value={preferences.targetLanguage}
+              onChange={event => update('targetLanguage', event.target.value as TranslationPreferences['targetLanguage'])}>
+              {Object.entries(LANGUAGES).map(([code, name]) => <option key={code} value={code}>{name}</option>)}
             </select>
           </label>
         </div>
-        <label className="block text-xs font-medium text-txt-secondary">
-          {t('targetLanguage')}
-          <select className="input-standard mt-1.5 w-full" value={preferences.targetLanguage}
-            onChange={event => update('targetLanguage', event.target.value as TranslationPreferences['targetLanguage'])}>
-            {Object.entries(LANGUAGES).map(([code, name]) => <option key={code} value={code}>{name}</option>)}
-          </select>
-        </label>
       </div>
       <div className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3.5 divide-y divide-white/[0.06]">
         <div className="flex items-center justify-between gap-4 pb-3">

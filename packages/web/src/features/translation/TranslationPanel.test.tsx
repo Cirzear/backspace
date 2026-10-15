@@ -89,3 +89,26 @@ it('supports tab switching between plugins and connections overview', async () =
   expect(screen.queryByText('pluginsSectionTitle')).not.toBeInTheDocument();
   expect(screen.getByText('connectionsSectionDesc')).toBeInTheDocument();
 });
+
+it('supports toggling plugin master switches', async () => {
+  render(<TranslationPanel />);
+  expect(await screen.findByText('pluginsSectionTitle')).toBeInTheDocument();
+
+  // Toggle translation off
+  const translationToggle = screen.getByLabelText('translationPluginName');
+  expect(translationToggle).toHaveAttribute('aria-checked', 'true');
+  fireEvent.click(translationToggle);
+  await waitFor(() => expect(settings.preferences.translationEnabled).toBe(false));
+
+  // Toggle summarizer on
+  const summarizerToggle = screen.getByLabelText('summarizerPluginName');
+  expect(summarizerToggle).toHaveAttribute('aria-checked', 'false');
+  fireEvent.click(summarizerToggle);
+  await waitFor(() => expect(settings.preferences.summarizerEnabled).toBe(true));
+
+  // Toggle composer on
+  const composerToggle = screen.getByLabelText('composerPluginName');
+  expect(composerToggle).toHaveAttribute('aria-checked', 'false');
+  fireEvent.click(composerToggle);
+  await waitFor(() => expect(settings.preferences.composerEnabled).toBe(true));
+});

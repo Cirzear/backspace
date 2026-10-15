@@ -11,9 +11,16 @@ function isConnection(value: unknown): value is AiConnection {
 }
 function isPreferences(value: unknown): value is TranslationPreferences {
   if (!isRecord(value)) return false;
-  return ['defaultConnection', 'engine'].every(key => value[key] === null || typeof value[key] === 'string') &&
+  const baseValid = ['defaultConnection', 'engine'].every(key => value[key] === null || typeof value[key] === 'string') &&
     ['automatic', 'showOriginal', 'consent'].every(key => typeof value[key] === 'boolean') &&
     ['zh-CN', 'zh-TW', 'en', 'ja', 'ko', 'de', 'fr', 'es', 'pt', 'ru', 'ar'].includes(String(value.targetLanguage));
+  if (!baseValid) return false;
+  if (value.translationEnabled !== undefined && typeof value.translationEnabled !== 'boolean') return false;
+  if (value.summarizerEnabled !== undefined && typeof value.summarizerEnabled !== 'boolean') return false;
+  if (value.composerEnabled !== undefined && typeof value.composerEnabled !== 'boolean') return false;
+  if (value.summarizerConnection !== undefined && value.summarizerConnection !== null && typeof value.summarizerConnection !== 'string') return false;
+  if (value.composerConnection !== undefined && value.composerConnection !== null && typeof value.composerConnection !== 'string') return false;
+  return true;
 }
 function isSettings(value: unknown): value is TranslationSettings {
   if (!isRecord(value)) return false;
@@ -39,6 +46,7 @@ function readSuccess(value: Record<string, unknown>): TranslationReply {
   if (isResult(value.result)) return { ok: true, result: value.result };
   if (isModels(value.models)) return { ok: true, models: value.models };
   if (isConnectionTest(value.test)) return { ok: true, test: { text: value.test.text, latencyMs: value.test.latencyMs } };
+  if (typeof value.outputText === 'string') return { ok: true, outputText: value.outputText };
   return { ok: false, code: 'invalid-response' };
 }
 const ERROR_CODES = new Set([

@@ -20,11 +20,18 @@ function payloadFor({ connection, text, target }: Omit<AiRequest, 'fetcher'>) {
     { role: 'user', content },
   ];
   switch (connection.protocol) {
-    case 'openai-chat':
+    case 'openai-chat': {
+      const isReasoner = connection.model?.toLowerCase().includes('reasoner');
       return {
         path: '/chat/completions',
-        body: { model: connection.model, messages, stream: false },
+        body: {
+          model: connection.model,
+          messages,
+          stream: false,
+          ...(isReasoner ? {} : { response_format: { type: 'json_object' } }),
+        },
       };
+    }
     case 'openai-responses':
       return {
         path: '/responses',
@@ -204,6 +211,30 @@ async function translateMicrosoft(options: AiRequest): Promise<string> {
   }
 }
 
+export function extractTranslationJson(rawText: string): Record<string, unknown> {
+  const text = rawText.trim();
+  try {
+    return record(JSON.parse(text));
+  } catch {}
+
+  const fenceMatch = /```(?:json)?\s*([\s\S]*?)\s*```/i.exec(text);
+  if (fenceMatch) {
+    try {
+      return record(JSON.parse(fenceMatch[1]!.trim()));
+    } catch {}
+  }
+
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    try {
+      return record(JSON.parse(text.slice(firstBrace, lastBrace + 1)));
+    } catch {}
+  }
+
+  throw new TranslationError('invalid-response');
+}
+
 export async function translateAi(options: AiRequest): Promise<string> {
   if (options.connection.protocol === 'google-translate') {
     return await translateGoogle(options);
@@ -222,12 +253,80 @@ export async function translateAi(options: AiRequest): Promise<string> {
   try {
     const text = RESPONSE_READERS[connection.protocol as keyof typeof RESPONSE_READERS](record(parseJson(response)));
     if (typeof text !== 'string') throw new TranslationError('invalid-response');
-    const output = record(parseJson(text));
-    if (Object.keys(output).length !== 1)
+    const output = extractTranslationJson(text);
+    if (Object.keys(output).length !== 1 || output.translation === undefined)
       throw new TranslationError('invalid-response');
     return messageOutput(options.text, output.translation);
   } catch {
     throw new TranslationError('invalid-response');
   }
+}
+
+export async function generateAi(options: {
+  connection: StoredConnection;
+  systemPrompt?: string;
+  userPrompt: string;
+  fetcher: TranslationFetch;
+}): Promise<string> {
+  const { connection, systemPrompt, userPrompt, fetcher } = options;
+  const messages: Array<{ role: string; content: string }> = [];
+  if (systemPrompt?.trim()) {
+    messages.push({ role: 'system', content: systemPrompt.trim() });
+  }
+  messages.push({ role: 'user', content: userPrompt });
+
+  let path = '/chat/completions';
+  let body: Record<string, unknown> = {
+    model: connection.model,
+    messages,
+    stream: false,
+  };
+
+  switch (connection.protocol) {
+    case 'openai-chat':
+      path = '/chat/completions';
+      body = { model: connection.model, messages, stream: false };
+      break;
+    case 'openai-responses':
+      path = '/responses';
+      body = {
+        model: connection.model,
+        instructions: systemPrompt ?? '',
+        input: userPrompt,
+        store: false,
+        stream: false,
+      };
+      break;
+    case 'anthropic':
+      path = '/messages';
+      body = {
+        model: connection.model,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
+        max_tokens: 8192,
+      };
+      break;
+    case 'gemini':
+      path = `/models/${encodeURIComponent(connection.model)}:generateContent`;
+      body = {
+        systemInstruction: systemPrompt ? { parts: [{ text: systemPrompt }] } : undefined,
+        contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+      };
+      break;
+    default:
+      throw new TranslationError('invalid-input');
+  }
+
+  const headers = aiHeaders(connection);
+  const response = await requestText({
+    url: `${connection.baseUrl}${path}`,
+    init: { method: 'POST', headers, body: JSON.stringify(body) },
+    fetcher,
+  });
+
+  const parsed = record(parseJson(response));
+  const rawText = RESPONSE_READERS[connection.protocol as keyof typeof RESPONSE_READERS](parsed);
+  if (typeof rawText !== 'string') throw new TranslationError('invalid-response');
+  return rawText.trim();
 }
 

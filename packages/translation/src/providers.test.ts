@@ -115,6 +115,22 @@ describe('AI protocol adapters', () => {
     });
     expect(new Headers(fetcher.mock.calls[0]![1]?.headers).has('Authorization')).toBe(false);
   });
+  it('parses markdown code-fenced JSON responses commonly returned by DeepSeek and other models', async () => {
+    const fencedResult = '```json\n{\n  "translation": "你好，世界"\n}\n```';
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({
+        choices: [{ finish_reason: 'stop', message: { content: fencedResult } }],
+      }),
+    );
+    expect(
+      await translateAi({
+        connection,
+        text: 'Hello, world',
+        target: 'zh-CN',
+        fetcher,
+      }),
+    ).toBe('你好，世界');
+  });
 });
 
 describe('bounded native HTTP transport', () => {

@@ -34,6 +34,11 @@ export interface TranslationPreferences {
   automatic: boolean;
   showOriginal: boolean;
   consent: boolean;
+  translationEnabled?: boolean;
+  summarizerEnabled?: boolean;
+  summarizerConnection?: string | null;
+  composerEnabled?: boolean;
+  composerConnection?: string | null;
 }
 export interface TranslationSettings {
   revision: number;
@@ -62,6 +67,13 @@ export type TranslationCommand =
       text: string;
       revision: number;
       automatic: boolean;
+    }
+  | {
+      action: 'aiGenerate';
+      accountId: string;
+      systemPrompt?: string;
+      userPrompt: string;
+      connectionId?: string | null;
     };
 export type TranslationResult =
   | { kind: 'translated'; text: string }
@@ -93,6 +105,7 @@ export type TranslationReply =
   | { ok: true; result: TranslationResult }
   | { ok: true; models: string[] }
   | { ok: true; test: { latencyMs: number; text: string } }
+  | { ok: true; outputText: string }
   | { ok: false; code: TranslationErrorCode; status?: number };
 export interface TranslationBridge {
   command(command: TranslationCommand): Promise<TranslationReply>;
