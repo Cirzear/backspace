@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { stickerUrl, type StickerPackDetail, type StickerPackSummary } from '@backspace/shared/src/stickers';
+import { stickerUrl, stickerPreviewUrl, type StickerPackDetail, type StickerPackSummary } from '@backspace/shared/src/stickers';
 import { api } from '../../api/client';
 import { describeError } from '../../i18n/errors';
 import { usePortalContainer } from '../../hooks/usePortalContainer';
@@ -357,7 +357,7 @@ export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModal
                         {/* Cover image or placeholder */}
                         <div className="aspect-video w-full rounded-xl bg-surface-elevated/70 flex items-center justify-center mb-3 overflow-hidden border border-border-soft">
                           {pack.coverUrl ? (
-                            <img src={pack.coverUrl} alt={pack.name} className="h-full w-full object-contain p-2" loading="lazy" />
+                            <img src={stickerPreviewUrl(pack.coverUrl) || pack.coverUrl} alt={pack.name} className="h-full w-full object-contain p-2" loading="lazy" />
                           ) : (
                             <span className="text-2xl text-txt-tertiary">🎨</span>
                           )}
@@ -437,7 +437,7 @@ export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModal
                         <div className="flex items-center gap-3 min-w-0">
                           <div className="h-12 w-12 shrink-0 rounded-lg bg-surface-elevated flex items-center justify-center overflow-hidden border border-border-soft">
                             {pack.coverUrl ? (
-                              <img src={pack.coverUrl} alt={pack.name} className="h-full w-full object-contain p-1" />
+                              <img src={stickerPreviewUrl(pack.coverUrl) || pack.coverUrl} alt={pack.name} className="h-full w-full object-contain p-1" />
                             ) : (
                               <span className="text-lg">🎨</span>
                             )}
@@ -543,7 +543,7 @@ export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModal
                       <div className="flex items-start gap-3 min-w-0">
                         <div className="h-12 w-12 shrink-0 rounded-lg bg-surface-elevated flex items-center justify-center overflow-hidden border border-border-soft mt-0.5">
                           {pack.coverUrl ? (
-                            <img src={pack.coverUrl} alt={pack.name} className="h-full w-full object-contain p-1" />
+                            <img src={stickerPreviewUrl(pack.coverUrl) || pack.coverUrl} alt={pack.name} className="h-full w-full object-contain p-1" />
                           ) : (
                             <span className="text-lg">🎨</span>
                           )}
@@ -641,7 +641,7 @@ export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModal
             <div className="flex-1 overflow-y-auto grid grid-cols-4 gap-2 p-1 scrollbar-thin">
               {previewPack.items.map(item => (
                 <div key={item.id} className="aspect-square rounded-xl bg-surface-base/60 p-2 flex items-center justify-center border border-border-soft">
-                  <img src={stickerUrl(item.token) || item.token.replace(/^sticker:/, '')} alt={item.name} className="max-h-full max-w-full object-contain" />
+                  <img src={stickerPreviewUrl(item.token) || stickerUrl(item.token) || item.token.replace(/^sticker:/, '')} alt={item.name} className="max-h-full max-w-full object-contain" />
                 </div>
               ))}
             </div>

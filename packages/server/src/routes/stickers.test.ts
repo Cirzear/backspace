@@ -280,4 +280,37 @@ describe('personal stickers', () => {
     const metadata = await sharp(result, { animated: true }).metadata();
     expect(metadata.pages).toBe(frameCount);
   });
+
+  it('generates and serves compressed preview on request and on-demand', async () => {
+    const uploadRes = await upload();
+    expect(uploadRes.statusCode).toBe(200);
+    const sticker = uploadRes.json();
+    const pathname = new URL(stickerUrl(sticker.token)!).pathname;
+
+    // 1. Fetch full original image
+    const fullRes = await app.inject({ url: pathname });
+    expect(fullRes.statusCode).toBe(200);
+    expect(fullRes.headers['content-type']).toBe('image/webp');
+
+    // 2. Fetch preview image
+    const previewRes = await app.inject({ url: `${pathname}?preview=1` });
+    expect(previewRes.statusCode).toBe(200);
+    expect(previewRes.headers['content-type']).toBe('image/webp');
+    expect(previewRes.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+    const meta = await sharp(previewRes.rawPayload).metadata();
+    expect(meta.format).toBe('webp');
+    expect(meta.width).toBeLessThanOrEqual(128);
+    expect(meta.height).toBeLessThanOrEqual(128);
+
+    // 3. Delete preview file to test on-demand generation
+    const previewFilePath = path.join(settings.uploadDir, 'stickers', `${sticker.id}_preview.webp`);
+    await rm(previewFilePath, { force: true });
+
+    // 4. Request preview again - should re-generate on-demand
+    const onDemandRes = await app.inject({ url: `${pathname}?preview=1` });
+    expect(onDemandRes.statusCode).toBe(200);
+    const onDemandMeta = await sharp(onDemandRes.rawPayload).metadata();
+    expect(onDemandMeta.format).toBe('webp');
+    expect(onDemandMeta.width).toBeLessThanOrEqual(128);
+  });
 });

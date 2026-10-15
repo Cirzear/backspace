@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { MAX_PERSONAL_STICKERS, stickerUrl, type PersonalSticker, type StickerPackDetail } from '@backspace/shared/src/stickers';
+import { MAX_PERSONAL_STICKERS, stickerUrl, stickerPreviewUrl, type PersonalSticker, type StickerPackDetail } from '@backspace/shared/src/stickers';
 import { api } from '../../api/client';
 import { useAuthStore } from '../../stores/authStore';
 import { useContextMenuStore } from '../../stores/contextMenuStore';
@@ -66,7 +66,7 @@ function StickerRenameDialog({ sticker, onClose, onRenamed }: StickerRenameDialo
         </div>
 
         <div className="flex items-center justify-center p-3 rounded-xl bg-surface-base/60">
-          <img src={stickerUrl(sticker.token)!} alt={sticker.name} className="h-16 w-16 object-contain" />
+          <img src={stickerPreviewUrl(sticker.token) ?? stickerUrl(sticker.token)!} alt={sticker.name} className="h-16 w-16 object-contain" />
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
@@ -210,7 +210,7 @@ function StickerGrid({
               className="sticker-tile w-full p-2"
             >
               <img
-                src={stickerUrl(item.token)!}
+                src={stickerPreviewUrl(item.token) ?? stickerUrl(item.token)!}
                 alt={item.name}
                 className="aspect-square w-full object-contain transition-transform group-hover:scale-105"
                 loading="lazy"
@@ -335,7 +335,7 @@ function PackStickerGrid({ pack, onSelect }: PackStickerGridProps) {
         <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin px-3 pb-3">
           <div className="grid grid-cols-4 gap-1.5">
             {filtered.map(item => {
-              const url = stickerUrl(item.token);
+              const url = stickerPreviewUrl(item.token) ?? stickerUrl(item.token);
               return (
                 <button
                   key={item.id}
@@ -569,14 +569,14 @@ export function StickerPicker({ onSelect, mobile = false }: { onSelect: (token: 
 
           {/* Bottom Tabs & Store Button */}
           <div className="shrink-0 flex items-center justify-between border-t border-border-soft px-3 py-1.5 bg-surface-base/50">
-            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5">
+            <div className="flex-1 min-w-0 flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5 px-1">
               {/* Personal Stickers tab */}
               <button
                 type="button"
                 onClick={() => setActiveTab('personal')}
                 title={t('stickers.title')}
                 aria-label={t('stickers.title')}
-                className={`flex h-7 w-7 items-center justify-center rounded-lg transition-colors ${
+                className={`shrink-0 flex h-7 w-7 items-center justify-center rounded-lg transition-colors ${
                   activeTab === 'personal'
                     ? 'bg-interactive-active text-accent-primary shadow-sm'
                     : 'text-txt-tertiary hover:bg-interactive-hover hover:text-txt-primary'
@@ -589,7 +589,7 @@ export function StickerPicker({ onSelect, mobile = false }: { onSelect: (token: 
 
               {/* Installed packs tabs */}
               {installedPacks.map(pack => {
-                const cover = pack.coverUrl || (pack.items?.[0] ? stickerUrl(pack.items[0].token) : null);
+                const cover = stickerPreviewUrl(pack.coverUrl) || pack.coverUrl || (pack.items?.[0] ? (stickerPreviewUrl(pack.items[0].token) || stickerUrl(pack.items[0].token)) : null);
                 const isActive = activeTab === pack.id;
                 return (
                   <button
@@ -598,9 +598,9 @@ export function StickerPicker({ onSelect, mobile = false }: { onSelect: (token: 
                     onClick={() => setActiveTab(pack.id)}
                     title={pack.name}
                     aria-label={pack.name}
-                    className={`flex h-7 w-7 items-center justify-center rounded-lg overflow-hidden transition-colors ${
+                    className={`shrink-0 flex h-7 w-7 items-center justify-center rounded-lg overflow-hidden transition-colors ${
                       isActive
-                        ? 'bg-interactive-active ring-1 ring-accent-primary text-txt-primary'
+                        ? 'bg-interactive-active ring-1 ring-inset ring-accent-primary text-txt-primary'
                         : 'opacity-70 hover:opacity-100 hover:bg-interactive-hover'
                     }`}
                   >

@@ -124,3 +124,23 @@ export function resolveStickerAssetUrl(token: string, localOrigin?: string): str
   return stickerUrl(token);
 }
 
+/**
+ * Returns the preview / thumbnail URL for a sticker token or asset URL, appending ?preview=1.
+ */
+export function stickerPreviewUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const url = stickerUrl(value) || (value.startsWith('http') && value.includes('/api/stickers/assets/') ? value : null);
+  if (!url) return null;
+  return `${url}${url.includes('?') ? '&' : '?'}preview=1`;
+}
+
+/**
+ * Resolves a sticker asset preview URL to a local origin endpoint if localOrigin is provided,
+ * otherwise returns the preview URL from the canonical token URL.
+ */
+export function resolveStickerPreviewUrl(token: string, localOrigin?: string): string | null {
+  const url = resolveStickerAssetUrl(token, localOrigin);
+  if (!url) return null;
+  return `${url}${url.includes('?') ? '&' : '?'}preview=1`;
+}
+

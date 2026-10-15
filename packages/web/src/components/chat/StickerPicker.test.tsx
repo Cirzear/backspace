@@ -4,7 +4,7 @@ import { StickerPicker } from './StickerPicker';
 import { StickerMessage } from './StickerMessage';
 import { api } from '../../api/client';
 import { uploadSticker } from './stickerUpload';
-import { MAX_PERSONAL_STICKERS } from '@backspace/shared/src/stickers';
+import { MAX_PERSONAL_STICKERS, type StickerPackDetail } from '@backspace/shared/src/stickers';
 
 import { useContextMenuStore } from '../../stores/contextMenuStore';
 
@@ -12,6 +12,7 @@ vi.mock('../../api/client', async importOriginal => ({
   ...await importOriginal<typeof import('../../api/client')>(),
   api: {
     stickers: { list: vi.fn(), remove: vi.fn(), collect: vi.fn(), rename: vi.fn() },
+    stickerStore: { myPacks: vi.fn().mockResolvedValue([]) },
     instance: { info: vi.fn().mockResolvedValue({}) },
   },
 }));
@@ -188,5 +189,41 @@ describe('sticker controls', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(api.stickers.rename).not.toHaveBeenCalled();
+  });
+
+  it('renders compressed preview URL for sticker tiles', async () => {
+    render(<StickerPicker onSelect={vi.fn()} />);
+    const img = await screen.findByRole('img', { name: 'Happy' });
+    expect(img).toHaveAttribute('src', `https://chat.test/api/stickers/assets/${'a'.repeat(64)}.webp?preview=1`);
+  });
+
+  it('renders bottom tab bar with shrink-0 and ring-inset on pack tabs', async () => {
+    const pack: StickerPackDetail = {
+      id: 'pack-1',
+      name: 'Cute Cats',
+      items: [{ id: 'item-1', name: 'Cat', token: sticker.token, packId: 'pack-1', versionId: 'v1', assetId: sticker.id, sortOrder: 0, status: 'active', createdAt: 1 }],
+      creatorId: 'alice',
+      creatorName: 'Alice',
+      coverAssetId: sticker.id,
+      coverUrl: null,
+      originType: 'source',
+      sourceInstance: null,
+      sourcePackId: null,
+      currentVersion: 1,
+      status: 'approved',
+      itemCount: 1,
+      createdAt: 1,
+      updatedAt: 1,
+      description: null,
+      reviewNotes: null,
+      reviewedBy: null,
+      reviewedAt: null,
+    };
+    vi.mocked(api.stickerStore.myPacks).mockResolvedValue([pack]);
+    render(<StickerPicker onSelect={vi.fn()} />);
+    const tab = await screen.findByRole('button', { name: 'Cute Cats' });
+    expect(tab).toHaveClass('shrink-0');
+    fireEvent.click(tab);
+    expect(tab).toHaveClass('ring-inset');
   });
 });

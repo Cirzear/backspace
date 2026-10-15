@@ -19,6 +19,10 @@ export function stickerAssetPath(id: string): string {
   return path.join(stickerAssetDir(), `${id}.webp`);
 }
 
+export function stickerPreviewPath(id: string): string {
+  return path.join(stickerAssetDir(), `${id}_preview.webp`);
+}
+
 /**
  * An asset younger than this is never removed. `sticker_assets.created_at` is
  * set again by every upload of the same bytes before the file is written, so
@@ -107,13 +111,19 @@ export function cleanupUnusedStickerAssets(dryRun: boolean, now: number = Date.n
 
   for (const id of candidates) {
     const filePath = stickerAssetPath(id);
-    const size = fileSize(filePath);
+    const pPath = stickerPreviewPath(id);
+    const size = fileSize(filePath) + fileSize(pPath);
     if (!dryRun) {
       try {
         fs.rmSync(filePath, { force: true });
       } catch (err) {
         result.errors.push(`Failed to delete sticker ${id}: ${(err as Error).message}`);
         continue;
+      }
+      try {
+        fs.rmSync(pPath, { force: true });
+      } catch {
+        // Preview file might not exist
       }
     }
     if (size > 0) result.deletedFiles += 1;

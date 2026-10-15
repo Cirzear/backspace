@@ -12,7 +12,7 @@ import { config } from '../config.js';
 import { getDb, schema } from '../db/index.js';
 import { authenticate } from '../utils/auth.js';
 import { getOurOrigin } from '../utils/federationAuth.js';
-import { stickerAssetPath as assetPath } from '../utils/stickerAssets.js';
+import { stickerAssetPath as assetPath, stickerPreviewPath } from '../utils/stickerAssets.js';
 import { sendError } from '../utils/httpErrors.js';
 import { createFixedWindowLimit } from '../utils/fixedWindowLimit.js';
 
@@ -33,6 +33,7 @@ export function getMaxStickerSizeBytes(): number {
 }
 /** Stored stickers fit this box; the largest place one is shown is a 240 px message row. */
 const MAX_STICKER_DIMENSION = 512;
+export const MAX_STICKER_PREVIEW_DIMENSION = 128;
 /** Bound decoded pixels across animation frames, not only the compressed upload size. */
 const MAX_DECODED_PIXELS = 67_108_864;
 
@@ -89,6 +90,18 @@ function collectSticker(input: { userId: string; id: string; name: string }): Pe
 }
 
 /**
+ * Compresses a sticker asset down to preview size (128px max) with WebP quality 65.
+ * Decodes all frames for animations to maintain lightweight animated preview.
+ */
+export async function encodeStickerPreview(bytes: Buffer): Promise<Buffer> {
+  const image = sharp(bytes, { animated: true, limitInputPixels: MAX_DECODED_PIXELS });
+  return await image.rotate()
+    .resize(MAX_STICKER_PREVIEW_DIMENSION, MAX_STICKER_PREVIEW_DIMENSION, { fit: 'inside', withoutEnlargement: true })
+    .webp({ quality: 65 })
+    .toBuffer();
+}
+
+/**
  * Persist an encoded sticker asset atomically and record it in sticker_assets.
  */
 export async function saveStickerAsset(encoded: Buffer): Promise<string> {
@@ -100,6 +113,18 @@ export async function saveStickerAsset(encoded: Buffer): Promise<string> {
   const temporaryPath = `${assetPath(id)}.${randomUUID()}.tmp`;
   await writeFile(temporaryPath, encoded);
   await rename(temporaryPath, assetPath(id));
+
+  // Also pre-generate compressed preview file
+  try {
+    const previewEncoded = await encodeStickerPreview(encoded);
+    const previewTemp = `${stickerPreviewPath(id)}.${randomUUID()}.tmp`;
+    await writeFile(previewTemp, previewEncoded);
+    await rename(previewTemp, stickerPreviewPath(id));
+  } catch (err) {
+    // Non-fatal if preview generation fails on save; on-demand will generate or fallback
+    console.error('Failed to pre-generate sticker preview:', err);
+  }
+
   return id;
 }
 
@@ -247,7 +272,10 @@ export async function stickerRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Same public-link access policy as existing uploads. Never accept a filesystem path or remote URL.
-  app.get<{ Params: { filename: string } }>('/api/stickers/assets/:filename', async (request, reply) => {
+  app.get<{
+    Params: { filename: string };
+    Querystring: { preview?: string; thumb?: string };
+  }>('/api/stickers/assets/:filename', async (request, reply) => {
     const id = request.params.filename.replace(/\.webp$/, '');
     if (!STICKER_ID_PATTERN.test(id) || request.params.filename !== `${id}.webp`) {
       return sendError(reply, 404, 'sticker_not_found');
@@ -255,14 +283,46 @@ export async function stickerRoutes(app: FastifyInstance): Promise<void> {
     const asset = getDb().select().from(schema.stickerAssets).where(eq(schema.stickerAssets.id, id)).get();
     // Resolve from the canonical stored key, never from the request path parameter.
     if (!asset || !STICKER_ID_PATTERN.test(asset.id)) return sendError(reply, 404, 'sticker_not_found');
+
+    const wantsPreview = request.query.preview !== undefined || request.query.thumb !== undefined;
     let bytes: Buffer;
-    try {
-      bytes = await readFile(assetPath(asset.id));
-    } catch (error) {
-      // A row whose file is gone (removed by hand, or lost with a restore) is a missing sticker, not a server fault.
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return sendError(reply, 404, 'sticker_not_found');
-      throw error;
+
+    if (wantsPreview) {
+      const pPath = stickerPreviewPath(asset.id);
+      try {
+        bytes = await readFile(pPath);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          // Preview not yet created; generate from original on demand and cache to disk
+          try {
+            const originalBytes = await readFile(assetPath(asset.id));
+            try {
+              bytes = await encodeStickerPreview(originalBytes);
+              const previewTemp = `${pPath}.${randomUUID()}.tmp`;
+              writeFile(previewTemp, bytes)
+                .then(() => rename(previewTemp, pPath))
+                .catch((writeErr) => console.error('Failed to cache sticker preview:', writeErr));
+            } catch {
+              bytes = originalBytes;
+            }
+          } catch (origErr) {
+            if ((origErr as NodeJS.ErrnoException).code === 'ENOENT') return sendError(reply, 404, 'sticker_not_found');
+            throw origErr;
+          }
+        } else {
+          throw err;
+        }
+      }
+    } else {
+      try {
+        bytes = await readFile(assetPath(asset.id));
+      } catch (error) {
+        // A row whose file is gone (removed by hand, or lost with a restore) is a missing sticker, not a server fault.
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return sendError(reply, 404, 'sticker_not_found');
+        throw error;
+      }
     }
+
     // The same sandbox as a served upload (routes/uploads.ts): the bytes are
     // always a re-encoded WebP, but the response never runs as a document.
     return reply.type('image/webp')
