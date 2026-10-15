@@ -458,7 +458,8 @@
       "deafenMembers": "Ensurdecer membros",
       "moveMembers": "Mover membros",
       "stream": "Transmitir",
-      "disconnectMembers": "Desconectar membros"
+      "disconnectMembers": "Desconectar membros",
+      "mentionEveryone": "Mencionar @everyone, @here e cargos"
     },
     "tristate": {
       "deny": "Negar",
@@ -530,7 +531,11 @@
         "description": "Tem certeza de que deseja sair deste espaço? Você precisará de um novo convite para entrar de novo."
       },
       "left": "Você saiu do espaço",
-      "leaveFailed": "Falha ao sair do espaço"
+      "leaveFailed": "Falha ao sair do espaço",
+      "unreadMessages_one": "{{count}} mensagem não lida",
+      "unreadMessages_many": "{{count}} mensagens não lidas",
+      "unreadMessages_other": "{{count}} mensagens não lidas",
+      "unreadMessagesOver99": "Mais de 99 mensagens não lidas"
     },
     "dmList": {
       "explore": "Explorar",
@@ -561,7 +566,11 @@
       "spaceMuted": "Silenciado no espaço",
       "spaceDeafened": "Ensurdecido no espaço",
       "permissionMuted": "Silenciado (sem permissão para falar)"
-    }
+    },
+    "dmUnreadMessages_one": "{{count}} mensagem direta não lida",
+    "dmUnreadMessages_many": "{{count}} mensagens diretas não lidas",
+    "dmUnreadMessages_other": "{{count}} mensagens diretas não lidas",
+    "dmUnreadMessagesOver99": "Mais de 99 mensagens diretas não lidas"
   },
   "channels": {
     "loading": "Carregando canais",
@@ -593,6 +602,25 @@
     "loading": "Carregando membros",
     "groups": {
       "owner": "Dono"
+    },
+    "ownerTitle": {
+      "edit": "Editar título do dono",
+      "label": "Título do dono",
+      "hint": "Visível para todos os membros deste espaço. De 1 a {{max}} caracteres; as permissões não mudam.",
+      "reset": "Restaurar título padrão"
+    },
+    "menu": {
+      "profile": "Ver perfil",
+      "nickname": "Alterar apelido no espaço…",
+      "roles": "Cargos"
+    },
+    "nickname": {
+      "title": "Alterar apelido no espaço",
+      "label": "Apelido no espaço",
+      "descriptionSelf": "Vale apenas neste espaço. O nome da sua conta e seus apelidos em outros espaços não mudam. Deixe em branco para mostrar o nome da conta.",
+      "descriptionOther": "Vale apenas neste espaço. O nome da conta de {{name}} não muda. Deixe em branco para mostrar o nome da conta.",
+      "reset": "Restaurar nome da conta",
+      "shownAs": "Apelido neste espaço: {{nickname}}"
     }
   },
   "mobile": {
@@ -674,6 +702,10 @@
     "mutedIndefinitely": "Silenciado até você reativar",
     "spaceMuted": "Este espaço está silenciado, então os canais dele também estão.",
     "mutedIndicator": "Silenciado",
-    "saveFailed": "Não foi possível salvar as configurações de notificação"
+    "saveFailed": "Não foi possível salvar as configurações de notificação",
+    "suppressEveryone": "Suprimir @everyone e @here",
+    "suppressRoles": "Suprimir menções a cargos",
+    "massHeading": "Menções em grupo",
+    "massNote": "@here alcança os mesmos membros que @everyone. Menções diretas a você sempre notificam."
   }
 }

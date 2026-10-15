@@ -1,3 +1,7 @@
+import { receiveChannelPoke } from '../components/chat/channelPoke';
+import { useChannelPokeStore } from '../stores/channelPokeStore';
+import { applySpaceMemberUpdate } from '../stores/spaceMemberUpdates';
+import { useUnreadCountStore } from '../stores/unreadCountStore';
 import React, { useEffect, useRef } from 'react';
 import { isMyIdentity, useAuthStore } from '../stores/authStore';
 import { useSpaceStore, getChannelOrigin, getMyUserIdForOrigin } from '../stores/spaceStore';
@@ -256,7 +260,19 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
   const { addVoiceUser, removeVoiceUser, clearVoiceUsersForOrigin, setVoiceUsers, setVoiceChannelElapsedSeconds, setVoiceUserStatus, clearVoiceUserStatus } = useVoiceStore.getState();
 
   switch (event.type) {
+    case 'channel_poke':
+      // The stored row joins the timeline as a passive system message (no
+      // unread dot, sound or notification; chatStore keeps channel system
+      // rows out of realtimeMessageEvents), then the cue plays for viewers.
+      if (event.message.user) upsertUserView(event.message.user, origin);
+      addRealtimeMessage(event.message.channelId, event.message);
+      receiveChannelPoke(origin, event.message);
+      break;
+    case 'channel_unread_count':
+      useUnreadCountStore.getState().updateCounts(origin, event.counts);
+      break;
     case 'ready':
+      useChannelPokeStore.getState().setHost(origin, event.supportsPoke === true);
       // This instance names the signed-in user's row there (the home's is the
       // session row itself, set below). The one record of "my ids".
       if (!isHome) useAuthStore.getState().recordMyRow(origin, event.user.id);
@@ -367,6 +383,7 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
         }
       }
 
+      useUnreadCountStore.getState().hydrate(origin, event.unreadCounts);
       // Initialize/update unread tracking for this origin (home or remote)
       if (event.readStates) {
         const { channelLastMessageIds, channelOriginMap } = useSpaceStore.getState();
@@ -648,7 +665,7 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
         const { voiceChannelIds } = useSpaceStore.getState();
         const myId = isHome ? useAuthStore.getState().user?.id : getMyUserIdForOrigin(origin);
         // Skip voice channels — they have no text reading/acking UI
-        if (event.message.channelId !== currentChannelId && event.message.userId !== myId && !voiceChannelIds.has(event.message.channelId)) {
+        if (event.message.type !== 'system' && event.message.channelId !== currentChannelId && event.message.userId !== myId && !voiceChannelIds.has(event.message.channelId)) {
           markChannelUnread(event.message.channelId);
         }
       }
@@ -828,6 +845,9 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
       if (isLoadedRosterSpace(event.spaceId, origin)) addMember(event.spaceId, event.member);
       break;
 
+    case 'member_updated':
+      if (event.spaceId === event.member.spaceId) applySpaceMemberUpdate(origin, event.member);
+      break;
     case 'member_left':
       if (isLoadedRosterSpace(event.spaceId, origin)) removeMember(event.spaceId, event.userId);
       break;

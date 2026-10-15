@@ -96,3 +96,70 @@ export const GROUP_DM_ICON_MIME_PREFIX = 'image/';
  * and the server's never disagree.
  */
 export const PASSWORD_MIN_LENGTH = 8;
+
+// ─── Space Nickname and Owner Title Constants ────────────────────────────────
+
+/**
+ * The longest space nickname (a member's name in one space, separate from the
+ * account name), counted in UTF-16 code units after `normalizeMemberNickname`,
+ * the same unit an input's `maxLength` counts in. Longer ones are refused.
+ */
+export const MAX_MEMBER_NICKNAME_LENGTH = 32;
+
+/** Control characters, line and paragraph separators, and bidirectional embedding, override and isolate marks. */
+const NICKNAME_FORBIDDEN = /[\p{Cc}\u2028\u2029\u202A-\u202E\u2066-\u2069]/u;
+
+/** Characters that draw nothing: format characters (zero-width space, joiners), whitespace and the Hangul fillers. */
+const NICKNAME_INVISIBLE = /[\p{Cf}\p{White_Space}\u115F\u1160\u3164\uFFA0]/gu;
+
+/**
+ * The form a space nickname is stored in, or `undefined` when the value is not
+ * a nickname. `null`, and a string that trims to nothing, clear the nickname
+ * (stored as null, so the account name shows). A nickname is trimmed and
+ * refused when it is longer than MAX_MEMBER_NICKNAME_LENGTH, holds a control
+ * character, a line break or a bidirectional control, or has no visible
+ * character. The server applies it on `PATCH /api/spaces/:id/members/:uid`,
+ * and the client applies it before sending so both refuse the same values.
+ */
+export function normalizeMemberNickname(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+  if (trimmed.length > MAX_MEMBER_NICKNAME_LENGTH) return undefined;
+  return isVisibleSingleLine(trimmed) ? trimmed : undefined;
+}
+
+/**
+ * Whether a trimmed, non-empty label may be shown as a name or heading: no
+ * control character, line break or bidirectional control, and at least one
+ * visible character. Shared by nicknames, owner titles and sticker names.
+ */
+export function isVisibleSingleLine(trimmed: string): boolean {
+  if (NICKNAME_FORBIDDEN.test(trimmed)) return false;
+  return trimmed.replace(NICKNAME_INVISIBLE, '').length > 0;
+}
+
+/**
+ * The longest owner title (the heading over a space's owner in its member
+ * list), counted in UTF-16 code units after `normalizeOwnerTitle`, the unit an
+ * input's `maxLength` counts in.
+ */
+export const MAX_OWNER_TITLE_LENGTH = 32;
+
+/**
+ * The form an owner title is stored in, or `undefined` when the value is not
+ * one. `null` resets the heading to the translated default. A string is
+ * trimmed and refused when it trims to nothing, is longer than
+ * MAX_OWNER_TITLE_LENGTH, or fails the rule nicknames follow (control
+ * characters, line breaks, bidirectional controls, nothing visible). Unlike a
+ * nickname, a blank title does not reset: only `null` does. The server applies
+ * it on `PATCH /api/spaces/:id`, and the client applies it before sending.
+ */
+export function normalizeOwnerTitle(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > MAX_OWNER_TITLE_LENGTH) return undefined;
+  return isVisibleSingleLine(trimmed) ? trimmed : undefined;
+}

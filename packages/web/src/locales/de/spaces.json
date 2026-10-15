@@ -455,7 +455,8 @@
       "deafenMembers": "Mitgliedern den Ton ausschalten",
       "moveMembers": "Mitglieder verschieben",
       "stream": "Streamen",
-      "disconnectMembers": "Mitglieder trennen"
+      "disconnectMembers": "Mitglieder trennen",
+      "mentionEveryone": "@everyone, @here und Rollen erwähnen"
     },
     "tristate": {
       "deny": "Verbieten",
@@ -523,7 +524,10 @@
         "description": "Willst du diesen Space wirklich verlassen? Zum erneuten Beitreten brauchst du eine neue Einladung."
       },
       "left": "Du hast den Space verlassen",
-      "leaveFailed": "Space konnte nicht verlassen werden"
+      "leaveFailed": "Space konnte nicht verlassen werden",
+      "unreadMessages_one": "{{count}} ungelesene Nachricht",
+      "unreadMessages_other": "{{count}} ungelesene Nachrichten",
+      "unreadMessagesOver99": "Mehr als 99 ungelesene Nachrichten"
     },
     "dmList": {
       "explore": "Entdecken",
@@ -554,7 +558,10 @@
       "spaceMuted": "Im Space stummgeschaltet",
       "spaceDeafened": "Ton im Space ausgeschaltet",
       "permissionMuted": "Stummgeschaltet (keine Sprechberechtigung)"
-    }
+    },
+    "dmUnreadMessages_one": "{{count}} ungelesene Direktnachricht",
+    "dmUnreadMessages_other": "{{count}} ungelesene Direktnachrichten",
+    "dmUnreadMessagesOver99": "Mehr als 99 ungelesene Direktnachrichten"
   },
   "channels": {
     "loading": "Kanäle werden geladen",
@@ -585,6 +592,25 @@
     "loading": "Mitglieder werden geladen",
     "groups": {
       "owner": "Besitzer"
+    },
+    "ownerTitle": {
+      "edit": "Besitzertitel bearbeiten",
+      "label": "Besitzertitel",
+      "hint": "Für alle Mitglieder dieses Spaces sichtbar. 1 bis {{max}} Zeichen; Berechtigungen bleiben unverändert.",
+      "reset": "Standard wiederherstellen"
+    },
+    "menu": {
+      "profile": "Profil anzeigen",
+      "nickname": "Space-Spitznamen ändern…",
+      "roles": "Rollen"
+    },
+    "nickname": {
+      "title": "Space-Spitznamen ändern",
+      "label": "Space-Spitzname",
+      "descriptionSelf": "Gilt nur in diesem Space. Dein Kontoname und deine Spitznamen in anderen Spaces bleiben gleich. Leer lassen, um deinen Kontonamen zu zeigen.",
+      "descriptionOther": "Gilt nur in diesem Space. Der Kontoname von {{name}} bleibt gleich. Leer lassen, um den Kontonamen zu zeigen.",
+      "reset": "Auf Kontonamen zurücksetzen",
+      "shownAs": "Spitzname in diesem Space: {{nickname}}"
     }
   },
   "mobile": {
@@ -663,6 +689,10 @@
     "mutedIndefinitely": "Stummgeschaltet, bis du es aufhebst",
     "spaceMuted": "Dieser Space ist stummgeschaltet, damit auch seine Kanäle.",
     "mutedIndicator": "Stummgeschaltet",
-    "saveFailed": "Benachrichtigungseinstellungen konnten nicht gespeichert werden"
+    "saveFailed": "Benachrichtigungseinstellungen konnten nicht gespeichert werden",
+    "suppressEveryone": "@everyone und @here unterdrücken",
+    "suppressRoles": "Rollenerwähnungen unterdrücken",
+    "massHeading": "Gruppenerwähnungen",
+    "massNote": "@here erreicht dieselben Mitglieder wie @everyone. Erwähnungen von dir mit Namen benachrichtigen dich immer."
   }
 }

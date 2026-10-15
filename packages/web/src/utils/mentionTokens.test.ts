@@ -1,42 +1,59 @@
 import { describe, it, expect } from 'vitest';
-import { contentMentionsAny, splitMentionTokens } from './mentionTokens';
+import { contentMentionsAny, splitMentions } from './mentionTokens';
 
-describe('splitMentionTokens', () => {
+describe('splitMentions', () => {
   it('splits a token out of the surrounding text', () => {
-    expect(splitMentionTokens('hi <@U1> there')).toEqual([
+    expect(splitMentions('hi <@U1> there')).toEqual([
       { kind: 'text', text: 'hi ' },
-      { kind: 'mention', userId: 'U1' },
+      { kind: 'user', userId: 'U1', token: '<@U1>' },
       { kind: 'text', text: ' there' },
     ]);
   });
 
   it('keeps a token inside an inline code span as text', () => {
-    expect(splitMentionTokens('see `<@U1>` and <@U2>')).toEqual([
+    expect(splitMentions('see `<@U1>` and <@U2>')).toEqual([
       { kind: 'text', text: 'see `<@U1>` and ' },
-      { kind: 'mention', userId: 'U2' },
+      { kind: 'user', userId: 'U2', token: '<@U2>' },
     ]);
   });
 
   it('keeps a token inside a fenced block as text', () => {
-    expect(splitMentionTokens('```\n<@U1>\n```')).toEqual([{ kind: 'text', text: '```\n<@U1>\n```' }]);
+    expect(splitMentions('```\n<@U1>\n```')).toEqual([{ kind: 'text', text: '```\n<@U1>\n```' }]);
   });
 
   it('treats a token after an unclosed backtick as a mention', () => {
-    expect(splitMentionTokens('a ` <@U1>')).toEqual([
+    expect(splitMentions('a ` <@U1>')).toEqual([
       { kind: 'text', text: 'a ` ' },
-      { kind: 'mention', userId: 'U1' },
+      { kind: 'user', userId: 'U1', token: '<@U1>' },
     ]);
   });
 
   it('returns adjacent tokens without empty text between them', () => {
-    expect(splitMentionTokens('<@A><@B>')).toEqual([
-      { kind: 'mention', userId: 'A' },
-      { kind: 'mention', userId: 'B' },
+    expect(splitMentions('<@A><@B>')).toEqual([
+      { kind: 'user', userId: 'A', token: '<@A>' },
+      { kind: 'user', userId: 'B', token: '<@B>' },
     ]);
   });
 
+  it('splits role tokens and @everyone / @here out as mass mentions', () => {
+    expect(splitMentions('<@&R1> and @everyone, @here!')).toEqual([
+      { kind: 'role', roleId: 'R1', token: '<@&R1>' },
+      { kind: 'text', text: ' and ' },
+      { kind: 'everyone', keyword: 'everyone', token: '@everyone' },
+      { kind: 'text', text: ', ' },
+      { kind: 'everyone', keyword: 'here', token: '@here' },
+      { kind: 'text', text: '!' },
+    ]);
+  });
+
+  it('keeps @everyone inside a word, an address, code or a longer name as text', () => {
+    for (const content of ['mail@everyone', '@@here', '@everyone-else', '@heres', '`@everyone`', '```\n<@&R1>\n```']) {
+      expect(splitMentions(content)).toEqual([{ kind: 'text', text: content }]);
+    }
+  });
+
   it('returns nothing for empty content', () => {
-    expect(splitMentionTokens('')).toEqual([]);
+    expect(splitMentions('')).toEqual([]);
   });
 });
 

@@ -142,20 +142,32 @@ export function aiHeaders(connection: StoredConnection): Record<string, string> 
   return headers;
 }
 
+function stripTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url.charCodeAt(end - 1) === 47 /* '/' */) {
+    end--;
+  }
+  return url.slice(0, end);
+}
+
+const HTML_ENTITIES: Record<string, string> = {
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&quot;': '"',
+  '&#39;': "'",
+  '&#x27;': "'",
+  '&#x2F;': '/',
+  '&#x2f;': '/',
+};
+
 function unescapeHtml(str: string): string {
-  return str
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#x27;/g, "'")
-    .replace(/&#x2F;/g, '/');
+  return str.replace(/&(?:amp|lt|gt|quot|#39|#x27|#x2[Ff]);/g, (m) => HTML_ENTITIES[m] ?? m);
 }
 
 async function translateGoogle(options: AiRequest): Promise<string> {
   const { connection, text, target, fetcher } = options;
-  const url = `${connection.baseUrl.replace(/\/+$/, '')}/language/translate/v2`;
+  const url = `${stripTrailingSlashes(connection.baseUrl)}/language/translate/v2`;
   const headers = aiHeaders(connection);
   const body = JSON.stringify({
     q: [text],
@@ -188,7 +200,7 @@ async function translateGoogle(options: AiRequest): Promise<string> {
 async function translateMicrosoft(options: AiRequest): Promise<string> {
   const { connection, text, target, fetcher } = options;
   const msTarget = { 'zh-CN': 'zh-Hans', 'zh-TW': 'zh-Hant' }[target as 'zh-CN' | 'zh-TW'] ?? target;
-  const url = `${connection.baseUrl.replace(/\/+$/, '')}/translate?api-version=3.0&to=${encodeURIComponent(msTarget)}`;
+  const url = `${stripTrailingSlashes(connection.baseUrl)}/translate?api-version=3.0&to=${encodeURIComponent(msTarget)}`;
   const headers = aiHeaders(connection);
   const body = JSON.stringify([{ Text: text }]);
   const response = await requestText({
@@ -222,11 +234,18 @@ export function extractTranslationJson(rawText: string): Record<string, unknown>
     return record(JSON.parse(text));
   } catch {}
 
-  const fenceMatch = /```(?:json)?\s*([\s\S]*?)\s*```/i.exec(text);
-  if (fenceMatch) {
-    try {
-      return record(JSON.parse(fenceMatch[1]!.trim()));
-    } catch {}
+  const fenceStart = text.indexOf('```');
+  if (fenceStart !== -1) {
+    const fenceEnd = text.indexOf('```', fenceStart + 3);
+    if (fenceEnd !== -1) {
+      let block = text.slice(fenceStart + 3, fenceEnd).trim();
+      if (block.toLowerCase().startsWith('json')) {
+        block = block.slice(4).trim();
+      }
+      try {
+        return record(JSON.parse(block));
+      } catch {}
+    }
   }
 
   const firstBrace = text.indexOf('{');

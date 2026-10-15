@@ -15,10 +15,11 @@ import { usePortalContainer } from '../../hooks/usePortalContainer';
 
 // ── Desktop item button ──────────────────────────────────────────────────────
 
+// An item the arrow keys moved to looks like a hovered one.
 const ITEM_CLASS =
-  'w-full text-left px-2 py-1.5 mx-1.5 text-sm rounded-sm flex items-center gap-2 text-txt-secondary hover:bg-accent-primary hover:text-white';
+  'w-full text-left px-2 py-1.5 mx-1.5 text-sm rounded-sm flex items-center gap-2 text-txt-secondary hover:bg-accent-primary hover:text-white outline-none focus-visible:bg-accent-primary focus-visible:text-white';
 const ITEM_DANGER_CLASS =
-  'w-full text-left px-2 py-1.5 mx-1.5 text-sm rounded-sm flex items-center gap-2 text-txt-danger hover:bg-accent-rose hover:text-white';
+  'w-full text-left px-2 py-1.5 mx-1.5 text-sm rounded-sm flex items-center gap-2 text-txt-danger hover:bg-accent-rose hover:text-white outline-none focus-visible:bg-accent-rose focus-visible:text-white';
 const ITEM_DISABLED_CLASS =
   'w-full text-left px-2 py-1.5 mx-1.5 text-sm rounded-sm flex items-center gap-2 text-txt-secondary opacity-50 cursor-default';
 const ITEM_STYLE: React.CSSProperties = { width: 'calc(100% - 12px)' };
@@ -52,17 +53,24 @@ interface ReactiveCheckboxItemProps {
   isMobile?: boolean;
 }
 
+const checkboxEnabled = () => false;
+
 function ReactiveCheckboxItem({ item, isMobile }: ReactiveCheckboxItemProps) {
   const checked = useSyncExternalStore(item.subscribe, item.getChecked);
+  const disabled = useSyncExternalStore(item.subscribe, item.getDisabled ?? checkboxEnabled);
 
   const className = isMobile
-    ? `${MOBILE_ITEM_CLASS} text-txt-primary`
-    : ITEM_CLASS;
+    ? `${MOBILE_ITEM_CLASS} text-txt-primary disabled:opacity-50`
+    : disabled ? ITEM_DISABLED_CLASS : ITEM_CLASS;
 
   return (
     <button
+      type="button"
       className={className}
       style={isMobile ? undefined : ITEM_STYLE}
+      role="menuitemcheckbox"
+      aria-checked={checked}
+      disabled={disabled}
       onClick={(e) => {
         e.stopPropagation();
         item.onChange(!checked);
@@ -74,7 +82,38 @@ function ReactiveCheckboxItem({ item, isMobile }: ReactiveCheckboxItemProps) {
   );
 }
 
+// Flyouts are portals: handle activation here instead of letting it bubble to
+// the parent menu, whose DOM does not contain the focused checkbox.
+function handleMenuNavigation(event: React.KeyboardEvent, container: HTMLElement | null): void {
+  if (!container) return;
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    event.stopPropagation();
+    const focused = document.activeElement;
+    if (focused instanceof HTMLButtonElement && container.contains(focused)) focused.click();
+    return;
+  }
+  if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>('button:not([disabled])'));
+  const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+  const delta = event.key === 'ArrowDown' ? 1 : -1;
+  const next = index < 0 && delta > 0 ? 0 : (Math.max(index, 0) + delta + buttons.length) % buttons.length;
+  buttons[next]?.focus();
+}
+
 // ── Desktop submenu flyout ───────────────────────────────────────────────────
+
+/**
+ * Keeps the browser's own menu from opening over ours. Chromium fires a
+ * `contextmenu` event on keyup of the Menu key, after our keydown has already
+ * opened the menu and moved focus into it, so that event lands on the panel.
+ * A right-click on the panel lands here too.
+ */
+function suppressNativeMenu(event: React.MouseEvent): void {
+  event.preventDefault();
+}
 
 interface SubmenuFlyoutProps {
   submenu: ContextMenuSubmenu;
@@ -114,11 +153,34 @@ function SubmenuFlyout({ submenu, triggerRef, onMouseEnter, onMouseLeave, close 
     flyout.style.top = `${top}px`;
   }, [triggerRef]);
 
+  useEffect(() => {
+    // Keyboard-opened flyouts receive focus; hovering must not steal it.
+    if (document.activeElement === triggerRef.current) {
+      flyoutRef.current?.querySelector<HTMLButtonElement>('button:not([disabled])')?.focus();
+    }
+  }, [triggerRef]);
+
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (['Escape', 'ArrowLeft'].includes(event.key)) {
+      event.preventDefault();
+      event.stopPropagation();
+      useContextMenuStore.getState().setOpenSubmenu(null);
+      triggerRef.current?.focus();
+      return;
+    }
+    handleMenuNavigation(event, flyoutRef.current);
+
+  };
+
   if (filteredChildren.length === 0) return null;
 
   return createPortal(
     <div
       ref={flyoutRef}
+      role="menu"
+      aria-label={submenu.label}
+      onKeyDown={handleKeyDown}
+      onContextMenu={suppressNativeMenu}
       className="fixed z-[210] glass rounded-md py-1.5 min-w-[160px] overflow-y-auto scrollbar-thin animate-fade-in"
       style={{ left: -9999, top: -9999 }}
       onMouseEnter={onMouseEnter}
@@ -143,10 +205,10 @@ interface DesktopLeafItemProps {
 function DesktopLeafItem({ item, close }: DesktopLeafItemProps) {
   switch (item.type) {
     case 'separator':
-      return <div className="h-px bg-white/[0.06] my-1 mx-1.5" />; // i18n-check: allow-literal (the check reads the following `case` as JSX text)
+      return <div role="separator" className="h-px bg-white/[0.06] my-1 mx-1.5" />; // i18n-check: allow-literal (the check reads the following `case` as JSX text)
 
     case 'custom':
-      return <div>{item.render(close)}</div>; // i18n-check: allow-literal (the check reads the following `case` as JSX text)
+      return <div role="group">{item.render(close)}</div>; // i18n-check: allow-literal (the check reads the following `case` as JSX text)
 
     case 'checkbox':
       return <ReactiveCheckboxItem item={item} />;
@@ -159,6 +221,8 @@ function DesktopLeafItem({ item, close }: DesktopLeafItemProps) {
           : ITEM_CLASS;
       return (
         <button
+          type="button"
+          role="menuitem"
           className={className}
           style={ITEM_STYLE}
           disabled={item.disabled}
@@ -238,6 +302,17 @@ function DesktopSubmenuItem({ item, close }: DesktopSubmenuItemProps) {
     <>
       <button
         ref={triggerRef}
+        type="button"
+        role="menuitem"
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+        onClick={() => setOpenSubmenu(isOpen ? null : item.key)}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowRight') return;
+          event.preventDefault();
+          event.stopPropagation();
+          setOpenSubmenu(item.key);
+        }}
         className={ITEM_CLASS}
         style={ITEM_STYLE}
         onMouseEnter={handleTriggerEnter}
@@ -302,10 +377,20 @@ function DesktopMenu({ items, position, close, closeGuard }: DesktopMenuProps) {
     el.style.top = `${y}px`;
   }, [position]);
 
-  // Auto-focus on mount for keyboard nav
+  // Auto-focus on mount for keyboard nav. The element focused before (the row
+  // a keyboard user opened the menu from) gets focus back when the menu
+  // closes, unless an action moved focus elsewhere, such as a dialog it opened.
+  // Read during the first render, before the menu takes focus: an effect
+  // that runs twice (React's development checks) would otherwise record the
+  // menu itself.
+  const [opener] = useState(() => (document.activeElement instanceof HTMLElement ? document.activeElement : null));
   useEffect(() => {
     menuRef.current?.focus();
-  }, []);
+    return () => {
+      const active = document.activeElement;
+      if (opener?.isConnected && (!active || active === document.body)) opener.focus();
+    };
+  }, [opener]);
 
   // Dismiss on scroll/resize
   useEffect(() => {
@@ -318,72 +403,18 @@ function DesktopMenu({ items, position, close, closeGuard }: DesktopMenuProps) {
     };
   }, [close]);
 
-  // Keyboard navigation
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLDivElement>) => {
-      const container = menuRef.current;
-      if (!container) return;
-
-      const focusableSelector = 'button:not([disabled])';
-
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        // Close submenu first if open, otherwise close the whole menu
-        const openSubmenuKey = useContextMenuStore.getState().openSubmenuKey;
-        if (openSubmenuKey) {
-          useContextMenuStore.getState().setOpenSubmenu(null);
-        } else {
-          close();
-        }
-        return;
+  const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape' || event.key === 'ArrowLeft') {
+      event.preventDefault();
+      if (useContextMenuStore.getState().openSubmenuKey) {
+        useContextMenuStore.getState().setOpenSubmenu(null);
+      } else if (event.key === 'Escape') {
+        close();
       }
-
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        const buttons = Array.from(container.querySelectorAll<HTMLElement>(focusableSelector));
-        if (buttons.length === 0) return;
-        const currentIndex = buttons.indexOf(document.activeElement as HTMLElement);
-        let nextIndex: number;
-        if (e.key === 'ArrowDown') {
-          nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % buttons.length;
-        } else {
-          nextIndex = currentIndex <= 0 ? buttons.length - 1 : currentIndex - 1;
-        }
-        buttons[nextIndex]?.focus();
-        return;
-      }
-
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        const focused = document.activeElement;
-        if (focused instanceof HTMLButtonElement && container.contains(focused)) {
-          focused.click();
-        }
-        return;
-      }
-
-      if (e.key === 'ArrowRight') {
-        // Open submenu if focused item is a submenu trigger
-        e.preventDefault();
-        const focused = document.activeElement;
-        if (focused instanceof HTMLButtonElement) {
-          // Simulate mouse enter to open the submenu
-          focused.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-        }
-        return;
-      }
-
-      if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        const openSubmenuKey = useContextMenuStore.getState().openSubmenuKey;
-        if (openSubmenuKey) {
-          useContextMenuStore.getState().setOpenSubmenu(null);
-        }
-        return;
-      }
-    },
-    [close],
-  );
+      return;
+    }
+    handleMenuNavigation(event, menuRef.current);
+  }, [close]);
 
   return createPortal(
     <>
@@ -405,10 +436,12 @@ function DesktopMenu({ items, position, close, closeGuard }: DesktopMenuProps) {
       {/* Menu panel */}
       <div
         ref={menuRef}
+        role="menu"
         tabIndex={-1}
         className="fixed z-[200] min-w-[180px] py-1.5 glass rounded-md animate-fade-in max-h-[calc(calc(100*var(--app-vh))-16px)] overflow-y-auto scrollbar-thin outline-none"
         style={{ left: position.x, top: position.y }}
         onKeyDown={handleKeyDown}
+        onContextMenu={suppressNativeMenu}
         onMouseDown={(e) => e.stopPropagation()}
       >
         {items.map((item) => (
@@ -430,10 +463,10 @@ interface MobileLeafItemProps {
 function MobileLeafItem({ item, close }: MobileLeafItemProps) {
   switch (item.type) {
     case 'separator':
-      return <div className="h-px bg-white/[0.06] my-1 mx-1.5" />; // i18n-check: allow-literal (the check reads the following `case` as JSX text)
+      return <div role="separator" className="h-px bg-white/[0.06] my-1 mx-1.5" />; // i18n-check: allow-literal (the check reads the following `case` as JSX text)
 
     case 'custom':
-      return <div>{item.render(close)}</div>; // i18n-check: allow-literal (the check reads the following `case` as JSX text)
+      return <div role="group">{item.render(close)}</div>; // i18n-check: allow-literal (the check reads the following `case` as JSX text)
 
     case 'checkbox':
       return <ReactiveCheckboxItem item={item} isMobile />;
@@ -442,6 +475,8 @@ function MobileLeafItem({ item, close }: MobileLeafItemProps) {
       const colorClass = item.danger ? 'text-txt-danger' : 'text-txt-primary';
       return (
         <button
+          type="button"
+          role="menuitem"
           className={`${MOBILE_ITEM_CLASS} ${colorClass} ${item.disabled ? 'opacity-50' : ''}`}
           disabled={item.disabled}
           onClick={(e) => {
@@ -493,13 +528,17 @@ function MobileMenu({ items, close }: MobileMenuProps) {
       <div className="fixed inset-0 z-[300] bg-black/50" onClick={close} />
       {/* Bottom sheet */}
       <div
+        role="menu"
+        aria-label={submenuStack?.label}
         className="fixed bottom-0 left-0 right-0 z-[301] rounded-t-2xl glass-bubble animate-slide-up-sheet"
         style={{ paddingBottom: 'var(--safe-bottom)' }}
       >
-        <div className="w-10 h-1 bg-txt-tertiary/30 rounded-full mx-auto mt-2 mb-1" />
+        <div aria-hidden="true" className="w-10 h-1 bg-txt-tertiary/30 rounded-full mx-auto mt-2 mb-1" />
         {/* Back button for submenu */}
         {submenuStack && (
           <button
+            type="button"
+            role="menuitem"
             className={`${MOBILE_ITEM_CLASS} text-txt-secondary`}
             onClick={() => setSubmenuStack(null)}
           >
@@ -509,7 +548,7 @@ function MobileMenu({ items, close }: MobileMenuProps) {
             <span>{t('actions.back')}</span>
           </button>
         )}
-        <div className="py-1">
+        <div role="none" className="py-1">
           {currentItems.map((item) => {
             if (item.type === 'submenu') {
               // Render submenu trigger as a button that switches sheet content
@@ -517,6 +556,9 @@ function MobileMenu({ items, close }: MobileMenuProps) {
               return (
                 <button
                   key={item.key}
+                  type="button"
+                  role="menuitem"
+                  aria-haspopup="menu"
                   className={`${MOBILE_ITEM_CLASS} ${colorClass}`}
                   onClick={(e) => {
                     e.stopPropagation();

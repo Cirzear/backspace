@@ -194,8 +194,43 @@
     {
       "idx": 27,
       "version": "6",
-      "when": 1791536400000,
-      "tag": "0027_ai_translation",
+      "when": 1791751492187,
+      "tag": "0027_unread_count_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "6",
+      "when": 1791753591416,
+      "tag": "0028_mass_mention_preferences",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1791769904748,
+      "tag": "0029_persistent_channel_pokes",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1791771387548,
+      "tag": "0030_space_owner_title",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1791785539220,
+      "tag": "0031_personal_stickers",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1791785600000,
+      "tag": "0032_ai_translation",
       "breakpoints": true
     }
   ]

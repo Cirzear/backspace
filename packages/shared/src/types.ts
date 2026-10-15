@@ -130,6 +130,12 @@ export interface Space {
   banner: string | null;
   avatarColor: AvatarColor | null;
   ownerId: string;
+  /**
+   * The owner group's heading in the member list, null for the default
+   * ("Owner"). Absent from instances up to 1.10.0, which do not keep it; the
+   * client reads it through `ownerGroupTitle` and `hostKeepsOwnerTitle`.
+   */
+  ownerTitle: string | null;
   inviteCode: string | null;
   visibility: SpaceVisibility;
   directoryListed: boolean;
@@ -362,10 +368,14 @@ export function isNotificationMuteDuration(value: unknown): value is Notificatio
  * (epoch ms, the server's clock). A mute that has ended reads as not muted.
  *
  * `updatedAt` is the server's write time. A setting with no choice left
- * (`level` null and not muted) is not stored, and is sent as such so other
+ * (`level` null, not muted and no mass-mention suppression) is not stored,
+ * and is sent as such so other
  * sessions drop theirs.
  */
 export interface NotificationSetting {
+  /** Space-wide suppression of mass mentions; omitted means false. Direct mentions are unaffected. */
+  suppressEveryone?: boolean;
+  suppressRoles?: boolean;
   spaceId: string;
   channelId: string | null;
   level: NotificationLevel | null;
@@ -381,6 +391,9 @@ export interface NotificationSetting {
  * `mute: null` lifts the mute.
  */
 export interface UpdateNotificationSettingRequest {
+  /** Only accepted for space settings, not channel overrides. */
+  suppressEveryone?: boolean;
+  suppressRoles?: boolean;
   level?: NotificationLevel | null;
   mute?: NotificationMuteDuration | null;
 }
@@ -405,6 +418,8 @@ export type NotificationLevelSource = 'channel' | 'space' | 'default';
  * the channel and the space muted it is the later of the two ends.
  */
 export interface ChannelNotificationPolicy {
+  suppressEveryone: boolean;
+  suppressRoles: boolean;
   level: NotificationLevel;
   levelSource: NotificationLevelSource;
   muted: boolean;
@@ -443,7 +458,11 @@ export function resolveChannelNotificationPolicy(
   if (ends.length > 0 && !ends.includes(null)) {
     mutedUntil = Math.max(...ends.filter((end): end is number => end !== null));
   }
-  return { level, levelSource, muted: channelMuted || spaceMuted, mutedUntil, channelMuted, spaceMuted };
+  return {
+    level, levelSource, muted: channelMuted || spaceMuted, mutedUntil, channelMuted, spaceMuted,
+    suppressEveryone: spaceSetting?.suppressEveryone === true,
+    suppressRoles: spaceSetting?.suppressRoles === true,
+  };
 }
 
 // ─── Message Types ──────────────────────────────────────────────────────────
@@ -457,6 +476,16 @@ export interface Message {
   type?: 'user' | 'system';
   editedAt: number | null;
   createdAt: number;
+  /**
+   * Space channel messages only, set by the instance hosting the space
+   * (`massMentionFields` in `mentions.ts`): the content has `@everyone` or
+   * `@here`, and the role ids it mentions. That instance stores a new mass
+   * mention only from an author holding MENTION_EVERYONE, so a client alerts
+   * on mass mentions from these fields alone. Absent from instances before
+   * MENTION_EVERYONE, whose mass mentions therefore never alert.
+   */
+  mentionEveryone?: boolean;
+  mentionRoleIds?: string[];
 }
 
 export interface MessageWithUser extends Message {
@@ -667,6 +696,7 @@ export type ClientEvent =
   | { type: 'message_create'; channelId: string; content: string; replyToId?: string }
   | { type: 'message_edit'; messageId: string; content: string }
   | { type: 'message_delete'; messageId: string }
+  | { type: 'channel_poke'; channelId: string; targetUserId: string }
   | { type: 'typing_start'; channelId: string }
   | { type: 'presence_update'; status: ChosenUserStatus }
   | { type: 'voice_join'; channelId: string }
@@ -705,7 +735,9 @@ export interface PresenceIdentity {
 
 // Server → Client Events
 export type ServerEvent =
-  | { type: 'ready'; user: User; spaces: SpaceWithChannelsAndMembers[]; dmChannels: DmChannel[]; folders?: SpaceFolder[]; spaceLayout?: SpaceLayoutItem[] | null; layoutUpdatedAt?: number; voiceStates?: Record<string, string[]>; voiceChannelElapsedSeconds?: Record<string, number>; voiceUserStates?: Record<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }>; readStates?: ReadState[]; activeCalls?: ActiveCallInfo[]; spaceVoiceStates?: Record<string, { spaceMuted: boolean; spaceDeafened: boolean }>; userActivities?: Record<string, Activity[]>; userActivityIdentities?: Record<string, PresenceIdentity>; rejectedPeerOrigins?: string[]; awaitingApprovalPeerOrigins?: string[]; activePeerOrigins?: string[]; pendingApprovalCount?: number }
+  | { type: 'channel_poke'; message: MessageWithUser }
+  | { type: 'ready'; user: User; spaces: SpaceWithChannelsAndMembers[]; dmChannels: DmChannel[]; folders?: SpaceFolder[]; spaceLayout?: SpaceLayoutItem[] | null; layoutUpdatedAt?: number; voiceStates?: Record<string, string[]>; voiceChannelElapsedSeconds?: Record<string, number>; voiceUserStates?: Record<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }>; supportsPoke?: boolean; unreadCounts?: Record<string, number>; readStates?: ReadState[]; activeCalls?: ActiveCallInfo[]; spaceVoiceStates?: Record<string, { spaceMuted: boolean; spaceDeafened: boolean }>; userActivities?: Record<string, Activity[]>; userActivityIdentities?: Record<string, PresenceIdentity>; rejectedPeerOrigins?: string[]; awaitingApprovalPeerOrigins?: string[]; activePeerOrigins?: string[]; pendingApprovalCount?: number }
+  | { type: 'channel_unread_count'; counts: Record<string, number> }
   | { type: 'message_created'; message: MessageWithUser }
   | { type: 'message_updated'; message: MessageWithUser }
   | { type: 'message_deleted'; messageId: string; channelId: string }
@@ -713,6 +745,7 @@ export type ServerEvent =
   | ({ type: 'presence_update'; userId: string; status: string; activities?: Activity[] } & Partial<PresenceIdentity>)
   | { type: 'voice_state_update'; channelId: string; userId: string; action: 'join' | 'leave'; channelElapsedSeconds?: number }
   | { type: 'member_joined'; spaceId: string; member: MemberWithUser }
+  | { type: 'member_updated'; spaceId: string; member: MemberWithUser }
   | { type: 'member_left'; spaceId: string; userId: string }
   | { type: 'dm_message_created'; message: DmMessageWithUser }
   | { type: 'dm_message_updated'; message: DmMessageWithUser }
@@ -854,6 +887,7 @@ export interface UpdateChannelRequest {
 }
 
 export interface UpdateSpaceRequest {
+  ownerTitle?: string | null;
   name?: string;
   icon?: string;
   banner?: string;
@@ -880,7 +914,9 @@ export interface UpdateUserRequest {
 }
 
 export interface UpdateMemberRequest {
-  roleIds: string[];
+  roleIds?: string[];
+  /** Space-local name; null explicitly restores the account display name. */
+  nickname?: string | null;
 }
 
 export interface CreateMessageRequest {
@@ -2054,6 +2090,7 @@ export interface TelemetryStatus {
 }
 
 export type { DmSystemEvent } from './dmSystemEvents.js';
+export type { ChannelSystemEvent } from './channelSystemEvents.js';
 
 // ─── Federation peer state (docs/systems/federation.md, "Peer state") ────────
 

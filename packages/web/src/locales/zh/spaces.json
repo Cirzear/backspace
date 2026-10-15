@@ -452,7 +452,8 @@
       "deafenMembers": "拒听成员",
       "moveMembers": "移动成员",
       "stream": "视频推流",
-      "disconnectMembers": "断开成员连接"
+      "disconnectMembers": "断开成员连接",
+      "mentionEveryone": "提及 @everyone、@here 和身份组"
     },
     "tristate": {
       "deny": "拒绝",
@@ -516,7 +517,9 @@
         "description": "确定要退出此空间吗？重新加入需要新的邀请链接。"
       },
       "left": "已退出空间",
-      "leaveFailed": "退出空间失败"
+      "leaveFailed": "退出空间失败",
+      "unreadMessages_other": "{{count}} 条未读消息",
+      "unreadMessagesOver99": "超过 99 条未读消息"
     },
     "dmList": {
       "explore": "探索",
@@ -547,7 +550,9 @@
       "spaceMuted": "已被空间静音",
       "spaceDeafened": "已被空间拒听",
       "permissionMuted": "已静音（无发言权限）"
-    }
+    },
+    "dmUnreadMessages_other": "{{count}} 条未读私信",
+    "dmUnreadMessagesOver99": "超过 99 条未读私信"
   },
   "channels": {
     "loading": "正在加载频道",
@@ -577,6 +582,25 @@
     "loading": "正在加载成员",
     "groups": {
       "owner": "拥有者"
+    },
+    "ownerTitle": {
+      "edit": "修改拥有者头衔",
+      "label": "拥有者头衔",
+      "hint": "仅在当前空间内对所有成员可见，长度为 1–{{max}} 个字符，不影响权限。",
+      "reset": "恢复默认"
+    },
+    "menu": {
+      "profile": "查看个人资料",
+      "nickname": "修改空间昵称…",
+      "roles": "身份组"
+    },
+    "nickname": {
+      "title": "修改空间昵称",
+      "label": "空间昵称",
+      "descriptionSelf": "仅在当前空间生效，不会修改你的账号名称或你在其他空间的昵称。留空则显示账号名称。",
+      "descriptionOther": "仅在当前空间生效，不会修改 {{name}} 的账号名称。留空则显示账号名称。",
+      "reset": "恢复为账号名称",
+      "shownAs": "在此空间的昵称：{{nickname}}"
     }
   },
   "mobile": {
@@ -652,6 +676,10 @@
     "mutedIndefinitely": "已静音，直到你取消",
     "spaceMuted": "此空间已静音，其频道也随之静音。",
     "mutedIndicator": "已静音",
-    "saveFailed": "无法保存通知设置"
+    "saveFailed": "无法保存通知设置",
+    "suppressEveryone": "屏蔽 @everyone 和 @here 提醒",
+    "suppressRoles": "屏蔽 @身份组 提醒",
+    "massHeading": "群组提及",
+    "massNote": "@here 与 @everyone 通知的成员相同。直接提及你的消息始终会通知你。"
   }
 }

@@ -6,7 +6,7 @@ import { MAX_TEXT_LENGTH, TranslationError } from './validation';
 // Keep code, URLs, emails, mentions and emojis out of model input, not just out of its instructions.
 // Bound email components and reject nested sticker brackets so scans stay linear on hostile text.
 const PROTECTED =
-  /```[\s\S]*?(?:```|$)|`[^`\n]+`|sticker:https?:\/\/[^\s<>]+|<https?:\/\/[^\s>]+>|https?:\/\/[^\s<>]+|[\w.+-]{1,64}@[\w.-]{1,253}\.[a-z]{2,63}|<[@#][!&]?[\w:-]+>|<a?:[\w-]+:[\w-]+>|\[sticker:[^\[\]]+\]|(?<![\w@])@(everyone|here|[\p{L}\p{N}_-]+(?:@[\w.-]+)?)(?<![.,!?])|\p{Extended_Pictographic}(?:\u200D\p{Extended_Pictographic}|\uFE0F|\p{Emoji_Modifier})*|(?<![a-zA-Z0-9]):[a-zA-Z0-9_+-]*[a-zA-Z_+-][a-zA-Z0-9_+-]*:(?![a-zA-Z0-9])/giu;
+  /```[\s\S]*?(?:```|$)|`[^`\n]+`|(?<!\[)sticker:https?:\/\/[^\s<>]+|<https?:\/\/[^\s>]+>|https?:\/\/[^\s<>[\]]+|[\w.+-]{1,64}@[\w.-]{1,253}\.[a-z]{2,63}|<[@#][!&]?[\w:-]+>|<a?:[\w-]+:[\w-]+>|\[sticker:[^[\]\r\n]{1,500}\]|(?<![\w@])@(everyone|here|[\p{L}\p{N}_-]+(?:@[\w.-]+)?)(?<![.,!?])|\p{Extended_Pictographic}(?:\u200D\p{Extended_Pictographic}|\uFE0F|\p{Emoji_Modifier})*|(?<![a-zA-Z0-9]):[a-zA-Z0-9_+-]{1,64}:(?![a-zA-Z0-9])/giu;
 const SHORT_ENGLISH = /^(hello|thanks|thank you|goodbye|good morning|good night|please|yes|no)[.!?\s]*$/i;
 export interface PreparedText {
   text: string;

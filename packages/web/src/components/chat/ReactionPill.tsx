@@ -1,3 +1,4 @@
+import { stickerUrl } from '@backspace/shared/src/stickers';
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
@@ -12,6 +13,8 @@ import { useDismissOnEscape } from '../../hooks/useDismissOnEscape';
 import { getCanonicalUserView } from '../../utils/userViewLookup';
 import { parseFederatedUsername } from '../../utils/identity';
 import { isOwnReaction, reactionSentence, summarizeReactors } from './reactionSummary';
+import { useContextMenuStore } from '../../stores/contextMenuStore';
+import { buildImageMenuItems } from './imageMenuItems';
 
 interface ReactionPillProps {
   emoji: string;
@@ -46,6 +49,7 @@ function truncateName(name: string): string {
  */
 export function ReactionPill({ emoji, reactions, origin, onToggle }: ReactionPillProps) {
   const { t } = useTranslation(['chat', 'common']);
+  const imageUrl = stickerUrl(emoji);
   const fmt = useFormatters();
   const self = useSelfIdentity();
   const isMobile = useUIStore((s) => s.isMobile);
@@ -101,12 +105,27 @@ export function ReactionPill({ emoji, reactions, origin, onToggle }: ReactionPil
   // and comes back.
   useDismissOnEscape(pending || tooltipOpen, hide);
 
+  // A sticker pill gets the image menu a sticker message gets ("Add to my
+  // stickers", save, copy) instead of the message menu. An emoji pill keeps
+  // the message menu.
+  const handleContextMenu = (e: React.MouseEvent) => {
+    if (!imageUrl) return;
+    e.preventDefault();
+    e.stopPropagation();
+    hide();
+    const items = buildImageMenuItems({
+      imageUrl, sourceUrl: imageUrl, stickerSource: emoji, stickerName: t('chat:stickers.sticker'),
+    });
+    useContextMenuStore.getState().open({ x: e.clientX, y: e.clientY }, items);
+  };
+
   return (
     <>
       <button
         ref={anchorRef}
         type="button"
         onClick={onToggle}
+        onContextMenu={handleContextMenu}
         onMouseEnter={show}
         onMouseLeave={hide}
         onFocus={(e) => {
@@ -120,7 +139,8 @@ export function ReactionPill({ emoji, reactions, origin, onToggle }: ReactionPil
         }`}
         style={{ padding: '2px 8px', fontSize: '13px', lineHeight: 1 }}
       >
-        <span style={{ fontSize: '14px', lineHeight: 1 }}>{emoji}</span>
+        {imageUrl ? <img src={imageUrl} alt={t('chat:stickers.sticker')} className="w-7 h-7 object-contain" />
+          : <span style={{ fontSize: '14px', lineHeight: 1 }}>{emoji}</span>}
         <span className={`font-semibold ${mine ? 'text-accent-mint' : 'text-txt-secondary'}`} style={{ fontSize: '12px' }}>
           {fmt.formatNumber(reactions.length)}
         </span>
@@ -131,10 +151,15 @@ export function ReactionPill({ emoji, reactions, origin, onToggle }: ReactionPil
           ref={floatingRef}
           role="tooltip"
           style={style}
-          className="glass rounded-md px-2.5 py-1.5 flex items-center gap-2 max-w-[360px] pointer-events-none animate-fade-in"
+          className={`glass flex items-center pointer-events-none animate-fade-in ${imageUrl
+            ? 'flex-col w-[224px] max-w-[calc(100*var(--app-vw)-24px)] rounded-xl overflow-hidden'
+            : 'rounded-md px-2.5 py-1.5 gap-2 max-w-[360px]'}`}
         >
-          <span className="text-[16px] leading-none flex-shrink-0">{emoji}</span>
-          <span className="text-[13px] leading-[18px] text-txt-secondary [overflow-wrap:anywhere]">
+          {imageUrl ? <div className="w-full p-4">
+            <img src={imageUrl} alt={t('chat:stickers.preview')} className="w-full h-40 object-contain" />
+          </div>
+            : <span className="text-[16px] leading-none flex-shrink-0">{emoji}</span>}
+          <span className={`text-[13px] leading-[18px] text-txt-secondary [overflow-wrap:anywhere] ${imageUrl ? 'w-full border-t border-border-soft px-3 py-2.5 text-center' : ''}`}>
             {before}
             <span className="font-medium text-txt-primary">{names}</span>
             {after}

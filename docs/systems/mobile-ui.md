@@ -468,7 +468,7 @@ The Federation row carries a numeric badge driven by `uiStore.federationApproval
 Params: `{ spaceId? }` (falls back to `currentSpaceId`)
 
 - Groups online members by their highest-positioned role
-- Owner gets special `__owner__` group (position Infinity)
+- Owner gets special `__owner__` group (position Infinity), headed by `OwnerTitleHeading` as on desktop: the owner title when one is set, with the owner's edit control (spaces.md, "Owner title")
 - Offline members in separate section
 - Each member row: avatar with status, role-colored name, federated domain, activity card
 - Tap opens `user-profile` screen
@@ -765,7 +765,19 @@ The component declares one `composerClass` shared by both modes. Differences:
 
 #### Composer-element ref shape
 
-`MessageInput` tracks the live composer DOM element via a callback ref that fans out to (a) the existing imperative `popoverAnchorRef` (consumed by `InputPopover` and the mention popover for anchor positioning) AND (b) a state-backed `composerEl` slot that the clearance effects are keyed on (see "How the composer keeps it"). The state-backed slot is required because the component renders different JSX when `canSendMessages` is false (the no-permission early-return path) vs. true (the full composer): an effect keyed only on stable deps would not re-run when the ref attaches as the JSX flips, so the observers would stay on the old element. Channel permissions arrive asynchronously, so the initial mount renders the no-permission JSX first and re-renders the full composer once permissions resolve; the callback ref's `setComposerEl` call re-runs the observer effect at that moment, on the same region, without removing the variable.
+`MessageInput` tracks the live composer DOM element via a callback ref that fans out to (a) the existing imperative `popoverAnchorRef` (consumed by `InputPopover` for anchor positioning; the mention picker anchors elsewhere, see "Mention display") AND (b) a state-backed `composerEl` slot that the clearance effects are keyed on (see "How the composer keeps it"). The state-backed slot is required because the component renders different JSX when `canSendMessages` is false (the no-permission early-return path) vs. true (the full composer): an effect keyed only on stable deps would not re-run when the ref attaches as the JSX flips, so the observers would stay on the old element. Channel permissions arrive asynchronously, so the initial mount renders the no-permission JSX first and re-renders the full composer once permissions resolve; the callback ref's `setComposerEl` call re-runs the observer effect at that moment, on the same region, without removing the variable.
+
+### Mention display
+
+The draft keeps the wire format: a mention is a `<@id>` token, and that is what `composerStore` saves per channel, what is sent and what counts against `MAX_MESSAGE_LENGTH`. The textarea shows each token whose id the channel knows as `@name`. `MentionTextarea.tsx` paints the text in a mirror behind a native textarea whose own text is transparent, so composition, selection, paste and the placeholder stay native. `composerMentions.ts` maps offsets between the shown text and the draft; `useMentionComposer.ts` holds the picker state and turns each textarea change into a draft edit.
+
+- **Tokens.** The draft is cut by the shared scan in `utils/mentionTokens.ts`, the same one the rendered message, the reply preview and the alert rule use, so a token inside code stays text. Only `<@id>` is a mention: the wire has no role or everyone mentions, and the composer paints none. The token rule itself is in [dm-system.md](dm-system.md) "Mentions in relayed messages".
+- **Names.** A token is named through `useChannelUserResolver` (`utils/channelUser.ts`), which reads the same roster and user view as `useChannelUser`, the lookup `MentionBadge` uses, so the composer names a token as the sent message will. A DM's tokens are read in its pinned origin's ids, the signed-in user included (client-federation.md §5). An id the channel does not know is shown as written.
+- **Edits.** An edit or selection that touches a shown mention replaces the whole token, so no partial id is left behind. The caret is put back only when a whole token went, and never during an IME composition. Typed or pasted `@name` text stays text; the picker inserts the token. A `<@id>` typed or pasted as written is a token like any other.
+- **IME.** Enter during an IME composition neither sends nor picks a suggestion (`handleKeyDown` returns first).
+- **Picker anchor.** The desktop picker (`MentionPopover.tsx`) is anchored at the typed `@`, a zero-width marker the mirror renders there, and re-measures it after every render (`useFloatingPosition`'s `followAnchor`), since text before the `@` moves it without resizing anything.
+
+Editing a sent message uses its own textarea in `Message.tsx`, which still shows the raw tokens.
 
 ---
 

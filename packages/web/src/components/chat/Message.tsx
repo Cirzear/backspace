@@ -1,8 +1,9 @@
 import { useMessageTranslation } from '../../features/translation/useMessageTranslation';
 import { TranslationText } from '../../features/translation/TranslationText';
-import { layoutRect, layoutPixels } from '../../platform/interfaceScale';
+import { isStickerMessage } from '../../utils/stickerMessages';
+import { StickerMessage } from './StickerMessage';
+import { useAuthorMenu } from './useAuthorMenu';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { createPortal } from 'react-dom';
 import { Trans, useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { formatters, useFormatters } from '../../i18n/formatters';
@@ -11,11 +12,11 @@ import { MarkdownRenderer } from './MarkdownRenderer';
 import { InlineMessageText } from './InlineMessageText';
 import { Avatar } from '../ui/Avatar';
 import { ProfileAvatar } from '../ui/ProfileAvatar';
-import { useContextMenuStore } from '../../stores/contextMenuStore';
+import { menuPositionFor, useContextMenuStore } from '../../stores/contextMenuStore';
 import { buildMessageMenuItems } from './messageMenuItems';
 import { useAuthStore, useSelfIdentity } from '../../stores/authStore';
 import { useChatStore } from '../../stores/chatStore';
-import { useSpaceStore } from '../../stores/spaceStore';
+import { selectMyRoleIdsInChannel, useSpaceStore } from '../../stores/spaceStore';
 import { useUIStore } from '../../stores/uiStore';
 import { AttachmentRenderer, attUrlOf } from './AttachmentRenderer';
 import { AttachmentProgress } from './AttachmentProgress';
@@ -24,12 +25,13 @@ import { FederationGlobeIcon } from '../ui/Username';
 import { Tooltip } from '../ui/Tooltip';
 import { EmojiPicker } from './EmojiPicker';
 import { MobilePickerSheet } from './MobilePickerSheet';
+import { ReactionPickerPopover } from './ReactionPickerPopover';
 import { hasPermissionBit, PermissionBits } from '../../utils/permissions';
 import { isDeletedPartnerDm } from '../../utils/dmFormatters';
-import { isFederationGlobeApplicable, isMine, userDisplayName } from '../../utils/identity';
+import { isFederationGlobeApplicable, isMine, spaceMemberName } from '../../utils/identity';
 import { useCanonicalUserView } from '../../utils/userViewLookup';
 import { useSelfIdInChannel } from '../../utils/channelUser';
-import { contentMentionsAny } from '../../utils/mentionTokens';
+import { mentionsReader } from '../../utils/notificationFilters';
 import {
   isPendingMessage,
   usePendingMessageStore,
@@ -159,7 +161,6 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
   const confirmDeleteTimeout = useRef<ReturnType<typeof setTimeout>>();
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const reactionPickerBtnRef = useRef<HTMLButtonElement>(null);
-  const reactionPickerRef = useRef<HTMLDivElement>(null);
   const rowRef = useRef<HTMLDivElement>(null);
   const currentUser = useAuthStore((s) => s.user);
   const editMessage = useChatStore((s) => s.editMessage);
@@ -221,6 +222,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
   // The channel whose origin issued this message's ids; mentions resolve there.
   const mentionChannelId = channelKey || null;
   const selfIdHere = useSelfIdInChannel(mentionChannelId);
+  const myRoleIdsHere = useSpaceStore((s) => (mentionChannelId ? selectMyRoleIdsInChannel(s, mentionChannelId) : undefined));
   const startEditing = () => {
     setEditContent(message.content ?? '');
     setEditingMessage(message.id);
@@ -307,6 +309,10 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
   }, []);
 
   const isGifOnly = isGifOnlyMessage(message.content);
+  // A sticker draws its own image: no edit (its content is a token, not
+  // text), and no embed (an older instance unfurls the asset URL into one).
+  const isSticker = isStickerMessage(message.content);
+  const canEdit = isAuthor && !isSticker;
   const imageEmbedSourceUrl = isGifOnly ? null : getImageEmbedSourceUrl(message.content, message.embeds || []);
   // sourceUrl: the original URL for context menu Copy/Open Link actions
   const sourceUrl = isGifOnly
@@ -314,29 +320,6 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     : imageEmbedSourceUrl;
 
   const closeReactionPicker = useCallback(() => setReactionPicker(null), []);
-
-  // Close the desktop reaction picker on outside click. The mobile sheet
-  // closes on a tap on its own backdrop.
-  useEffect(() => {
-    if (!showReactionPicker || isMobile) return;
-    const handler = (e: MouseEvent) => {
-      if (reactionPickerRef.current?.contains(e.target as Node)) return;
-      if (reactionPickerBtnRef.current?.contains(e.target as Node)) return;
-      setReactionPicker(null);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [showReactionPicker, isMobile]);
-
-  // Close the desktop reaction picker on Escape (the mobile sheet has its own).
-  useEffect(() => {
-    if (!showReactionPicker || isMobile) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setReactionPicker(null);
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [showReactionPicker, isMobile]);
 
   const handleReactionEmojiSelect = useCallback((emoji: { native: string }) => {
     addReaction(message.id, emoji.native);
@@ -357,6 +340,10 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     const imgEl = (e.target as HTMLElement).closest('img') as HTMLImageElement | null;
     const isContentImage = imgEl && !imgEl.closest('[data-avatar]') && !imgEl.closest('[data-embed-thumbnail]');
     const imageUrl = isContentImage ? imgEl.src : null;
+    // Attachment previews may be thumbnails; collection always uses the original source.
+    const stickerSource = isContentImage ? imgEl.dataset.stickerSource : null;
+    // An attachment's alt is its file name; the collection keeps it without the extension.
+    const stickerName = isContentImage ? imgEl.alt.replace(/\.[^.]+$/, '').slice(0, 100) : undefined;
 
     // Detect right-click on a video/audio element and resolve its underlying attachment.
     // `message` is the persisted form here — pending messages return early above.
@@ -394,6 +381,8 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
       selectedText,
       previousMessageId,
       imageUrl,
+      stickerSource,
+      stickerName,
       sourceUrl,
       videoUrl: videoAtt ? attUrlOf(videoAtt.filename) : null,
       videoFilename: videoAtt ? videoAtt.originalName : null,
@@ -419,7 +408,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     });
 
     if (items.length === 0) return;
-    useContextMenuStore.getState().open({ x: e.clientX, y: e.clientY }, items);
+    useContextMenuStore.getState().open(menuPositionFor(e), items);
   };
 
   const handleEditSubmit = async (e: React.KeyboardEvent) => {
@@ -442,15 +431,20 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     ? currentUser
     : (_rawMsgUser ? _canonicalMsgUser : message.user);
   const displayOrigin = isAuthor && currentUser ? '' : messageOrigin;
-  const displayName = userDisplayName(displayIdentity);
 
   const spaces = useSpaceStore((s) => s.spaces);
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId);
   const ownerId = spaces.find(s => s.id === currentSpaceId)?.ownerId;
 
+  // The author's row in the space's roster: it gives the name colour and the
+  // nickname. message.userId is the id on the space's instance, the id the
+  // loaded member list carries. A DM has no roster.
+  const spaceMemberOf = (userId: string) => (isDmMessage ? undefined : members.find(m => m.userId === userId));
+  const displayName = spaceMemberName(spaceMemberOf(message.userId), displayIdentity);
+
   const getMemberDisplayColor = (userId: string) => {
     if (isDmMessage) return { color: '#d8d8de' };
-    const member = members.find(m => m.userId === userId);
+    const member = spaceMemberOf(userId);
     return { color: memberNameColor(member ?? { userId, roles: [] }, ownerId) ?? '#d8d8de' };
   };
 
@@ -463,18 +457,51 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     ? { spaceId: currentSpaceId, userId: message.userId }
     : undefined;
 
-  const handleUsernameClick = (e: React.MouseEvent) => {
+  const handleAuthorMenu = useAuthorMenu({
+    channelId: channelKey,
+    authorId: message.userId,
+    origin: messageOrigin,
+    isDm: isDmMessage,
+    canSend: canSendMessages && !isDeadDmThread && !pending,
+    isAuthor,
+  });
+
+  const handleUsernameClick = (e: React.MouseEvent | React.KeyboardEvent) => {
     if (!message.user) return;
     e.stopPropagation();
     openUserProfile(message.user, messageOrigin, e.currentTarget.getBoundingClientRect(), undefined, authorMember);
   };
 
+  // The name is the author's keyboard stop (the avatar beside it opens the
+  // same card and menu, so it stays out of the tab order): Enter and Space
+  // open the profile card like a click, and the menu key or Shift+F10 open
+  // the author menu like a right click.
+  const handleUsernameKeyDown = (e: React.KeyboardEvent<HTMLSpanElement>) => {
+    if (e.target !== e.currentTarget) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleUsernameClick(e);
+    } else if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+      handleAuthorMenu(e);
+    }
+  };
+
   const replyRoleColor = (msg: { userId: string }) => getMemberDisplayColor(msg.userId);
 
-  // Self-mention highlighting. A token carries an id on the channel's origin,
-  // so "me" is my id there, not my home id (#332). Tokens inside code are not
-  // mentions (the shared scan in utils/mentionTokens.ts).
-  const isMentioned = !!selfIdHere && !!message.content && contentMentionsAny(message.content, new Set([selfIdHere]));
+  // Mention highlighting, by the rule the alert uses (`messageMentions`): a
+  // `<@id>` token for my id on the channel's origin, not my home id (#332),
+  // or a mass mention the space's instance stamped that reaches me
+  // (`@everyone`, `@here`, a role I hold there). Tokens inside code are not
+  // mentions (the shared scan in utils/mentionTokens.ts). A pending message
+  // has no stamps yet.
+  const stamped = isPendingMessage(message) ? undefined : message;
+  const isMentioned = mentionsReader({
+    myId: selfIdHere,
+    myRoleIds: myRoleIdsHere,
+    content: message.content,
+    mentionEveryone: stamped?.mentionEveryone,
+    mentionRoleIds: stamped?.mentionRoleIds,
+  });
 
   const content = (
     <div
@@ -504,7 +531,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
       {/* Avatar or timestamp column */}
       <div className="w-10 flex-shrink-0 flex items-start justify-start">
         {isFirstInGroup || message.replyTo ? (
-          <div className="mt-0.5">
+          <div className="mt-0.5 relative" data-poke-user={message.userId} onContextMenu={handleAuthorMenu}>
             <ProfileAvatar
               src={displayIdentity.avatar}
               name={displayName}
@@ -529,7 +556,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
           const replyIdentity = isMine(replyTo.user, messageOrigin, self) && currentUser
             ? currentUser
             : (_rawReplyUser ? _canonicalReplyUser : replyTo.user);
-          const replyDisplayName = userDisplayName(replyIdentity);
+          const replyDisplayName = spaceMemberName(spaceMemberOf(replyTo.userId), replyIdentity);
           const preview = (
             <>
               <Avatar src={replyIdentity.avatar} name={replyDisplayName} size={16} user={replyIdentity} />
@@ -562,7 +589,14 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
 
         {(isFirstInGroup || message.replyTo) && (
           <div className="flex items-baseline gap-2 mb-0.5">
-            <span onClick={handleUsernameClick}>
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={handleUsernameClick}
+              onContextMenu={handleAuthorMenu}
+              onKeyDown={handleUsernameKeyDown}
+              className="rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/60"
+            >
               <PersonName
                 name={displayName}
                 person={displayIdentity}
@@ -637,9 +671,13 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
               <>
                 {message.content && (
                   <div className="text-txt-message text-[15px] leading-[1.5] break-words whitespace-pre-wrap selection:bg-accent-primary/30">
-                    <TranslationText translation={translation}>
-                      <MarkdownRenderer content={message.content} channelId={mentionChannelId} />
-                    </TranslationText>
+                    {isSticker ? (
+                      <StickerMessage token={message.content} />
+                    ) : (
+                      <TranslationText translation={translation}>
+                        <MarkdownRenderer content={message.content} channelId={mentionChannelId} />
+                      </TranslationText>
+                    )}
                     {message.editedAt && (
                       <span className="text-[10px] text-txt-tertiary ml-1 select-none font-medium">{t('chat:message.edited')}</span>
                     )}
@@ -647,7 +685,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
                 )}
 
                 {/* Embeds */}
-                {!isEditing && message.embeds && message.embeds.length > 0 && (
+                {!isEditing && !isSticker && message.embeds && message.embeds.length > 0 && (
                   <div className="flex flex-col gap-2 mt-1">
                     {message.embeds.map((embed) => (
                       <EmbedRenderer key={embed.id} embed={embed} />
@@ -745,43 +783,19 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
         )}
       </div>
 
-      {/* Reaction emoji picker: a bottom sheet on mobile */}
+      {/* Reactions retain the upstream mobile sheet and row/button anchor semantics. */}
       {showInteractions && reactionPicker && canAddReactions && isMobile && (
         <MobilePickerSheet onClose={closeReactionPicker} label={t('common:actions.addReaction')}>
           <EmojiPicker onEmojiSelect={handleReactionEmojiSelect} mobile />
         </MobilePickerSheet>
       )}
-      {/* and on desktop a popover under the "+" or the message row */}
-      {showInteractions && reactionPicker && canAddReactions && !isMobile && (() => {
-        const anchor = reactionPicker === 'button' ? reactionPickerBtnRef.current : rowRef.current;
-        if (!anchor) return null;
-        const PICKER_HEIGHT = 400;
-        const PICKER_WIDTH = 360;
-        const MARGIN = 8;
-        const btnRect = layoutRect(anchor.getBoundingClientRect());
-        const spaceBelow = layoutPixels(window.innerHeight) - btnRect.bottom;
-        const spaceAbove = btnRect.top;
-        const flipAbove = spaceBelow < (PICKER_HEIGHT + MARGIN) && spaceAbove > spaceBelow;
-        const top = flipAbove
-          ? Math.max(MARGIN, btnRect.top - PICKER_HEIGHT - MARGIN)
-          : btnRect.bottom + MARGIN;
-        const left = Math.min(
-          Math.max(MARGIN, btnRect.left),
-          layoutPixels(window.innerWidth) - PICKER_WIDTH - MARGIN,
-        );
-        return createPortal(
-          <div
-            ref={reactionPickerRef}
-            className={`fixed z-[300] ${flipAbove ? 'animate-slide-down' : 'animate-slide-up'}`}
-            style={{ top, left }}
-          >
-            <div className="glass rounded-xl overflow-hidden">
-              <EmojiPicker onEmojiSelect={handleReactionEmojiSelect} />
-            </div>
-          </div>,
-          document.body,
-        );
-      })()}
+      {showInteractions && reactionPicker && canAddReactions && !isMobile && (
+        <ReactionPickerPopover
+          anchorEl={reactionPicker === 'button' ? reactionPickerBtnRef.current : rowRef.current}
+          onEmojiSelect={handleReactionEmojiSelect}
+          onClose={closeReactionPicker}
+        />
+      )}
 
       {/* Action buttons on hover */}
       {showInteractions && (isHovered || reactionPicker === 'button' || confirmingDelete) && !isEditing && (
@@ -820,7 +834,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
               <path d="M10 9V5L3 12L10 19V14.9C15 14.9 18.5 16.5 21 20C20 15 17 10 10 9Z" />
             </svg>
           </button>
-          {isAuthor && (
+          {canEdit && (
             <button
               onClick={startEditing}
               className="px-2 h-full text-txt-tertiary hover:text-txt-primary hover:bg-interactive-hover transition-all flex items-center justify-center"

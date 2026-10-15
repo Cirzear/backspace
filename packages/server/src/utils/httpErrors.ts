@@ -175,7 +175,15 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   join_request_pending: 'You already have a pending request for this space',
   join_request_not_found: 'Join request not found',
   join_request_decided: 'This request has already been decided',
+  // personal stickers
+  sticker_invalid_image: 'Upload a PNG, JPEG, WebP or GIF image of at most {{max}} MB',
+  sticker_not_local: 'Only stickers from this instance can be added to a collection',
+  sticker_not_found: 'Sticker not found',
+  sticker_collection_full: 'A sticker collection holds at most {{max}} stickers',
+  sticker_name_invalid: 'Sticker names can be 1 to {{max}} characters on one line, with at least one visible character and no control characters.',
   // spaces
+  space_owner_title_invalid: 'Owner titles can be 1 to {{max}} characters on one line, with at least one visible character and no control characters.',
+  member_nickname_invalid: 'Nicknames can be at most {{max}} characters on one line, with at least one visible character and no control characters.',
   space_name_required: 'Space name is required',
   space_name_length: 'Space name must be between {{min}} and {{max}} characters',
   space_create_failed: 'Failed to create space',
@@ -231,6 +239,7 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   message_empty: 'Message must have content or attachments',
   message_edit_not_author: 'You can only edit your own messages',
   message_delete_forbidden: 'You cannot delete this message',
+  poke_target_no_access: 'That member cannot see this channel',
   paging_cursor_conflict: 'Use either before or after, not both',
   internal_error: 'Something went wrong on the server',
   // misc

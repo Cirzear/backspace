@@ -1466,6 +1466,8 @@ When a group DM is created or modified locally, the origin instance queues feder
 
 ## 7. File Replication
 
+Personal stickers are not replicated. A sticker crosses instances as a token in a message's `content` or a reaction's `emoji`, through the relays below like any other text, and viewers load the image from the origin named in the token. The size checks here do not apply to it; the consequences, and what older versions show, are in [uploads.md](uploads.md#14-personal-stickers), "Across instances".
+
 ### Outbound (origin instance)
 
 When `queueDmRelay` constructs the relay payload, each attachment gets a `sourceUrl`:
@@ -1856,6 +1858,8 @@ A replicated stub is named `<realname>@<domain>` when a username for the identit
 ---
 
 ## 11. Reaction Relay
+
+`emoji` is a native emoji or a sticker token (`sticker:<asset URL>`); both relay as the same opaque string, and the unique index treats each token as one emoji.
 
 ### Outbound
 

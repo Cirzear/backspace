@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getElectronAPI } from '../platform/platform';
+import { canOpenAppSystemAudioSource } from './systemAudioSource';
 
 /**
  * The note under the System Audio switch: what a system-audio share on this
@@ -13,6 +14,9 @@ import { getElectronAPI } from '../platform/platform';
  * - `excluded` shows once it is on.
  * - An older desktop app that cannot answer, a version it cannot read, and a
  *   browser keep the notes they had before, shown once the switch is on.
+ * - On Linux the answer is `excluded` only for a client that opens the
+ *   desktop app's PipeWire source (`canOpenAppSystemAudioSource`); the
+ *   loopback a client without it uses carries Backspace's playback.
  */
 export type SystemAudioNoteKey =
   | 'excluded'
@@ -93,9 +97,11 @@ let capabilityRequest: Promise<OwnAudioInSystemAudio | null> | null = null;
 function requestCapability(): Promise<OwnAudioInSystemAudio | null> {
   if (!capabilityRequest) {
     const ask = getElectronAPI()?.getSystemAudioCapability;
-    // A desktop app older than the method keeps the notes it had before.
+    // A desktop app older than the method keeps the notes it had before. The
+    // argument says whether this client opens the Linux system-audio source
+    // itself; a desktop app older than that argument ignores it.
     capabilityRequest = typeof ask === 'function'
-      ? ask().then(asCapability, () => null)
+      ? ask(canOpenAppSystemAudioSource()).then(asCapability, () => null)
       : Promise.resolve(null);
   }
   return capabilityRequest;

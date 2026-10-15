@@ -36,6 +36,8 @@ import { isGroupConversation } from '../utils/dmConversation.js';
 import { normalizeOriginForCompare } from '../utils/federationAuth.js';
 import { utcDay } from '../telemetry/day.js';
 import { memberRolesView, rolesForViewer } from '../utils/permissionDataView.js';
+import { canCountUnread, readyUnreadCounts, unreadCountFollowUp } from './channelUnreadCounts.js';
+import { userWrittenMessages } from '../db/userWrittenMessages.js';
 
 // ─── Heartbeat State ──────────────────────────────────────────────────────────
 const wsIsAlive: WeakMap<WebSocket, boolean> = new WeakMap();
@@ -1219,13 +1221,27 @@ class ConnectionManager implements ReplicaSessionHost {
 
   // ─── Broadcasting ─────────────────────────────────────────────────────────
 
-  /** Send to a specific user (all their connections). */
-  sendToUser(userId: string, event: ServerEvent): void {
+  /**
+   * Send to a specific user (all their connections). An event that moves one
+   * of the user's unread counts is followed on the same sockets by its
+   * `channel_unread_count` (ws/channelUnreadCounts.ts). `channelPerms` are
+   * the user's permissions in the event's space channel when the caller has
+   * already computed them, so the count does not compute them again.
+   */
+  sendToUser(userId: string, event: ServerEvent, channelPerms?: bigint): void {
+    this.deliver(userId, event, JSON.stringify(event), channelPerms);
+  }
+
+  /** `sendToUser` with the event already serialized, for fan-outs that serialize it once. */
+  private deliver(userId: string, event: ServerEvent, message: string, channelPerms?: bigint): void {
     const connections = this.getUserConnections(userId);
-    const message = JSON.stringify(event);
+    if (connections.size === 0) return;
+    const followUp = unreadCountFollowUp(userId, event, channelPerms);
+    const followUpMessage = followUp ? JSON.stringify(followUp) : null;
     for (const ws of connections) {
       if (ws.readyState === 1) { // WebSocket.OPEN
         ws.send(message);
+        if (followUpMessage) ws.send(followUpMessage);
       }
     }
   }
@@ -1252,12 +1268,7 @@ class ConnectionManager implements ReplicaSessionHost {
       if (spaceIds.has(spaceId) && userId !== excludeUserId) {
         const perms = computePermissions(userId, spaceId, channelId);
         if ((perms & PermissionBits.VIEW_CHANNEL) !== 0n) {
-          const connections = this.getUserConnections(userId);
-          for (const ws of connections) {
-            if (ws.readyState === 1) {
-              ws.send(message);
-            }
-          }
+          this.deliver(userId, event, message, perms);
         }
       }
     }
@@ -1515,6 +1526,8 @@ export function buildReadyPayload(userId: string): {
   voiceChannelElapsedSeconds: Record<string, number>;
   voiceUserStates: Record<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }>;
   spaceVoiceStates: Record<string, { spaceMuted: boolean; spaceDeafened: boolean; permissionMuted: boolean }>;
+  supportsPoke: boolean;
+  unreadCounts: Record<string, number>;
   readStates: ReadState[];
   activeCalls: ActiveCallInfo[];
   userActivities: Record<string, Activity[]>;
@@ -1547,6 +1560,8 @@ export function buildReadyPayload(userId: string): {
   const spaceIds = memberships.map(m => m.spaceId);
 
   const visibleChannelIdSet = new Set<string>();
+  // Space channels whose unread count the user may see (`canCountUnread`).
+  const countableChannelIds: string[] = [];
   const spaces: SpaceWithChannelsAndMembers[] = [];
 
   if (spaceIds.length > 0) {
@@ -1628,7 +1643,7 @@ export function buildReadyPayload(userId: string): {
         ids => db.select({
           channelId: schema.messages.channelId,
           lastId: sql<string>`max(${schema.messages.id})`,
-        }).from(schema.messages).where(inArray(schema.messages.channelId, ids)).groupBy(schema.messages.channelId).all(),
+        }).from(schema.messages).where(and(inArray(schema.messages.channelId, ids), userWrittenMessages())).groupBy(schema.messages.channelId).all(),
       );
       for (const row of lastMsgRows) {
         if (row.lastId) lastMsgMap.set(row.channelId, row.lastId);
@@ -1690,6 +1705,7 @@ export function buildReadyPayload(userId: string): {
         const hasView = (chPerms & PermissionBits.VIEW_CHANNEL) !== 0n || (chPerms & PermissionBits.ADMINISTRATOR) !== 0n;
         if (hasView) {
           visibleChannelIdSet.add(ch.id);
+          if (canCountUnread(chPerms)) countableChannelIds.push(ch.id);
           visibleChannels.push({
             id: ch.id,
             spaceId: ch.spaceId,
@@ -1713,6 +1729,7 @@ export function buildReadyPayload(userId: string): {
         banner: spaceRow.banner ?? null,
         avatarColor: (spaceRow.avatarColor as Space['avatarColor']) ?? null,
         ownerId: spaceRow.ownerId,
+        ownerTitle: spaceRow.ownerTitle,
         inviteCode: spaceRow.inviteCode,
         visibility: (spaceRow.visibility ?? 'private') as SpaceWithChannelsAndMembers['visibility'],
         directoryListed: spaceRow.directoryListed === 1,
@@ -1986,7 +2003,13 @@ export function buildReadyPayload(userId: string): {
     pendingApprovalCount = countResult?.count ?? 0;
   }
 
-  return { user, spaces, dmChannels, folders, spaceLayout, layoutUpdatedAt, voiceStates, voiceChannelElapsedSeconds, voiceUserStates, spaceVoiceStates, readStates, activeCalls, userActivities, userActivityIdentities, rejectedPeerOrigins, awaitingApprovalPeerOrigins, activePeerOrigins, pendingApprovalCount };
+  const unreadCounts = readyUnreadCounts(
+    userId,
+    countableChannelIds,
+    dmChannels.map(dm => dm.id),
+    new Map(readStateRows.map(rs => [rs.channelId, rs.lastReadMessageId])),
+  );
+  return { supportsPoke: true, unreadCounts, user, spaces, dmChannels, folders, spaceLayout, layoutUpdatedAt, voiceStates, voiceChannelElapsedSeconds, voiceUserStates, spaceVoiceStates, readStates, activeCalls, userActivities, userActivityIdentities, rejectedPeerOrigins, awaitingApprovalPeerOrigins, activePeerOrigins, pendingApprovalCount };
 }
 
 export async function registerWebSocket(app: FastifyInstance): Promise<void> {

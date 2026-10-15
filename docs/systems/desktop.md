@@ -846,6 +846,8 @@ Whether a System Audio share also carries Backspace's own playback (the voice ch
 
 The prompted flow stays because the desktop app loads whatever web client its instance serves: an older instance still calls `getDisplayMedia()` first, and a newer instance on an older desktop build lacks `getScreenSources` and falls back to this path (`preselectScreenSource` / `getScreenSources` are optional in `electron.d.ts` for that reason).
 
+On Linux with PipeWire the main process builds the system-audio capture itself so that Backspace is not in it (`systemAudio.ts`, `startSystemAudio()` / `stopSystemAudio()`; mechanism in `voice.md`, "Linux system-audio source"). `get-system-audio-capability` returns `excluded` while that source is available, but only to a web client that passes `true` (`getSystemAudioCapability(true)`, sent by a client that has the `startSystemAudio` / `stopSystemAudio` bridge and opens the source itself). A web client from before the source passes nothing, keeps Chromium's loopback, and gets the OS answer (`included` on Linux); main does not load the module for it. A new web client on a desktop build without the argument gets the OS answer as well, which is right because that build has no source. `@vencord/venmic` is an `optionalDependency` of this package (Linux only; its prebuilt `.node` files are covered by `asarUnpack: **/*.node`; its build tool `cmake-js` is removed by a `pnpm.overrides` entry, see `security-scanning.md`).
+
 No sources (0 results) typically means Screen Recording permission not granted on macOS.
 
 For full screen share configuration (resolution, bitrate, codec), see `voice.md`.
@@ -914,7 +916,7 @@ All handlers registered in `main.ts:registerIpcHandlers()`.
 | `get-recovery-state` | R->M | `RecoveryState` | Recovery page reads initial state on mount |
 | `get-update-status` | R->M | `UpdateSnapshot` | Renderer reads the current snapshot on mount |
 | `is-sandboxed` | R->M | `boolean` | Detect package sandbox restrictions independently of update capability |
-| `get-system-audio-capability` | R->M | `'excluded' \| 'included' \| 'unavailable' \| 'unknown'` | Whether a System Audio share on this OS build carries Backspace's own playback: `ownAudioInSystemAudio(process.platform, process.getSystemVersion())` (`systemAudioCapability.ts`). Same sender guard as the screen-share handlers; anything else gets `'unknown'` |
+| `get-system-audio-capability` | R->M | `'excluded' \| 'included' \| 'unavailable' \| 'unknown'` | Whether a System Audio share on this OS build carries Backspace's own playback: `ownAudioInSystemAudio(process.platform, process.getSystemVersion())` (`systemAudioCapability.ts`), or `excluded` when the argument is exactly `true` and the Linux system-audio source is available (`withSystemAudioSource()` in `systemAudio.ts`). Same sender guard as the screen-share handlers; anything else gets `'unknown'` |
 
 ### Main -> Renderer Events
 
@@ -962,7 +964,9 @@ Detection: `typeof window.backspace !== 'undefined'` (see `platform.ts:isElectro
 | `onDeepLink(cb)` | listen | M->R | |
 | `onScreenShareSources(cb)` | listen | M->R | |
 | `selectScreenSource(id, audio?)` | fire | R->M | |
-| `getSystemAudioCapability()` | invoke | R->M | Optional (older builds lack it). Returns `Promise<'excluded' \| 'included' \| 'unavailable' \| 'unknown'>`; see "System audio and Backspace's own playback" |
+| `getSystemAudioCapability(usesAppSource?)` | invoke | R->M | Optional (older builds lack it, and builds before the Linux source ignore the argument). `usesAppSource` is `true` from a web client that opens the Linux system-audio source itself. Returns `Promise<'excluded' \| 'included' \| 'unavailable' \| 'unknown'>`; see "System audio and Backspace's own playback" |
+| `startSystemAudio()` | invoke | R->M | Optional. Linux: routes every other app's playback into a virtual source. Returns `Promise<{ ok: true, label } \| { ok: false, reason }>`; the renderer opens the device named `label` as a microphone |
+| `stopSystemAudio()` | invoke | R->M | Optional. Unlinks the virtual source; idempotent |
 | `getInstanceUrl()` | invoke | R->M | Returns `Promise<string \| null>` |
 | `setInstanceUrl(url)` | invoke | R->M | Returns `Promise<void>` |
 | `clearInstanceUrl()` | invoke | R->M | Returns `Promise<void>` |

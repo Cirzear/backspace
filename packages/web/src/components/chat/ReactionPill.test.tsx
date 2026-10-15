@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { Reaction, User } from '@backspace/shared';
 
 vi.mock('../../audio/AudioManager', () => ({
@@ -15,6 +15,8 @@ import { ReactionPill } from './ReactionPill';
 import { useAuthStore } from '../../stores/authStore';
 import { useSpaceStore } from '../../stores/spaceStore';
 import { useUIStore } from '../../stores/uiStore';
+import { useContextMenuStore } from '../../stores/contextMenuStore';
+import { api, HttpError } from '../../api/client';
 
 function user(id: string, username: string, displayName: string | null = null, homeInstance: string | null = null): User {
   return { id, username, displayName, avatar: null, createdAt: 1, homeInstance, homeUserId: homeInstance ? `${id}-home` : null } as unknown as User;
@@ -156,5 +158,108 @@ describe('ReactionPill', () => {
     act(() => { vi.advanceTimersByTime(400); });
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
     expect(pill).toHaveAccessibleDescription('Mira reacted');
+  });
+});
+
+it('shows a sticker preview with reactors and preserves toggle behavior', () => {
+  const token = `sticker:https://chat.test/api/stickers/assets/${'a'.repeat(64)}.webp`;
+  const toggle = vi.fn();
+  render(<ReactionPill emoji={token} origin="" reactions={[{ ...reaction(MIRA, 1), emoji: token }]} onToggle={toggle} />);
+  expect(screen.getByRole('img')).toHaveAttribute('src', token.slice('sticker:'.length));
+  fireEvent.mouseEnter(screen.getByRole('button'));
+  act(() => { vi.advanceTimersByTime(400); });
+  expect(screen.getByRole('tooltip')).toHaveTextContent('Mira reacted');
+  expect(screen.getByRole('tooltip')).toHaveClass('flex-col');
+  const tooltip = screen.getByRole('tooltip');
+  expect(tooltip.firstElementChild).toContainElement(screen.getByAltText('Preview sticker'));
+  expect(tooltip.lastElementChild).toHaveTextContent('Mira reacted');
+  expect(screen.getAllByRole('img')).toHaveLength(2);
+  fireEvent.click(screen.getByRole('button'));
+  expect(toggle).toHaveBeenCalledOnce();
+});
+
+describe('sticker reaction menu', () => {
+  const ID = 'b'.repeat(64);
+  const remoteToken = `sticker:https://remote.test/api/stickers/assets/${ID}.webp`;
+  const saved = { id: 'c'.repeat(64), name: 'Sticker', token: `sticker:https://chat.test/api/stickers/assets/${'c'.repeat(64)}.webp` };
+  const toast = vi.fn();
+
+  beforeEach(() => {
+    vi.useRealTimers();
+    toast.mockReset();
+    useUIStore.setState({ addToast: toast });
+    useContextMenuStore.getState().close();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  function openMenu(token: string) {
+    cleanup();
+    render(<ReactionPill emoji={token} origin="" reactions={[{ ...reaction(MIRA, 1), emoji: token }]} onToggle={vi.fn()} />);
+    fireEvent.contextMenu(screen.getByRole('button'), { clientX: 100, clientY: 200 });
+    const menu = useContextMenuStore.getState().menu;
+    if (!menu) throw new Error('Expected a menu');
+    return menu;
+  }
+
+  async function runCollect(token: string) {
+    const item = openMenu(token).items.find(i => i.key === 'collect-sticker');
+    if (item?.type !== 'action') throw new Error('Expected the collect action');
+    await item.onClick();
+  }
+
+  it('offers the image menu a sticker message gets', () => {
+    const menu = openMenu(remoteToken);
+    expect(menu.position).toEqual({ x: 100, y: 200 });
+    expect(menu.items.map(i => i.key)).toEqual(['collect-sticker', 'save-image', 'copy-image', 'image-sep']);
+  });
+
+  it('collects a sticker from this instance by reference', async () => {
+    const collect = vi.spyOn(api.stickers, 'collect').mockResolvedValue(saved);
+    const fetchImage = vi.fn();
+    vi.stubGlobal('fetch', fetchImage);
+    await runCollect(remoteToken);
+    expect(collect).toHaveBeenCalledWith({ id: ID, token: remoteToken, name: 'Sticker' });
+    expect(fetchImage).not.toHaveBeenCalled();
+    expect(toast).toHaveBeenLastCalledWith('Added to my stickers', 'success');
+  });
+
+  it('reads another instance\'s sticker from its own address and uploads it home', async () => {
+    vi.spyOn(api.stickers, 'collect').mockRejectedValue(new HttpError(400, 'not local', undefined, 'sticker_not_local'));
+    const upload = vi.spyOn(api.stickers, 'upload').mockResolvedValue(saved);
+    const fetchImage = vi.fn().mockResolvedValue(new Response('webp', { headers: { 'Content-Type': 'image/webp' } }));
+    vi.stubGlobal('fetch', fetchImage);
+    await runCollect(remoteToken);
+    expect(fetchImage).toHaveBeenCalledWith(`https://remote.test/api/stickers/assets/${ID}.webp`, { credentials: 'omit', cache: 'no-store' });
+    expect(upload).toHaveBeenCalledWith({ name: 'Sticker', image: btoa('webp') });
+    expect(toast).toHaveBeenLastCalledWith('Added to my stickers', 'success');
+  });
+
+  it('names the reason when the other instance cannot be read or the home instance refuses', async () => {
+    vi.spyOn(api.stickers, 'collect').mockRejectedValue(new HttpError(400, 'not local', undefined, 'sticker_not_local'));
+    const upload = vi.spyOn(api.stickers, 'upload');
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    await runCollect(remoteToken);
+    expect(toast).toHaveBeenLastCalledWith('The image could not be loaded.', 'warning');
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html></html>', { headers: { 'Content-Type': 'text/html' } })));
+    await runCollect(remoteToken);
+    expect(toast).toHaveBeenLastCalledWith('The image could not be loaded.', 'warning');
+    expect(upload).not.toHaveBeenCalled();
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('webp', { headers: { 'Content-Type': 'image/webp' } })));
+    upload.mockRejectedValue(new HttpError(409, 'full', undefined, 'sticker_collection_full', { max: 200 }));
+    await runCollect(remoteToken);
+    expect(toast).toHaveBeenLastCalledWith('Your collection is full at 200 stickers. Remove one to add another.', 'warning');
+  });
+
+  it('leaves an emoji pill to the message menu', () => {
+    const outer = vi.fn();
+    render(<div onContextMenu={outer}><ReactionPill emoji="🎉" origin="" reactions={[reaction(MIRA, 1)]} onToggle={vi.fn()} /></div>);
+    fireEvent.contextMenu(screen.getByRole('button'));
+    expect(useContextMenuStore.getState().menu).toBeNull();
+    expect(outer).toHaveBeenCalledOnce();
   });
 });

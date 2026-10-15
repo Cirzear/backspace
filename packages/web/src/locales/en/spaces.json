@@ -455,7 +455,8 @@
       "deafenMembers": "Deafen Members",
       "moveMembers": "Move Members",
       "stream": "Stream",
-      "disconnectMembers": "Disconnect Members"
+      "disconnectMembers": "Disconnect Members",
+      "mentionEveryone": "Mention @everyone, @here and Roles"
     },
     "tristate": {
       "deny": "Deny",
@@ -523,7 +524,10 @@
         "description": "Are you sure you want to leave this space? You'll need a new invite to rejoin."
       },
       "left": "Left space",
-      "leaveFailed": "Failed to leave space"
+      "leaveFailed": "Failed to leave space",
+      "unreadMessages_one": "{{count}} unread message",
+      "unreadMessages_other": "{{count}} unread messages",
+      "unreadMessagesOver99": "More than 99 unread messages"
     },
     "dmList": {
       "explore": "Explore",
@@ -554,7 +558,10 @@
       "spaceMuted": "Space Muted",
       "spaceDeafened": "Space Deafened",
       "permissionMuted": "Muted (No Speak Permission)"
-    }
+    },
+    "dmUnreadMessages_one": "{{count}} unread direct message",
+    "dmUnreadMessages_other": "{{count}} unread direct messages",
+    "dmUnreadMessagesOver99": "More than 99 unread direct messages"
   },
   "channels": {
     "loading": "Loading channels",
@@ -585,6 +592,25 @@
     "loading": "Loading members",
     "groups": {
       "owner": "Owner"
+    },
+    "ownerTitle": {
+      "edit": "Edit owner title",
+      "label": "Owner title",
+      "hint": "Visible to all members in this space. Use 1–{{max}} characters; this does not change permissions.",
+      "reset": "Reset to default"
+    },
+    "menu": {
+      "profile": "View profile",
+      "nickname": "Change space nickname…",
+      "roles": "Roles"
+    },
+    "nickname": {
+      "title": "Change space nickname",
+      "label": "Space nickname",
+      "descriptionSelf": "Only applies in this space. Your account name and your nicknames in other spaces stay the same. Leave it empty to show your account name.",
+      "descriptionOther": "Only applies in this space. The account name of {{name}} stays the same. Leave it empty to show the account name.",
+      "reset": "Reset to account name",
+      "shownAs": "Nickname in this space: {{nickname}}"
     }
   },
   "mobile": {
@@ -663,6 +689,10 @@
     "mutedIndefinitely": "Muted until you unmute",
     "spaceMuted": "This space is muted, so its channels are too.",
     "mutedIndicator": "Muted",
-    "saveFailed": "Could not save notification settings"
+    "saveFailed": "Could not save notification settings",
+    "suppressEveryone": "Suppress @everyone and @here",
+    "suppressRoles": "Suppress role mentions",
+    "massHeading": "Group mentions",
+    "massNote": "@here reaches the same members as @everyone. Mentions of you by name always notify you."
   }
 }

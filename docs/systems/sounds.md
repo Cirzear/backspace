@@ -65,15 +65,31 @@ new-message OS notification, so the two outputs cannot drift apart.
 space channel it follows the channel's notification policy (below): never
 while the channel or its space is muted, never on `nothing` (mentions
 included), always on `all`, and on `mentions` (the default) only for a message
-whose content mentions the user (`<@id>`).
+that mentions the user (`messageMentions`): a `<@id>` token for them, a
+`@everyone` / `@here` unless the space's `suppressEveryone` is on, or a role
+they hold unless `suppressRoles` is on. The switches never hold back a direct
+mention, and they do not change `all`, `nothing`, a mute, the every-message
+sound or DMs.
 
-| Channel policy | Plain message | Mentions the user | `messageSoundAllChannels` on (sound only) |
-|---|---|---|---|
-| `all` | alerts | alerts | alerts |
-| `mentions` (default) | no | alerts | alerts |
-| `nothing` | no | no | no |
-| muted (any level) | no | no | no |
-| DM (any setting) | alerts | alerts | alerts |
+| Channel policy | Plain message | Mentions the user | `@everyone` / `@here` | Role the user holds | `messageSoundAllChannels` on (sound only) |
+|---|---|---|---|---|---|
+| `all` | alerts | alerts | alerts | alerts | alerts |
+| `mentions` (default) | no | alerts | alerts unless `suppressEveryone` | alerts unless `suppressRoles` | alerts |
+| `nothing` | no | no | no | no | no |
+| muted (any level) | no | no | no | no | no |
+| DM (any setting) | alerts | alerts | alerts | alerts | alerts |
+
+**Mass mentions come from the stamp.** `@everyone`, `@here` and roles are read
+from the message's `mentionEveryone` and `mentionRoleIds`, which the instance
+hosting the space sets only for what it let an author with MENTION_EVERYONE
+send (permissions.md, "Mass mentions"), never from the text. A space on an
+instance from before the permission sends no stamp, so its `@everyone` does
+not alert. Direct `<@id>` mentions are read from the text, as before. The
+user's roles are their roles on the space's instance (`myRoleIds` on the
+space, from `ready` and from each `GET /api/spaces/:id`, kept for spaces that
+are not open, read by `selectMyRoleIdsInChannel`). The message highlight in
+`Message.tsx` uses the same `messageMentions` and shows any of the three,
+whatever the switches say.
 
 **Whose message, whose mention.** Both are decided with the channel's origin
 (`getChannelOrigin`). The author is the user when `isMe(author, origin)` holds
@@ -92,6 +108,16 @@ the channel policy whatever the preference says. It widens a channel on
 `mentions` only: a channel the user set to `nothing`, or muted, stays silent,
 because that choice is about the one channel and the preference is a general
 one.
+
+**Pokes never alert.** A poke (websocket.md, "Channel pokes") reaches the
+client as a `channel_poke` event, not a `message_created`, and
+`chatStore.addRealtimeMessage` keeps channel system rows out of
+`realtimeMessageEvents`, so the predicate never sees one: no `message.ogg`,
+no OS notification and no unread dot, on any notification level. A poke has
+no sound of its own; its only cue is the avatar animation in the open
+channel, which follows the same gates as an alert would (not in DND, not in
+a muted channel or one set to `nothing`, unless the viewer is the poker) and
+also skips reduced motion.
 
 **Order.** The predicate decides first, then Do Not Disturb (below) withholds
 what it allowed. A batch of events raises at most one sound and at most one
@@ -114,6 +140,9 @@ lifted. A space's level defaults to `mentions`; a channel's level is "not
 chosen" until set, and then it inherits its space's. A channel is muted while
 its own mute or its space's is in force. `resolveChannelNotificationPolicy`
 in `@backspace/shared` holds the inheritance and mute rules in one place.
+The space setting also has two switches, `suppressEveryone` and
+`suppressRoles` (off by default). They are space-wide only: a channel inherits
+them and cannot set them, so a channel's level never undoes them.
 
 **Where they live.** On the instance that hosts the space, in
 `notification_settings` (database.md), keyed by the user's row there: for a
@@ -152,10 +181,16 @@ the same settings. Do Not Disturb then applies on top, as before.
 - "Notification settings" in the space context menu (desktop and mobile) opens
   the same controls for the space in a `.glass-modal` dialog
   (`NotificationSettingsModal`). On mobile, which has no header bell, the
-  channel menu has the same entry for the channel.
+  channel menu has the same entry for the channel. The dialog for a space
+  also has a "Group mentions" section with the two suppress switches and a
+  note that `@here` reaches the same members as `@everyone` and that
+  mentions by name always notify. The channel popover does not show them.
 - A muted channel shows a crossed-out bell in the channel list
   (`ChannelMutedIndicator`), for its own mute or its space's. Unread state and
-  badges are unchanged by settings, as they are by Do Not Disturb.
+  counts are unchanged by settings, as they are by Do Not Disturb. The one
+  visible difference: a muted space draws its unread count badge in
+  `interactive-muted` instead of the notification colour (websocket.md,
+  "Unread counts").
 
 The controls live in `components/notifications/`. Voice channels have no
 bell; their text chat follows the space setting.
