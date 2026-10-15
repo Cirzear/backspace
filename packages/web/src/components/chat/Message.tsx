@@ -790,7 +790,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
       {/* Reactions retain the upstream mobile sheet and row/button anchor semantics. */}
       {showInteractions && reactionPicker && canAddReactions && isMobile && (
         <MobilePickerSheet onClose={closeReactionPicker} label={t('common:actions.addReaction')}>
-          <EmojiPicker onEmojiSelect={handleReactionEmojiSelect} stickers={false} mobile />
+          <EmojiPicker onEmojiSelect={handleReactionEmojiSelect} stickers={true} manageable={false} mobile />
         </MobilePickerSheet>
       )}
       {showInteractions && reactionPicker && canAddReactions && !isMobile && (

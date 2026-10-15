@@ -114,6 +114,7 @@ interface StickerGridProps {
   error: string;
   managing: boolean;
   removing: string | null;
+  manageable?: boolean;
   onSelect: (token: string) => void;
   onStartRename: (item: PersonalSticker) => void;
   onRemove: (id: string) => void;
@@ -127,6 +128,7 @@ function StickerGrid({
   error,
   managing,
   removing,
+  manageable = true,
   onSelect,
   onStartRename,
   onRemove,
@@ -158,7 +160,11 @@ function StickerGrid({
           </span>
           <p className="text-sm font-medium">{t('stickers.empty')}</p>
           <p className="text-xs leading-5 text-txt-tertiary">{t('stickers.emptyHint')}</p>
-          <button type="button" onClick={onStartUpload} className="sticker-secondary-button">{t('stickers.chooseImage')}</button>
+          {manageable && (
+            <button type="button" onClick={onStartUpload} className="sticker-secondary-button">
+              {t('stickers.chooseImage')}
+            </button>
+          )}
         </div>
       </div>
     );
@@ -182,6 +188,7 @@ function StickerGrid({
             key={item.id}
             className="group relative min-w-0 rounded-xl hover:bg-interactive-hover transition-colors"
             onContextMenu={e => {
+              if (!manageable) return;
               e.preventDefault();
               e.stopPropagation();
               useContextMenuStore.getState().open({ x: e.clientX, y: e.clientY }, [
@@ -366,7 +373,17 @@ function PackStickerGrid({ pack, onSelect }: PackStickerGridProps) {
   );
 }
 
-export function StickerPicker({ onSelect, mobile = false }: { onSelect: (token: string) => void; mobile?: boolean }) {
+export interface StickerPickerProps {
+  onSelect: (token: string) => void;
+  mobile?: boolean;
+  manageable?: boolean;
+}
+
+export function StickerPicker({
+  onSelect,
+  mobile = false,
+  manageable = true,
+}: StickerPickerProps) {
   const { t } = useTranslation(['chat', 'common']);
   const userId = useAuthStore(s => s.user?.id);
   const [items, setItems] = useState<PersonalSticker[]>([]);
@@ -476,32 +493,36 @@ export function StickerPicker({ onSelect, mobile = false }: { onSelect: (token: 
                   {t('stickers.title')}{' '}
                   <span className="ml-1 text-xs font-normal text-txt-tertiary">{!loading && items.length}</span>
                 </h3>
-                <div className="flex items-center gap-1">
-                  {items.length > 0 && (
+                {manageable && (
+                  <div className="flex items-center gap-1">
+                    {items.length > 0 && (
+                      <button
+                        type="button"
+                        disabled={!!removing}
+                        aria-pressed={managing}
+                        className="sticker-secondary-button"
+                        onClick={() => setManaging(!managing)}
+                      >
+                        {t(managing ? 'stickers.done' : 'stickers.manage')}
+                      </button>
+                    )}
                     <button
                       type="button"
-                      disabled={!!removing}
-                      aria-pressed={managing}
-                      className="sticker-secondary-button"
-                      onClick={() => setManaging(!managing)}
+                      disabled={loading || !!removing || full}
+                      onClick={startUpload}
+                      className="sticker-primary-button"
                     >
-                      {t(managing ? 'stickers.done' : 'stickers.manage')}
+                      <span aria-hidden="true" className="text-lg leading-none">+</span>
+                      {t('stickers.upload')}
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    disabled={loading || !!removing || full}
-                    onClick={startUpload}
-                    className="sticker-primary-button"
-                  >
-                    <span aria-hidden="true" className="text-lg leading-none">+</span>
-                    {t('stickers.upload')}
-                  </button>
-                </div>
+                  </div>
+                )}
               </div>
-              <p className="px-4 pb-2 text-xs text-txt-tertiary">
-                {t(managing ? 'stickers.removeHint' : full ? 'stickers.full' : 'stickers.collectionHint')}
-              </p>
+              {manageable && (
+                <p className="px-4 pb-2 text-xs text-txt-tertiary">
+                  {t(managing ? 'stickers.removeHint' : full ? 'stickers.full' : 'stickers.collectionHint')}
+                </p>
+              )}
 
               {items.length > 0 && (
                 <div className="px-4 pb-2.5 shrink-0">
@@ -551,13 +572,18 @@ export function StickerPicker({ onSelect, mobile = false }: { onSelect: (token: 
                 error={error}
                 managing={managing}
                 removing={removing}
+                manageable={manageable}
                 onSelect={onSelect}
                 onStartRename={setEditingSticker}
                 onRemove={id => void remove(id)}
                 onStartUpload={startUpload}
               />
 
-              <div className="shrink-0 border-t border-border-soft px-4 py-1.5 text-[11px] text-txt-tertiary">{t('stickers.limits')}</div>
+              {manageable && (
+                <div className="shrink-0 border-t border-border-soft px-4 py-1.5 text-[11px] text-txt-tertiary">
+                  {t('stickers.limits')}
+                </div>
+              )}
             </>
           ) : currentPack ? (
             <PackStickerGrid pack={currentPack} onSelect={onSelect} />
@@ -615,20 +641,22 @@ export function StickerPicker({ onSelect, mobile = false }: { onSelect: (token: 
             </div>
 
             {/* Sticker Store modal button */}
-            <button
-              type="button"
-              onClick={() => setShowStore(true)}
-              title={t('stickers.store')}
-              aria-label={t('stickers.store')}
-              className="flex h-7 px-2 items-center gap-1.5 rounded-lg text-xs font-medium text-accent-primary hover:bg-accent-primary/10 transition-colors shrink-0 ml-1"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
-                <line x1="3" y1="6" x2="21" y2="6" />
-                <path d="M16 10a4 4 0 0 1-8 0" />
-              </svg>
-              <span className="hidden sm:inline">{t('stickers.store')}</span>
-            </button>
+            {manageable && (
+              <button
+                type="button"
+                onClick={() => setShowStore(true)}
+                title={t('stickers.store')}
+                aria-label={t('stickers.store')}
+                className="flex h-7 px-2 items-center gap-1.5 rounded-lg text-xs font-medium text-accent-primary hover:bg-accent-primary/10 transition-colors shrink-0 ml-1"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
+                  <line x1="3" y1="6" x2="21" y2="6" />
+                  <path d="M16 10a4 4 0 0 1-8 0" />
+                </svg>
+                <span className="hidden sm:inline">{t('stickers.store')}</span>
+              </button>
+            )}
           </div>
 
           {editingSticker && (

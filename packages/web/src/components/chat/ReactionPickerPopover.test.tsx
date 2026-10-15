@@ -7,7 +7,7 @@ import { ReactionPickerPopover } from './ReactionPickerPopover';
 // Mock EmojiPicker to keep test light and focused on positioning/interactions
 const mockEmojiPicker = vi.fn();
 vi.mock('./EmojiPicker', () => ({
-  EmojiPicker: (props: { onEmojiSelect: (emoji: { native: string }) => void; stickers?: boolean }) => {
+  EmojiPicker: (props: { onEmojiSelect: (emoji: { native: string }) => void; stickers?: boolean; manageable?: boolean }) => {
     mockEmojiPicker(props);
     return (
       <div data-testid="mock-emoji-picker" onKeyDown={(event) => event.stopPropagation()} style={{ height: 440, width: 350 }}>
@@ -179,7 +179,7 @@ describe('ReactionPickerPopover', () => {
     expect(screen.getByRole('dialog').style.top).toBe('8px');
   });
 
-  it('disables stickers in the emoji picker so only reactions can be added', () => {
+  it('enables stickers without management features for reaction selection', () => {
     const anchor = createAnchor({ top: 100, bottom: 132, left: 800, right: 832 });
     render(
       <ReactionPickerPopover
@@ -189,7 +189,7 @@ describe('ReactionPickerPopover', () => {
       />,
     );
     expect(mockEmojiPicker).toHaveBeenCalledWith(
-      expect.objectContaining({ stickers: false }),
+      expect.objectContaining({ stickers: true, manageable: false }),
     );
   });
 

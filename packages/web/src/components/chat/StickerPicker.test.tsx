@@ -226,4 +226,20 @@ describe('sticker controls', () => {
     fireEvent.click(tab);
     expect(tab).toHaveClass('ring-inset');
   });
+
+  it('hides management, upload, and store controls when manageable is false, while still allowing selection', async () => {
+    const onSelect = vi.fn();
+    render(<StickerPicker onSelect={onSelect} manageable={false} />);
+
+    // Sticker is visible and selectable
+    const stickerBtn = await screen.findByRole('button', { name: 'Happy' });
+    expect(stickerBtn).toBeInTheDocument();
+    fireEvent.click(stickerBtn);
+    expect(onSelect).toHaveBeenCalledWith(sticker.token);
+
+    // Management buttons are hidden
+    expect(screen.queryByRole('button', { name: /manage/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /upload/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /store/i })).not.toBeInTheDocument();
+  });
 });
