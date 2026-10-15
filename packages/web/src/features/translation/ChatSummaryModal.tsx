@@ -7,6 +7,7 @@ import { useTranslationSettings } from './useMessageTranslation';
 import { sendTranslationCommand } from './translationStore';
 import { translationErrorText } from './errorText';
 import { getTargetLanguageName } from './composerPresets';
+import { getLanguage } from '../../i18n';
 import { ChatDatePicker } from './ChatDatePicker';
 import type { MessageWithUser } from '@backspace/shared';
 
@@ -74,9 +75,9 @@ interface ChatSummaryModalProps {
 }
 
 export function ChatSummaryModal({ isOpen, onClose, channelId, channelName }: ChatSummaryModalProps) {
-  const { t } = useTranslation('translation');
+  const { t, i18n } = useTranslation('translation');
   const { accountId, settings } = useTranslationSettings();
-  const targetLang = settings?.preferences.targetLanguage || 'zh-CN';
+  const targetLang = i18n?.resolvedLanguage ?? i18n?.language ?? getLanguage();
   const messages = useChatStore((s) => s.messages.get(channelId)) ?? EMPTY_MESSAGES;
   const readStates = useChatStore((s) => s.readStates);
   const lastReadId = readStates.get(channelId);
@@ -168,18 +169,18 @@ export function ChatSummaryModal({ isOpen, onClose, channelId, channelName }: Ch
     const targetLangName = getTargetLanguageName(targetLang);
 
     const systemPrompt =
-      `你是一个专业的聊天会话摘要助手。请根据提供的群组或私聊对话历史，提取并结构化整理出讨论摘要。` +
-      `【语言要求】：请务必使用【${targetLangName}】输出摘要内容。\n` +
-      `格式清晰，包括：\n` +
-      `1. 核心讨论要点\n` +
-      `2. 达成的决议或共识\n` +
-      `3. 待办事项或后续行动（若有，标注责任人）\n` +
-      `语言表达简洁、准确、地道。`;
+      `You are a professional chat conversation summarizer. Extract and organize a structured discussion summary from the provided group or direct message chat history.\n` +
+      `Language requirement: You MUST output the summary strictly in ${targetLangName}.\n` +
+      `Format clearly with:\n` +
+      `1. Key Discussion Points\n` +
+      `2. Decisions and Consensus Reached\n` +
+      `3. Action Items / Next Steps (with assignees if mentioned)\n` +
+      `Keep the tone concise, accurate, and natural.`;
 
     const scopeDesc =
-      mode === 'unread' ? '未读消息记录' : `「${selectedDate}」当天的对话记录`;
+      mode === 'unread' ? 'unread messages' : `messages from ${selectedDate}`;
 
-    const userPrompt = `以下是「${channelName}」的${scopeDesc}（按时间先后顺序）：\n\n${dialogue}\n\n请生成结构化摘要：`;
+    const userPrompt = `Here is the chat history for "${channelName}" (${scopeDesc}, in chronological order):\n\n${dialogue}\n\nPlease generate a structured summary:`;
 
     const reply = await sendTranslationCommand({
       action: 'aiGenerate',
@@ -289,7 +290,7 @@ export function ChatSummaryModal({ isOpen, onClose, channelId, channelName }: Ch
 
         {!hasConnection ? (
           <div className="rounded-lg border border-accent-amber/30 bg-accent-amber/10 p-4 text-sm text-txt-secondary space-y-2">
-            <p>{t('missing-connection', { defaultValue: '请先配置 AI 连接。' })}</p>
+            <p>{t('missing-connection', { defaultValue: 'Please configure an AI connection first.' })}</p>
             <button
               type="button"
               className="rounded px-3 py-1.5 bg-accent-primary text-white text-xs font-medium hover:bg-accent-primary-hover transition-colors"

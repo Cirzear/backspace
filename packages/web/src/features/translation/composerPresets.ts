@@ -7,10 +7,10 @@ import type { ComposerAction } from '@backspace/shared/translation';
 export const DEFAULT_COMPOSER_ACTIONS: ComposerAction[] = [
   {
     id: 'polish',
-    label: '润色文笔',
+    label: 'Polish',
     icon: '✨',
     systemPrompt:
-      '你是一个专业的写作助手。请对用户的聊天草稿进行润色与优化，提升语句流畅度与表达清晰度，保持原意不变。直接输出修改后的文本，不要添加任何说明或客套话。',
+      'You are a professional writing assistant. Polish and refine the user\'s chat draft to improve fluency and clarity while preserving the original meaning. Output the revised text directly without any explanation or conversational remarks.',
     enabled: true,
   },
 ];
@@ -22,38 +22,38 @@ export const DEFAULT_COMPOSER_ACTIONS: ComposerAction[] = [
 export const PRESET_COMPOSER_EXAMPLES: Omit<ComposerAction, 'enabled'>[] = [
   {
     id: 'professional',
-    label: '商务正式',
+    label: 'Professional',
     icon: '💼',
     systemPrompt:
-      '你是一个专业的职场沟通专家。请将用户的聊天草稿改写为礼貌、严谨、专业的商务职场语气。直接输出修改后的文本，不要添加任何解释。',
+      'You are a professional business communication expert. Rewrite the user\'s chat draft in a polite, rigorous, and professional workplace tone. Output the revised text directly without any explanation.',
   },
   {
     id: 'concise',
-    label: '简短精炼',
+    label: 'Concise',
     icon: '⚡',
     systemPrompt:
-      '你是一个沟通效率专家。请将用户的聊天草稿进行提炼和精简，去掉冗余字句，使其简明扼要。直接输出精简后的文本。',
+      'You are a communication efficiency expert. Condense and streamline the user\'s chat draft, eliminating unnecessary words to make it concise and clear. Output the streamlined text directly.',
   },
   {
     id: 'elaborate',
-    label: '扩充丰富',
+    label: 'Elaborate',
     icon: '📝',
     systemPrompt:
-      '你是一个内容丰富助手。请在保留原意的前提下，适当补充细节和上下文，使其表达更详实充分。直接输出改写后的文本。',
+      'You are a writing assistant. Expand the user\'s chat draft with relevant details and context while preserving the original intent to make it more comprehensive. Output the rewritten text directly.',
   },
   {
     id: 'grammar',
-    label: '纠正错别字与语法',
+    label: 'Fix Grammar',
     icon: '🔍',
     systemPrompt:
-      '你是一个严格的文字校对专家。请纠正用户草稿中的错别字、标点误用和语病。直接输出纠正后的文本。',
+      'You are a meticulous proofreading expert. Correct spelling errors, punctuation mistakes, and grammatical issues in the user\'s draft. Output the corrected text directly.',
   },
   {
     id: 'translateToEnglish',
-    label: '翻译为英文',
+    label: 'Translate to English',
     icon: '🌐',
     systemPrompt:
-      '你是一个专业翻译专家。请将用户的草稿翻译成地道、自然、准确的英文。直接输出翻译后的英文文本。',
+      'You are a professional translator. Translate the user\'s draft into natural, fluent, and accurate English. Output the translated English text directly.',
   },
 ];
 
@@ -63,6 +63,7 @@ export const PRESET_COMPOSER_EXAMPLES: Omit<ComposerAction, 'enabled'>[] = [
  */
 const PRESET_IDS = new Set(['polish', 'professional', 'concise', 'elaborate', 'grammar', 'translateToEnglish']);
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function getActionDisplayLabel(action: { id: string; label: string }, t: (key: any) => string): string {
   const translated = t(action.id);
   if (PRESET_IDS.has(action.id) || (translated && translated !== action.id)) {
@@ -72,21 +73,21 @@ export function getActionDisplayLabel(action: { id: string; label: string }, t: 
 }
 
 export const TARGET_LANGUAGE_NAMES: Record<string, string> = {
-  'zh-CN': '简体中文',
-  'zh-TW': '繁體中文',
-  zh: '简体中文',
+  'zh-CN': 'Simplified Chinese',
+  'zh-TW': 'Traditional Chinese',
+  zh: 'Simplified Chinese',
   en: 'English',
-  ja: '日本語',
-  ko: '한국어',
-  de: 'Deutsch',
-  fr: 'Français',
-  es: 'Español',
-  pt: 'Português',
-  ru: 'Русский',
-  ar: 'العربية',
+  ja: 'Japanese',
+  ko: 'Korean',
+  de: 'German',
+  fr: 'French',
+  es: 'Spanish',
+  pt: 'Portuguese',
+  ru: 'Russian',
+  ar: 'Arabic',
 };
 
 export function getTargetLanguageName(lang?: string | null): string {
-  if (!lang) return '简体中文';
+  if (!lang) return 'English';
   return TARGET_LANGUAGE_NAMES[lang] || TARGET_LANGUAGE_NAMES[lang.split('-')[0] ?? ''] || lang;
 }
