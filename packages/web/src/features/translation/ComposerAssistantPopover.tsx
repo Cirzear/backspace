@@ -8,6 +8,7 @@ import { translationErrorText } from './errorText';
 
 import type { ComposerAction } from '@backspace/shared/translation';
 import { DEFAULT_COMPOSER_ACTIONS, getActionDisplayLabel, getTargetLanguageName } from './composerPresets';
+import { getLanguage } from '../../i18n';
 
 interface ComposerAssistantPopoverProps {
   open: boolean;
@@ -24,7 +25,7 @@ export function ComposerAssistantPopover({
   onApply,
   anchorRef,
 }: ComposerAssistantPopoverProps) {
-  const { t } = useTranslation('translation');
+  const { t, i18n } = useTranslation('translation');
   const popoverRef = useRef<HTMLDivElement>(null);
   const { accountId, settings } = useTranslationSettings();
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
@@ -71,9 +72,13 @@ export function ComposerAssistantPopover({
     setLoadingAction(action.id);
     setError(null);
 
-    const targetLang = settings?.preferences.targetLanguage || 'zh-CN';
-    const targetLangName = getTargetLanguageName(targetLang);
-    const systemPrompt = `${action.systemPrompt}\n\n【语言要求】：请严格使用【${targetLangName}】输出最终修改文本，直接输出文本内容，不要包含客套话或多余解释。`;
+    const currentLang = i18n?.resolvedLanguage ?? i18n?.language ?? getLanguage();
+    const targetLangName = getTargetLanguageName(currentLang);
+    const languageInstruction =
+      action.id === 'translateToEnglish'
+        ? 'Output the translated English text directly without any introductory, conversational, or explanatory remarks.'
+        : `Language requirement: Output the final revised text strictly in ${targetLangName}. Output the revised text directly without any introductory, conversational, or explanatory remarks.`;
+    const systemPrompt = `${action.systemPrompt}\n\n${languageInstruction}`;
 
     const reply = await sendTranslationCommand({
       action: 'aiGenerate',

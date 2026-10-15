@@ -1,11 +1,16 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatSummaryModal, summaryCache } from './ChatSummaryModal';
+import type { MessageWithUser } from '@backspace/shared';
 import { useChatStore } from '../../stores/chatStore';
 import * as translationStore from './translationStore';
 
+let mockLanguage = 'en';
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({
+    t: (key: string) => key,
+    i18n: { language: mockLanguage, resolvedLanguage: mockLanguage },
+  }),
 }));
 
 vi.mock('../../audio/AudioManager', () => ({
@@ -35,6 +40,7 @@ vi.mock('./useMessageTranslation', () => ({
 
 describe('ChatSummaryModal', () => {
   beforeEach(() => {
+    mockLanguage = 'en';
     summaryCache.clear();
     useChatStore.setState({
       messages: new Map([
@@ -48,7 +54,7 @@ describe('ChatSummaryModal', () => {
               content: '今天讨论一下新功能上线的时间表',
               createdAt: Date.now() - 10000,
               user: { id: 'u1', username: 'alice', displayName: 'Alice' },
-            } as any,
+            } as unknown as MessageWithUser,
             {
               id: '2',
               channelId: 'channel-1',
@@ -56,7 +62,7 @@ describe('ChatSummaryModal', () => {
               content: '我认为下周二发布比较稳妥',
               createdAt: Date.now() - 5000,
               user: { id: 'u2', username: 'bob', displayName: 'Bob' },
-            } as any,
+            } as unknown as MessageWithUser,
           ],
         ],
       ]),
@@ -151,7 +157,7 @@ describe('ChatSummaryModal', () => {
     expect(spy).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'aiGenerate',
-        systemPrompt: expect.stringContaining('简体中文'),
+        systemPrompt: expect.stringContaining('strictly in English'),
       }),
     );
 
@@ -169,7 +175,7 @@ describe('ChatSummaryModal', () => {
     expect(spy).toHaveBeenLastCalledWith(
       expect.objectContaining({
         action: 'aiGenerate',
-        userPrompt: expect.stringContaining('当天的对话记录'),
+        userPrompt: expect.stringContaining('messages from'),
       }),
     );
   });
@@ -226,6 +232,32 @@ describe('ChatSummaryModal', () => {
       expect(spy).toHaveBeenCalledTimes(3);
     });
     expect(await screen.findByText('第二次重新生成的日期摘要内容')).toBeInTheDocument();
+  });
+
+  it('formats summary language requirement strictly according to the current global language', async () => {
+    mockLanguage = 'zh';
+    const spy = vi.spyOn(translationStore, 'sendTranslationCommand').mockResolvedValue({
+      ok: true,
+      outputText: '中文摘要内容',
+    });
+
+    render(
+      <ChatSummaryModal
+        isOpen={true}
+        onClose={vi.fn()}
+        channelId="channel-1"
+        channelName="general"
+      />
+    );
+
+    await waitFor(() => {
+      expect(spy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'aiGenerate',
+          systemPrompt: expect.stringContaining('strictly in Simplified Chinese'),
+        }),
+      );
+    });
   });
 });
 

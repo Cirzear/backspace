@@ -4,8 +4,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ComposerAssistantPopover } from './ComposerAssistantPopover';
 import * as translationStore from './translationStore';
 
+let mockLanguage = 'en';
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({
+    t: (key: string) => key,
+    i18n: { language: mockLanguage, resolvedLanguage: mockLanguage },
+  }),
 }));
 
 vi.mock('../../audio/AudioManager', () => ({
@@ -38,6 +42,10 @@ vi.mock('./useMessageTranslation', () => ({
 }));
 
 describe('ComposerAssistantPopover', () => {
+  beforeEach(() => {
+    mockLanguage = 'en';
+  });
+
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
@@ -73,12 +81,47 @@ describe('ComposerAssistantPopover', () => {
     expect(screen.getByText('emptyDraftPrompt')).toBeInTheDocument();
   });
 
-  it('calls sendTranslationCommand and onApply when action is selected', async () => {
+  it('calls sendTranslationCommand and onApply when action is selected with English prompt and global language', async () => {
     const anchorRef = { current: document.createElement('button') };
     const onApply = vi.fn();
     const onClose = vi.fn();
 
-    vi.spyOn(translationStore, 'sendTranslationCommand').mockResolvedValueOnce({
+    const spy = vi.spyOn(translationStore, 'sendTranslationCommand').mockResolvedValueOnce({
+      ok: true,
+      outputText: 'Refined draft content',
+    });
+
+    render(
+      <ComposerAssistantPopover
+        open={true}
+        onClose={onClose}
+        draftText="tomorrow meeting"
+        onApply={onApply}
+        anchorRef={anchorRef}
+      />
+    );
+
+    fireEvent.click(screen.getByText('polish'));
+    await waitFor(() => expect(onApply).toHaveBeenCalledWith('Refined draft content'));
+    expect(onClose).toHaveBeenCalled();
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'aiGenerate',
+        systemPrompt: expect.stringContaining("You are a professional writing assistant"),
+      }),
+    );
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        systemPrompt: expect.stringContaining("Output the final revised text strictly in English."),
+      }),
+    );
+  });
+
+  it('outputs in Chinese when user global language is set to Chinese', async () => {
+    mockLanguage = 'zh';
+    const anchorRef = { current: document.createElement('button') };
+    const spy = vi.spyOn(translationStore, 'sendTranslationCommand').mockResolvedValueOnce({
       ok: true,
       outputText: '精心润色后的文本内容',
     });
@@ -86,15 +129,20 @@ describe('ComposerAssistantPopover', () => {
     render(
       <ComposerAssistantPopover
         open={true}
-        onClose={onClose}
+        onClose={vi.fn()}
         draftText="明天开会"
-        onApply={onApply}
+        onApply={vi.fn()}
         anchorRef={anchorRef}
       />
     );
 
     fireEvent.click(screen.getByText('polish'));
-    await waitFor(() => expect(onApply).toHaveBeenCalledWith('精心润色后的文本内容'));
-    expect(onClose).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(spy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          systemPrompt: expect.stringContaining("Output the final revised text strictly in Simplified Chinese."),
+        }),
+      );
+    });
   });
 });
