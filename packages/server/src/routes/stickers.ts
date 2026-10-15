@@ -34,7 +34,7 @@ export function getMaxStickerSizeBytes(): number {
 /** Stored stickers fit this box; the largest place one is shown is a 240 px message row. */
 const MAX_STICKER_DIMENSION = 512;
 /** Bound decoded pixels across animation frames, not only the compressed upload size. */
-const MAX_DECODED_PIXELS = 16_777_216;
+const MAX_DECODED_PIXELS = 67_108_864;
 
 /**
  * Uploads per account (the row id on this instance, so each federated account
@@ -53,6 +53,14 @@ export class StickerImageError extends Error {
   constructor() {
     super('Not an accepted sticker image');
     this.name = 'StickerImageError';
+  }
+}
+
+/** Thrown by `encodeSticker` when the image exceeds maximum decoded pixels across all frames. */
+export class StickerPixelLimitError extends Error {
+  constructor() {
+    super('Sticker exceeds maximum decoded pixel limit');
+    this.name = 'StickerPixelLimitError';
   }
 }
 
@@ -116,8 +124,11 @@ export async function encodeSticker(bytes: Buffer, maxBytes?: number): Promise<B
       .resize(MAX_STICKER_DIMENSION, MAX_STICKER_DIMENSION, { fit: 'inside', withoutEnlargement: true })
       .webp().toBuffer();
   } catch (error) {
+    if (error instanceof StickerImageError || error instanceof StickerPixelLimitError) throw error;
+    if (error instanceof Error && error.message.toLowerCase().includes('pixel limit')) {
+      throw new StickerPixelLimitError();
+    }
     // Sharp's own messages name decoder internals; the caller only needs to know the image was refused.
-    if (error instanceof StickerImageError) throw error;
     throw new StickerImageError();
   }
   if (encoded.length > limit) throw new StickerImageError();
@@ -169,6 +180,7 @@ export async function stickerRoutes(app: FastifyInstance): Promise<void> {
     let encoded: Buffer;
     try { encoded = await encodeSticker(bytes, maxBytes); }
     catch (error) {
+      if (error instanceof StickerPixelLimitError) return sendError(reply, 400, 'sticker_pixel_limit_exceeded');
       if (error instanceof StickerImageError) return sendError(reply, 400, 'sticker_invalid_image', { max: maxMb });
       throw error;
     }

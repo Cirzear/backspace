@@ -272,6 +272,7 @@ export const ERROR_CODES = [
 
   // Personal stickers
   'sticker_invalid_image',
+  'sticker_pixel_limit_exceeded',
   'sticker_not_local',
   'sticker_not_found',
   'sticker_collection_full',

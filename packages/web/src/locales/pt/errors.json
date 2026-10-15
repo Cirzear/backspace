@@ -224,6 +224,7 @@
   "space_owner_title_invalid": "O título do dono pode ter de 1 a {{max}} caracteres em uma linha, com pelo menos um caractere visível e sem caracteres de controle.",
   "member_nickname_invalid": "Apelidos podem ter no máximo {{max}} caracteres em uma linha, com pelo menos um caractere visível e sem caracteres de controle.",
   "sticker_invalid_image": "Envie uma imagem PNG, JPEG, WebP ou GIF de no máximo {{max}} MB.",
+  "sticker_pixel_limit_exceeded": "A imagem tem muitos quadros de animação ou resolução muito alta.",
   "sticker_not_local": "Ainda não é possível adicionar à sua coleção figurinhas de outro servidor.",
   "sticker_not_found": "Essa figurinha não existe mais.",
   "sticker_collection_full": "Sua coleção está cheia com {{max}} figurinhas. Remova uma para adicionar outra.",

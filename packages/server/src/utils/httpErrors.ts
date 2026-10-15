@@ -178,6 +178,7 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   join_request_decided: 'This request has already been decided',
   // personal stickers
   sticker_invalid_image: 'Upload a PNG, JPEG, WebP or GIF image of at most {{max}} MB',
+  sticker_pixel_limit_exceeded: 'The image has too many animation frames or its resolution is too high',
   sticker_not_local: 'Only stickers from this instance can be added to a collection',
   sticker_not_found: 'Sticker not found',
   sticker_collection_full: 'A sticker collection holds at most {{max}} stickers',

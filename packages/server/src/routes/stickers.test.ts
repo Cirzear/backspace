@@ -23,7 +23,7 @@ vi.mock('../utils/auth.js', () => ({
     request.userId = request.headers.authorization;
   },
 }));
-import { stickerRoutes, encodeSticker, _resetStickerUploadLimit } from './stickers.js';
+import { stickerRoutes, encodeSticker, _resetStickerUploadLimit, StickerPixelLimitError } from './stickers.js';
 
 beforeEach(async () => {
   _resetStickerUploadLimit();
@@ -245,5 +245,39 @@ describe('personal stickers', () => {
       payload: { name: 'huge', image: Buffer.alloc(10 * 1024 * 1024 + 4096).toString('base64') },
     });
     expect(overLimit.statusCode).toBe(413);
+  });
+
+  it('rejects images that exceed decoded pixel limit with sticker_pixel_limit_exceeded', async () => {
+    // 10000x10000 has 100M pixels > MAX_DECODED_PIXELS (67_108_864)
+    const huge = await sharp({ create: { width: 10000, height: 10000, channels: 4, background: 'red' } }).png().toBuffer();
+    await expect(encodeSticker(huge)).rejects.toThrow(StickerPixelLimitError);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/stickers',
+      headers: { authorization: 'alice' },
+      payload: { name: 'huge', image: huge.toString('base64') },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ code: 'sticker_pixel_limit_exceeded' });
+  });
+
+  it('accepts animations with over 100 frames under the updated pixel cap', async () => {
+    const frameCount = 100;
+    const width = 8;
+    const height = 8;
+    const frames = Buffer.alloc(width * height * 4 * frameCount, 0);
+    for (let i = 0; i < frameCount; i++) {
+      const offset = i * width * height * 4;
+      frames[offset] = (i * 3 + 1) % 255;
+      frames[offset + 1] = (i * 5 + 1) % 255;
+      frames[offset + 2] = (i * 7 + 1) % 255;
+      frames[offset + 3] = 255;
+    }
+    const gif = await sharp(frames, { raw: { width, height: height * frameCount, channels: 4, pageHeight: height } })
+      .gif({ delay: new Array(frameCount).fill(50), loop: 0 }).toBuffer();
+    const result = await encodeSticker(gif);
+    const metadata = await sharp(result, { animated: true }).metadata();
+    expect(metadata.pages).toBe(frameCount);
   });
 });

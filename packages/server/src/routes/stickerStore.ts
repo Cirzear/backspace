@@ -16,7 +16,7 @@ import { getDb, schema } from '../db/index.js';
 import { authenticate, requireAdmin } from '../utils/auth.js';
 import { buildFederationHeaders, getOurOrigin } from '../utils/federationAuth.js';
 import { sendError } from '../utils/httpErrors.js';
-import { encodeSticker, getMaxStickerSizeBytes, saveStickerAsset, StickerImageError, tokenFor } from './stickers.js';
+import { encodeSticker, getMaxStickerSizeBytes, saveStickerAsset, StickerImageError, StickerPixelLimitError, tokenFor } from './stickers.js';
 import { syncRemotePack } from '../utils/stickerSync.js';
 
 const MAX_STICKER_MB = MAX_STICKER_BYTES / (1024 * 1024);
@@ -556,6 +556,9 @@ export async function stickerStoreRoutes(app: FastifyInstance): Promise<void> {
     try {
       encoded = await encodeSticker(bytes, maxBytes);
     } catch (error) {
+      if (error instanceof StickerPixelLimitError) {
+        return sendError(reply, 400, 'sticker_pixel_limit_exceeded');
+      }
       if (error instanceof StickerImageError) {
         return sendError(reply, 400, 'sticker_invalid_image', { max: maxMb });
       }
