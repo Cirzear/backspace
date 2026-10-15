@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ChatSummaryModal } from './ChatSummaryModal';
+import { ChatSummaryModal, summaryCache } from './ChatSummaryModal';
 import { useChatStore } from '../../stores/chatStore';
 import * as translationStore from './translationStore';
 
@@ -35,6 +35,7 @@ vi.mock('./useMessageTranslation', () => ({
 
 describe('ChatSummaryModal', () => {
   beforeEach(() => {
+    summaryCache.clear();
     useChatStore.setState({
       messages: new Map([
         [
@@ -154,8 +155,12 @@ describe('ChatSummaryModal', () => {
       }),
     );
 
-    // Switch to date mode - automatically triggers regeneration for the selected date
+    // Switch to date mode - should NOT automatically trigger generation
     fireEvent.click(screen.getByText(/summaryModeDate/));
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // User explicitly clicks 'generateSummary'
+    fireEvent.click(screen.getByText('generateSummary'));
 
     await waitFor(() => {
       expect(spy).toHaveBeenCalledTimes(2);
@@ -167,6 +172,60 @@ describe('ChatSummaryModal', () => {
         userPrompt: expect.stringContaining('当天的对话记录'),
       }),
     );
+  });
+
+  it('reuses cached summary on date switch to avoid duplicate AI requests and saves tokens, re-requesting only on regenerate', async () => {
+    const spy = vi.spyOn(translationStore, 'sendTranslationCommand').mockResolvedValue({
+      ok: true,
+      outputText: '第一次生成的日期摘要内容',
+    });
+
+    render(
+      <ChatSummaryModal
+        isOpen={true}
+        onClose={vi.fn()}
+        channelId="channel-1"
+        channelName="general"
+      />
+    );
+
+    // Initial unread auto-generate call
+    await waitFor(() => {
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    // Switch to date mode
+    fireEvent.click(screen.getByText(/summaryModeDate/));
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // User explicitly clicks 'generateSummary' for today
+    fireEvent.click(screen.getByText('generateSummary'));
+    await waitFor(() => {
+      expect(spy).toHaveBeenCalledTimes(2);
+    });
+    expect(await screen.findByText('第一次生成的日期摘要内容')).toBeInTheDocument();
+
+    // Switch to unread mode (which was already cached from the first call)
+    fireEvent.click(screen.getByText(/summaryModeUnread/));
+    // Should immediately display cached unread summary without additional AI call
+    expect(spy).toHaveBeenCalledTimes(2);
+
+    // Switch back to date mode (which was cached from the second call)
+    fireEvent.click(screen.getByText(/summaryModeDate/));
+    // Should immediately display cached date summary without additional AI call!
+    expect(screen.getByText('第一次生成的日期摘要内容')).toBeInTheDocument();
+    expect(spy).toHaveBeenCalledTimes(2);
+
+    // Now user explicitly clicks 'regenerate'
+    spy.mockResolvedValueOnce({
+      ok: true,
+      outputText: '第二次重新生成的日期摘要内容',
+    });
+    fireEvent.click(screen.getByText('regenerate'));
+    await waitFor(() => {
+      expect(spy).toHaveBeenCalledTimes(3);
+    });
+    expect(await screen.findByText('第二次重新生成的日期摘要内容')).toBeInTheDocument();
   });
 });
 

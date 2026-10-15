@@ -22,6 +22,28 @@ function getTodayIsoDate(): string {
   return `${year}-${month}-${day}`;
 }
 
+const MAX_CACHE_ENTRIES = 100;
+export const summaryCache = new Map<string, string>();
+
+export function getSummaryCacheKey(
+  channelId: string,
+  mode: SummaryScopeMode,
+  selectedDate: string,
+  lastReadId: string | null | undefined,
+  targetLang: string,
+): string {
+  const scope = mode === 'date' ? selectedDate : (lastReadId ?? 'latest');
+  return `${channelId}:${mode}:${scope}:${targetLang}`;
+}
+
+export function setCachedSummary(key: string, text: string): void {
+  if (summaryCache.size >= MAX_CACHE_ENTRIES) {
+    const oldestKey = summaryCache.keys().next().value;
+    if (oldestKey !== undefined) summaryCache.delete(oldestKey);
+  }
+  summaryCache.set(key, text);
+}
+
 export function filterSummaryMessages(
   messages: MessageWithUser[],
   mode: SummaryScopeMode,
@@ -54,6 +76,7 @@ interface ChatSummaryModalProps {
 export function ChatSummaryModal({ isOpen, onClose, channelId, channelName }: ChatSummaryModalProps) {
   const { t } = useTranslation('translation');
   const { accountId, settings } = useTranslationSettings();
+  const targetLang = settings?.preferences.targetLanguage || 'zh-CN';
   const messages = useChatStore((s) => s.messages.get(channelId)) ?? EMPTY_MESSAGES;
   const readStates = useChatStore((s) => s.readStates);
   const lastReadId = readStates.get(channelId);
@@ -61,7 +84,10 @@ export function ChatSummaryModal({ isOpen, onClose, channelId, channelName }: Ch
   const [mode, setMode] = useState<SummaryScopeMode>('unread');
   const [selectedDate, setSelectedDate] = useState<string>(getTodayIsoDate);
   const [loading, setLoading] = useState(false);
-  const [summary, setSummary] = useState<string | null>(null);
+  const [summary, setSummary] = useState<string | null>(() => {
+    const key = getSummaryCacheKey(channelId, 'unread', getTodayIsoDate(), lastReadId, targetLang);
+    return summaryCache.get(key) ?? null;
+  });
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -83,6 +109,38 @@ export function ChatSummaryModal({ isOpen, onClose, channelId, channelName }: Ch
     }
     return dates;
   }, [messages]);
+
+  const handleModeChange = useCallback(
+    (newMode: SummaryScopeMode) => {
+      setMode(newMode);
+      setError(null);
+      const key = getSummaryCacheKey(channelId, newMode, selectedDate, lastReadId, targetLang);
+      const cached = summaryCache.get(key);
+      setSummary(cached ?? null);
+    },
+    [channelId, selectedDate, lastReadId, targetLang],
+  );
+
+  const handleDateChange = useCallback(
+    (newDate: string) => {
+      setSelectedDate(newDate);
+      setError(null);
+      const key = getSummaryCacheKey(channelId, 'date', newDate, lastReadId, targetLang);
+      const cached = summaryCache.get(key);
+      setSummary(cached ?? null);
+    },
+    [channelId, lastReadId, targetLang],
+  );
+
+  useEffect(() => {
+    if (isOpen) {
+      const key = getSummaryCacheKey(channelId, mode, selectedDate, lastReadId, targetLang);
+      const cached = summaryCache.get(key);
+      if (cached && !summary) {
+        setSummary(cached);
+      }
+    }
+  }, [isOpen, channelId, mode, selectedDate, lastReadId, targetLang, summary]);
 
   const handleGenerate = useCallback(async () => {
     if (!accountId) return;
@@ -107,7 +165,6 @@ export function ChatSummaryModal({ isOpen, onClose, channelId, channelName }: Ch
       .join('\n')
       .slice(-25000);
 
-    const targetLang = settings?.preferences.targetLanguage || 'zh-CN';
     const targetLangName = getTargetLanguageName(targetLang);
 
     const systemPrompt =
@@ -135,26 +192,37 @@ export function ChatSummaryModal({ isOpen, onClose, channelId, channelName }: Ch
     setLoading(false);
     if (reply.ok && 'outputText' in reply) {
       setSummary(reply.outputText);
+      const key = getSummaryCacheKey(channelId, mode, selectedDate, lastReadId, targetLang);
+      setCachedSummary(key, reply.outputText);
     } else if (!reply.ok) {
       setError(translationErrorText(reply));
     }
   }, [
     accountId,
+    channelId,
     channelName,
     currentFilteredMessages,
+    lastReadId,
     messages.length,
     mode,
     selectedDate,
     settings?.preferences.summarizerConnection,
-    settings?.preferences.targetLanguage,
+    targetLang,
     t,
   ]);
 
   useEffect(() => {
-    if (isOpen && !summary && !loading && !error && currentFilteredMessages.length > 0) {
+    const cacheKey = getSummaryCacheKey(channelId, mode, selectedDate, lastReadId, targetLang);
+    const cached = summaryCache.get(cacheKey);
+    if (cached && !summary) {
+      setSummary(cached);
+      return;
+    }
+    // Only auto-generate in 'unread' mode if not already cached; in 'date' mode user explicitly triggers via generate button
+    if (isOpen && mode === 'unread' && !summary && !cached && !loading && !error && currentFilteredMessages.length > 0) {
       void handleGenerate();
     }
-  }, [isOpen, summary, loading, error, currentFilteredMessages.length, handleGenerate]);
+  }, [isOpen, mode, summary, loading, error, currentFilteredMessages.length, handleGenerate, channelId, selectedDate, lastReadId, targetLang]);
 
   useEffect(() => {
     if (isOpen && messages.length === 0) {
@@ -181,11 +249,7 @@ export function ChatSummaryModal({ isOpen, onClose, channelId, channelName }: Ch
             <button
               type="button"
               disabled={loading}
-              onClick={() => {
-                setMode('unread');
-                setSummary(null);
-                setError(null);
-              }}
+              onClick={() => handleModeChange('unread')}
               className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
                 mode === 'unread'
                   ? 'bg-accent-primary/20 text-accent-primary border border-accent-primary/30'
@@ -197,11 +261,7 @@ export function ChatSummaryModal({ isOpen, onClose, channelId, channelName }: Ch
             <button
               type="button"
               disabled={loading}
-              onClick={() => {
-                setMode('date');
-                setSummary(null);
-                setError(null);
-              }}
+              onClick={() => handleModeChange('date')}
               className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
                 mode === 'date'
                   ? 'bg-accent-primary/20 text-accent-primary border border-accent-primary/30'
@@ -218,11 +278,7 @@ export function ChatSummaryModal({ isOpen, onClose, channelId, channelName }: Ch
                 value={selectedDate}
                 disabled={loading}
                 messageDates={messageDates}
-                onChange={(newDate) => {
-                  setSelectedDate(newDate);
-                  setSummary(null);
-                  setError(null);
-                }}
+                onChange={handleDateChange}
               />
             )}
             <span className="text-[11px] text-txt-tertiary">
@@ -290,10 +346,20 @@ export function ChatSummaryModal({ isOpen, onClose, channelId, channelName }: Ch
             </div>
           </div>
         ) : (
-          <div className="flex items-center justify-center py-8">
+          <div className="flex flex-col items-center justify-center py-10 space-y-3">
+            <p className="text-xs text-txt-tertiary">
+              {mode === 'date'
+                ? t('messagesCountFound', { total: currentFilteredMessages.length })
+                : t('summaryPromptHelp')}
+            </p>
             <button
               type="button"
-              className="px-4 py-2 rounded bg-accent-primary hover:bg-accent-primary-hover text-xs font-medium text-white transition-colors"
+              disabled={currentFilteredMessages.length === 0}
+              className={`px-4 py-2 rounded text-xs font-medium text-white transition-colors ${
+                currentFilteredMessages.length === 0
+                  ? 'bg-accent-primary/40 cursor-not-allowed text-white/50'
+                  : 'bg-accent-primary hover:bg-accent-primary-hover shadow-sm'
+              }`}
               onClick={() => void handleGenerate()}
             >
               {t('generateSummary')}
