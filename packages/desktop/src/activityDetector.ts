@@ -24,7 +24,14 @@ interface Activity {
 interface GameEntry {
   id: string;
   name: string;
+  /** Executable names matched against the process name (case-insensitive). */
   processes: string[];
+  /**
+   * Substrings matched against the process command line (case-insensitive).
+   * Lets one entry cover every launcher variant of a game whose actual
+   * process is a bare interpreter (Minecraft → `java`).
+   */
+  cmdlinePatterns?: string[];
   type?: string;
 }
 
@@ -37,10 +44,17 @@ const VALID_TYPES = new Set(['playing', 'listening', 'watching', 'streaming']);
 const POLL_INTERVAL_MS = 15_000;
 const REMOTE_URL = 'https://raw.githubusercontent.com/TheZwiss/backspace/main/packages/desktop/resources/games.json';
 
+/**
+ * The Linux kernel stores comm values in a 16-byte buffer including the NUL
+ * terminator, so long executable names appear truncated to 15 characters in
+ * /proc/<pid>/comm (and in `ps` output): "minecraft-launcher" → "minecraft-launc".
+ */
+const COMM_MAX = 15;
+
 // ─── Module state ───────────────────────────────────────────────────────────
 
-let processMap: Map<string, GameEntry> = new Map();
 let gameEntries: GameEntry[] = [];
+let dictionaryVersion = 0;
 let currentGameId: string | null = null;
 let currentActivity: Activity | null = null;
 let intervalId: NodeJS.Timeout | null = null;
@@ -48,19 +62,231 @@ let isPolling = false;
 let hasErrored = false;
 let onChangeCallback: ((activity: Activity | null) => void) | null = null;
 
-// ─── Dictionary loading ────────────────────────────────────────────────────
+// ─── Process information ────────────────────────────────────────────────────
+
+interface ProcessInfo {
+  pid: number;
+  /** Best-effort process name: exe basename, else first cmdline token, else comm. */
+  name: string;
+  /** Command line tokens joined with single spaces (empty when unavailable). */
+  cmdline: string;
+}
+
+/**
+ * Pick the most descriptive process name from what /proc exposed:
+ * exe symlink (preserves full length and case), first cmdline token, or comm
+ * (may be kernel-truncated to COMM_MAX characters).
+ */
+export function pickProcName(exeLink: string | null, cmdlineTokens: string[], comm: string | null): string | null {
+  if (exeLink) {
+    const base = path.basename(exeLink);
+    if (base) return base;
+  }
+  const first = cmdlineTokens[0];
+  if (first) {
+    const base = path.basename(first);
+    if (base) return base;
+  }
+  return comm ?? null;
+}
+
+/**
+ * Read the running process list on Linux by walking /proc directly.
+ * No external command, no parsing race: for each numeric pid directory we
+ * read the exe symlink (full executable name, wine paths included), the
+ * NUL-separated cmdline, and comm as a last resort.
+ *
+ * `procRoot` is injectable so tests can fabricate a fake /proc tree.
+ */
+export function readProcessInfos(procRoot = '/proc'): ProcessInfo[] {
+  const infos: ProcessInfo[] = [];
+  let pids: string[];
+  try {
+    pids = fs.readdirSync(procRoot);
+  } catch {
+    return infos;
+  }
+
+  for (const pidStr of pids) {
+    if (!/^\d+$/.test(pidStr)) continue;
+    const dir = path.join(procRoot, pidStr);
+
+    let exeLink: string | null = null;
+    try {
+      const target = fs.readlinkSync(path.join(dir, 'exe'));
+      // The kernel appends " (deleted)" when the binary was replaced/exited
+      if (target && !target.endsWith(' (deleted)')) exeLink = target;
+    } catch {
+      // EACCES for other users' processes, ENOENT for kernel threads — fall through
+    }
+
+    let cmdlineTokens: string[] = [];
+    try {
+      const raw = fs.readFileSync(path.join(dir, 'cmdline'));
+      cmdlineTokens = raw.toString('utf-8').split('\0').filter((t) => t.length > 0);
+    } catch {
+      // Process exited between readdir and read — skip its cmdline
+    }
+
+    let comm: string | null = null;
+    try {
+      comm = fs.readFileSync(path.join(dir, 'comm'), 'utf-8').trim() || null;
+    } catch {
+      // Same race as above
+    }
+
+    const name = pickProcName(exeLink, cmdlineTokens, comm);
+    if (!name) continue; // kernel thread: no exe, no cmdline
+
+    infos.push({ pid: Number(pidStr), name, cmdline: cmdlineTokens.join(' ') });
+  }
+
+  return infos;
+}
+
+/** Read a single process' info by pid from /proc (used for late name lookups). */
+export function readProcessInfoByPid(pid: number, procRoot = '/proc'): ProcessInfo | null {
+  const dir = path.join(procRoot, String(pid));
+  try {
+    fs.accessSync(dir);
+  } catch {
+    return null;
+  }
+
+  let exeLink: string | null = null;
+  try {
+    const target = fs.readlinkSync(path.join(dir, 'exe'));
+    if (target && !target.endsWith(' (deleted)')) exeLink = target;
+  } catch {
+    // Unreadable exe — fall through
+  }
+
+  let cmdlineTokens: string[] = [];
+  try {
+    cmdlineTokens = fs.readFileSync(path.join(dir, 'cmdline')).toString('utf-8').split('\0').filter((t) => t.length > 0);
+  } catch {
+    // Unreadable cmdline
+  }
+
+  let comm: string | null = null;
+  try {
+    comm = fs.readFileSync(path.join(dir, 'comm'), 'utf-8').trim() || null;
+  } catch {
+    // Unreadable comm
+  }
+
+  const name = pickProcName(exeLink, cmdlineTokens, comm);
+  if (!name) return null;
+  return { pid, name, cmdline: cmdlineTokens.join(' ') };
+}
+
+// ─── Platform process listing (fallback for non-Linux, or /proc unavailable) ─
+
+function getProcessCommand(): { executable: string; args: string[] } {
+  if (process.platform === 'win32') {
+    return { executable: 'tasklist', args: ['/fo', 'csv', '/nh'] };
+  }
+  if (process.platform === 'darwin') {
+    return { executable: 'ps', args: ['-c', '-A', '-o', 'comm'] };
+  }
+  // Linux and other Unix
+  return { executable: 'ps', args: ['-A', '-o', 'comm'] };
+}
+
+/**
+ * Parse `ps`/`tasklist` output into lowercased process names.
+ * Kept for Windows/macOS and as a Linux fallback when /proc is unavailable.
+ */
+export function parseProcessList(stdout: string, platform: string = process.platform): Set<string> {
+  const names = new Set<string>();
+
+  if (platform === 'win32') {
+    // Windows tasklist CSV: "ImageName","PID","SessionName","Session#","MemUsage"
+    for (const line of stdout.split('\n')) {
+      const match = line.match(/^"([^"]+)"/);
+      if (match && match[1]) {
+        names.add(match[1].toLowerCase());
+      }
+    }
+  } else {
+    // macOS/Linux: one process name per line, first line may be header
+    const lines = stdout.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const name = lines[i]?.trim();
+      if (!name) continue;
+      // Skip header line (COMM or COMMAND)
+      if (i === 0 && (name === 'COMM' || name === 'COMMAND')) continue;
+      names.add(name.toLowerCase());
+    }
+  }
+
+  return names;
+}
+
+/** Build ProcessInfo-like rows from a parsed name set (ps/tasklist fallback). */
+function infosFromNames(names: Set<string>): ProcessInfo[] {
+  return [...names].map((name) => ({ pid: 0, name, cmdline: '' }));
+}
+
+// ─── Matching ───────────────────────────────────────────────────────────────
+
+/**
+ * Whether a running process matches a dictionary entry:
+ * - exact process-name match (case-insensitive), or
+ * - Linux comm truncation: dictionary name longer than 15 chars whose first
+ *   15 chars equal the process name, or
+ * - any cmdline pattern appearing in the process command line.
+ */
+export function matchesProcessName(entry: GameEntry, procName: string, cmdline: string): boolean {
+  const nameLower = procName.toLowerCase();
+
+  for (const proc of entry.processes) {
+    const p = proc.toLowerCase();
+    if (nameLower === p) return true;
+    if (p.length > COMM_MAX && nameLower.length === COMM_MAX && p.startsWith(nameLower)) return true;
+  }
+
+  if (entry.cmdlinePatterns && cmdline) {
+    const cmdLower = cmdline.toLowerCase();
+    for (const pattern of entry.cmdlinePatterns) {
+      if (pattern && cmdLower.includes(pattern.toLowerCase())) return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * First dictionary entry (dictionary order = priority) matched by any of the
+ * running processes. A game entry listed before a launcher entry wins when
+ * both are running — e.g. Minecraft before "Minecraft Launcher".
+ */
+export function findMatchingGame(infos: ProcessInfo[], entries: GameEntry[]): GameEntry | null {
+  for (const entry of entries) {
+    for (const info of infos) {
+      if (matchesProcessName(entry, info.name, info.cmdline)) return entry;
+    }
+  }
+  return null;
+}
+
+// ─── Dictionary loading ─────────────────────────────────────────────────────
 
 /**
  * Parse and validate a game entry from the dictionary.
- * Returns a valid GameEntry or null if the entry is malformed.
+ * `processes` may be empty only when `cmdlinePatterns` carries the matching.
  */
-function parseGameEntry(entry: unknown): GameEntry | null {
+export function parseGameEntry(entry: unknown): GameEntry | null {
   if (!entry || typeof entry !== 'object') return null;
   const e = entry as Record<string, unknown>;
 
+  const hasPatterns = Array.isArray(e.cmdlinePatterns) && e.cmdlinePatterns.length > 0 &&
+    e.cmdlinePatterns.every((p: unknown) => typeof p === 'string' && p.length > 0);
+
   if (typeof e.id !== 'string' || !e.id || typeof e.name !== 'string' || !e.name ||
-      !Array.isArray(e.processes) || e.processes.length === 0 ||
-      !e.processes.every((p: unknown) => typeof p === 'string')) {
+      !Array.isArray(e.processes) ||
+      !e.processes.every((p: unknown) => typeof p === 'string' && p.length > 0) ||
+      (e.processes.length === 0 && !hasPatterns)) {
     return null;
   }
 
@@ -70,101 +296,112 @@ function parseGameEntry(entry: unknown): GameEntry | null {
     id: e.id,
     name: e.name,
     processes: e.processes as string[],
+    cmdlinePatterns: hasPatterns ? (e.cmdlinePatterns as string[]) : undefined,
     type,
   };
 }
 
 /**
- * Load a game dictionary from a file path.
- * Supports both formats:
- *   - Bare array (legacy, version 0): [{ id, name, processes }, ...]
- *   - Versioned object: { version: number, games: [...] }
- *
- * On success, populates `gameEntries` and `processMap` and returns the version.
- * On failure, returns { success: false, version: 0 } without modifying state.
+ * Validate a parsed dictionary object (bare array = legacy version 0, or a
+ * versioned `{ version, games }` object) without touching module state.
  */
-function loadDictionary(filePath: string): { success: boolean; version: number } {
+export function validateDictionaryObject(parsed: unknown): {
+  version: number;
+  entries: GameEntry[];
+} | null {
+  let version = 0;
+  let rawEntries: unknown[];
+
+  if (Array.isArray(parsed)) {
+    rawEntries = parsed;
+  } else if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const obj = parsed as Record<string, unknown>;
+    if (typeof obj.version === 'number' && Array.isArray(obj.games)) {
+      version = obj.version;
+      rawEntries = obj.games;
+    } else {
+      return null;
+    }
+  } else {
+    return null;
+  }
+
+  const entries: GameEntry[] = [];
+  for (const entry of rawEntries) {
+    const gameEntry = parseGameEntry(entry);
+    if (gameEntry) entries.push(gameEntry);
+  }
+
+  if (entries.length === 0) return null;
+  return { version, entries };
+}
+
+/** Read and validate a dictionary file. Returns null when missing/corrupt. */
+export function loadDictionaryFile(filePath: string): { version: number; entries: GameEntry[]; raw: string } | null {
   let raw: string;
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch {
-    console.warn('[ActivityDetector] Dictionary not found at', filePath);
-    return { success: false, version: 0 };
+    return null;
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    console.warn('[ActivityDetector] Dictionary contains malformed JSON at', filePath);
-    return { success: false, version: 0 };
+    return null;
   }
 
-  // Determine format: bare array (version 0) vs versioned object
-  let version = 0;
-  let entries: unknown[];
-
-  if (Array.isArray(parsed)) {
-    // Legacy bare-array format
-    version = 0;
-    entries = parsed;
-  } else if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-    const obj = parsed as Record<string, unknown>;
-    if (typeof obj.version === 'number' && Array.isArray(obj.games)) {
-      version = obj.version;
-      entries = obj.games;
-    } else {
-      console.warn('[ActivityDetector] Dictionary has unknown structure at', filePath);
-      return { success: false, version: 0 };
-    }
-  } else {
-    console.warn('[ActivityDetector] Dictionary root must be an array or versioned object at', filePath);
-    return { success: false, version: 0 };
-  }
-
-  const newEntries: GameEntry[] = [];
-  const newMap = new Map<string, GameEntry>();
-
-  for (const entry of entries) {
-    const gameEntry = parseGameEntry(entry);
-    if (!gameEntry) {
-      const e = entry as Record<string, unknown> | null;
-      console.warn('[ActivityDetector] Skipping invalid entry:', e?.id ?? JSON.stringify(entry));
-      continue;
-    }
-
-    newEntries.push(gameEntry);
-
-    for (const proc of gameEntry.processes) {
-      const key = proc.toLowerCase();
-      if (!newMap.has(key)) {
-        newMap.set(key, gameEntry);
-      }
-    }
-  }
-
-  if (newMap.size === 0) {
-    console.warn('[ActivityDetector] No valid entries in dictionary at', filePath);
-    return { success: false, version: 0 };
-  }
-
-  // Commit to module state
-  gameEntries = newEntries;
-  processMap = newMap;
-
-  console.log(`[ActivityDetector] Loaded ${newEntries.length} games (${newMap.size} process names) v${version} from ${filePath}`);
-  return { success: true, version };
+  const validated = validateDictionaryObject(parsed);
+  if (!validated) return null;
+  return { version: validated.version, entries: validated.entries, raw };
 }
 
 /**
- * Hot-swap the process map and game entries without resetting detection state.
- * Used when a remote dictionary update is fetched in the background.
+ * Atomically write data to a file by writing to a .tmp file first,
+ * then renaming it into place.
  */
-function hotSwapDictionary(newEntries: GameEntry[], newMap: Map<string, GameEntry>): void {
-  gameEntries = newEntries;
-  processMap = newMap;
-  // Note: currentGameId and currentActivity are intentionally preserved
-  // so detection state survives dictionary updates.
+function atomicWrite(filePath: string, data: string): void {
+  const tmpPath = filePath + '.tmp';
+  fs.writeFileSync(tmpPath, data, 'utf-8');
+  fs.renameSync(tmpPath, filePath);
+}
+
+/**
+ * Load the best local dictionary: cache and bundled seed are both read, and
+ * whichever carries the higher version wins. When the seed wins it is
+ * promoted into the cache so a fresh install immediately benefits from the
+ * remote-sync ETag flow and future boots compare against the right version.
+ *
+ * Returns null when neither source yields a valid dictionary.
+ */
+export function loadBestDictionary(cachePath: string, seedPath: string): {
+  version: number;
+  entries: GameEntry[];
+} | null {
+  const cache = loadDictionaryFile(cachePath);
+  const seed = loadDictionaryFile(seedPath);
+
+  const winner = !cache && !seed
+    ? null
+    : !cache
+      ? seed
+      : !seed
+        ? cache
+        : (seed.version > cache.version ? seed : cache);
+
+  if (!winner) return null;
+
+  // Promote a winning seed into the cache (best-effort)
+  if (winner === seed) {
+    try {
+      atomicWrite(cachePath, seed.raw);
+    } catch (err) {
+      console.warn('[ActivityDetector] Failed to promote seed dictionary to cache:', err);
+    }
+  }
+
+  return { version: winner.version, entries: winner.entries };
 }
 
 // ─── Remote sync ────────────────────────────────────────────────────────────
@@ -191,53 +428,6 @@ function writeETag(etag: string): void {
   } catch {
     // Non-critical — next sync will just re-download
   }
-}
-
-/**
- * Validate a parsed dictionary object without loading it into module state.
- * Returns the validated entries and map, or null if invalid.
- */
-function validateDictionary(parsed: unknown): {
-  version: number;
-  entries: GameEntry[];
-  map: Map<string, GameEntry>;
-} | null {
-  let version = 0;
-  let rawEntries: unknown[];
-
-  if (Array.isArray(parsed)) {
-    version = 0;
-    rawEntries = parsed;
-  } else if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-    const obj = parsed as Record<string, unknown>;
-    if (typeof obj.version === 'number' && Array.isArray(obj.games)) {
-      version = obj.version;
-      rawEntries = obj.games;
-    } else {
-      return null;
-    }
-  } else {
-    return null;
-  }
-
-  const entries: GameEntry[] = [];
-  const map = new Map<string, GameEntry>();
-
-  for (const entry of rawEntries) {
-    const gameEntry = parseGameEntry(entry);
-    if (!gameEntry) continue;
-    entries.push(gameEntry);
-    for (const proc of gameEntry.processes) {
-      const key = proc.toLowerCase();
-      if (!map.has(key)) {
-        map.set(key, gameEntry);
-      }
-    }
-  }
-
-  if (map.size === 0) return null;
-
-  return { version, entries, map };
 }
 
 /**
@@ -296,40 +486,18 @@ function fetchRemote(url: string, etag: string | null): Promise<{
 }
 
 /**
- * Atomically write data to a file by writing to a .tmp file first,
- * then renaming it into place.
- */
-function atomicWrite(filePath: string, data: string): void {
-  const tmpPath = filePath + '.tmp';
-  fs.writeFileSync(tmpPath, data, 'utf-8');
-  fs.renameSync(tmpPath, filePath);
-}
-
-/**
  * Sync the game dictionary from a remote source.
  *
  * Strategy:
- * 1. Load the best local source (cache file or bundled seed), whichever has a higher version.
- * 2. Fetch from GitHub in the background.
- * 3. If the remote version is newer, atomically write to cache, save ETag, and hot-swap.
+ * 1. Local state already holds the best local version (max of cache/seed),
+ *    loaded by startActivityDetection.
+ * 2. Fetch from GitHub in the background (conditional on the stored ETag).
+ * 3. If the remote version is newer, atomically write to cache, save ETag,
+ *    and hot-swap the in-memory entries.
  */
 async function syncDictionary(): Promise<void> {
   const cachePath = getCachePath();
-  const seedPath = path.join(__dirname, '..', 'resources', 'games.json');
-
-  // Step 1: Determine best local version (cache vs. seed)
-  // The seed was already loaded by startActivityDetection before calling us,
-  // but the cache might have a higher version.
-  const cacheResult = loadDictionary(cachePath);
-  let currentVersion = cacheResult.success ? cacheResult.version : 0;
-
-  if (!cacheResult.success) {
-    // Cache missing or corrupt — seed was already loaded, read its version
-    const seedResult = loadDictionary(seedPath);
-    currentVersion = seedResult.success ? seedResult.version : 0;
-  }
-
-  // Step 2: Fetch remote
+  const currentVersion = dictionaryVersion;
   const etag = readETag();
 
   let response: { status: number; body: string; etag: string | null } | null;
@@ -345,7 +513,6 @@ async function syncDictionary(): Promise<void> {
     return;
   }
 
-  // Step 3: Handle response
   if (response.status === 304) {
     console.log('[ActivityDetector] Remote dictionary unchanged (304)');
     return;
@@ -356,7 +523,6 @@ async function syncDictionary(): Promise<void> {
     return;
   }
 
-  // Parse and validate the remote dictionary
   let parsed: unknown;
   try {
     parsed = JSON.parse(response.body);
@@ -365,7 +531,7 @@ async function syncDictionary(): Promise<void> {
     return;
   }
 
-  const validated = validateDictionary(parsed);
+  const validated = validateDictionaryObject(parsed);
   if (!validated) {
     console.warn('[ActivityDetector] Remote dictionary validation failed — skipping');
     return;
@@ -381,7 +547,6 @@ async function syncDictionary(): Promise<void> {
     return;
   }
 
-  // Atomic write the cache
   try {
     atomicWrite(cachePath, response.body);
   } catch (err) {
@@ -389,61 +554,64 @@ async function syncDictionary(): Promise<void> {
     // Non-fatal — we can still hot-swap in memory
   }
 
-  // Save ETag
   if (response.etag) {
     writeETag(response.etag);
   }
 
-  // Hot-swap: rebuild processMap and gameEntries from validated data
-  hotSwapDictionary(validated.entries, validated.map);
-  console.log(`[ActivityDetector] Hot-swapped to remote dictionary v${validated.version} (${validated.entries.length} games, ${validated.map.size} process names)`);
-}
-
-// ─── Platform-specific process listing ──────────────────────────────────────
-
-function getProcessCommand(): { executable: string; args: string[] } {
-  if (process.platform === 'win32') {
-    return { executable: 'tasklist', args: ['/fo', 'csv', '/nh'] };
-  }
-  if (process.platform === 'darwin') {
-    return { executable: 'ps', args: ['-c', '-A', '-o', 'comm'] };
-  }
-  // Linux and other Unix
-  return { executable: 'ps', args: ['-A', '-o', 'comm'] };
-}
-
-function parseProcessList(stdout: string): Set<string> {
-  const names = new Set<string>();
-
-  if (process.platform === 'win32') {
-    // Windows tasklist CSV: "ImageName","PID","SessionName","Session#","MemUsage"
-    for (const line of stdout.split('\n')) {
-      const match = line.match(/^"([^"]+)"/);
-      if (match && match[1]) {
-        names.add(match[1].toLowerCase());
-      }
-    }
-  } else {
-    // macOS/Linux: one process name per line, first line may be header
-    const lines = stdout.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      const name = lines[i]?.trim();
-      if (!name) continue;
-      // Skip header line (COMM or COMMAND)
-      if (i === 0 && (name === 'COMM' || name === 'COMMAND')) continue;
-      names.add(name.toLowerCase());
-    }
-  }
-
-  return names;
+  gameEntries = validated.entries;
+  dictionaryVersion = validated.version;
+  console.log(`[ActivityDetector] Hot-swapped to remote dictionary v${validated.version} (${validated.entries.length} games)`);
 }
 
 // ─── Poll logic ─────────────────────────────────────────────────────────────
+
+/**
+ * Apply a matched game (or its absence) to the detection state machine and
+ * fire the change callback when the visible activity changed.
+ */
+function applyMatchedGame(matched: GameEntry | null): void {
+  if (matched) {
+    if (matched.id !== currentGameId) {
+      currentGameId = matched.id;
+      currentActivity = {
+        type: matched.type ?? 'playing',
+        name: matched.name,
+        timestamps: { start: Date.now() },
+      };
+      onChangeCallback?.(currentActivity);
+    }
+    // Same game still running — no change, skip IPC
+  } else if (currentGameId !== null) {
+    currentGameId = null;
+    currentActivity = null;
+    onChangeCallback?.(null);
+  }
+}
 
 function poll(): void {
   if (isPolling) return; // Previous poll still in-flight
   isPolling = true;
 
+  if (process.platform === 'linux') {
+    // Direct /proc walk: full executable names, command lines, no subprocess
+    let infos: ProcessInfo[];
+    try {
+      infos = readProcessInfos();
+    } catch (err) {
+      console.warn('[ActivityDetector] /proc scan failed:', err, '— falling back to ps');
+      // Keep isPolling set: pollViaCommand's callback releases it
+      pollViaCommand();
+      return;
+    }
+    isPolling = false;
+    applyMatchedGame(findMatchingGame(infos, gameEntries));
+    return;
+  }
+
+  pollViaCommand();
+}
+
+function pollViaCommand(): void {
   const { executable, args } = getProcessCommand();
 
   execFile(executable, args, { maxBuffer: 1024 * 1024 }, (error, stdout) => {
@@ -458,41 +626,8 @@ function poll(): void {
       return;
     }
 
-    const runningProcesses = parseProcessList(stdout);
-
-    // Find first matching game (dictionary order = priority)
-    let matchedEntry: GameEntry | null = null;
-    for (const entry of gameEntries) {
-      for (const proc of entry.processes) {
-        if (runningProcesses.has(proc.toLowerCase())) {
-          matchedEntry = entry;
-          break;
-        }
-      }
-      if (matchedEntry) break;
-    }
-
-    if (matchedEntry) {
-      if (matchedEntry.id !== currentGameId) {
-        // New game detected (or game changed)
-        currentGameId = matchedEntry.id;
-        currentActivity = {
-          type: matchedEntry.type ?? 'playing',
-          name: matchedEntry.name,
-          timestamps: { start: Date.now() },
-        };
-        onChangeCallback?.(currentActivity);
-      }
-      // Same game still running — no change, skip IPC
-    } else {
-      if (currentGameId !== null) {
-        // Game exited
-        currentGameId = null;
-        currentActivity = null;
-        onChangeCallback?.(null);
-      }
-      // No game was running before either — skip
-    }
+    const infos = infosFromNames(parseProcessList(stdout));
+    applyMatchedGame(findMatchingGame(infos, gameEntries));
   });
 }
 
@@ -503,19 +638,18 @@ export function startActivityDetection(
 ): void {
   if (intervalId) return; // Already running
 
-  // Load from best available local source: cache first, then bundled seed
-  const cachePath = path.join(app.getPath('userData'), 'games-cache.json');
+  const cachePath = getCachePath();
   const seedPath = path.join(__dirname, '..', 'resources', 'games.json');
 
-  const cacheResult = loadDictionary(cachePath);
-  if (!cacheResult.success) {
-    // Cache missing or corrupt — fall back to bundled seed
-    const seedResult = loadDictionary(seedPath);
-    if (!seedResult.success) {
-      console.warn('[ActivityDetector] No valid dictionary found — detection disabled');
-      return;
-    }
+  const best = loadBestDictionary(cachePath, seedPath);
+  if (!best) {
+    console.warn('[ActivityDetector] No valid dictionary found — detection disabled');
+    return;
   }
+
+  gameEntries = best.entries;
+  dictionaryVersion = best.version;
+  console.log(`[ActivityDetector] Loaded ${best.entries.length} games v${best.version}`);
 
   onChangeCallback = onActivityChange;
   hasErrored = false;

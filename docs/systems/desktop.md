@@ -1003,7 +1003,14 @@ Direction legend: **fire** = `ipcRenderer.send` (no response), **invoke** = `ipc
 
 ### Overview
 
-Detects running games/applications by polling the OS process list every 15 seconds and matching process names against a game dictionary.
+Detects running games/applications by polling the OS process list every 15 seconds and matching process names (and, on Linux, command lines) against a game dictionary.
+
+On Linux the poll walks `/proc` directly — no subprocess, no lossy `ps` parsing:
+- `/proc/<pid>/exe` symlink → full executable name with case preserved (covers Wine, whose exe resolves to `.../drive_c/.../game.exe`, and AppImage mounts)
+- `/proc/<pid>/cmdline` → NUL-separated argv, joined with spaces and matched against `cmdlinePatterns`
+- `/proc/<pid>/comm` → last-resort name, kernel-truncated to 15 characters
+
+Windows and macOS keep the `tasklist` / `ps` commands; Linux also falls back to `ps` if the `/proc` walk itself throws.
 
 ### Game Dictionary
 
@@ -1021,14 +1028,19 @@ GameEntry[]
 interface GameEntry {
   id: string;        // unique identifier, e.g. "cs2"
   name: string;      // display name, e.g. "Counter-Strike 2"
-  processes: string[]; // executable names, e.g. ["cs2.exe", "cs2"]
+  processes: string[]; // executable names, e.g. ["cs2.exe", "cs2"]; may be empty when cmdlinePatterns carries the matching
+  cmdlinePatterns?: string[]; // substrings matched against the process command line (case-insensitive)
   type?: string;     // "playing" | "listening" | "watching" | "streaming" (default: "playing")
 }
 ```
 
+`cmdlinePatterns` lets one entry cover every launcher variant of a game whose actual process is a bare interpreter. Minecraft is the canonical case: on Linux it is always a `java` process, so the entry matches `net.minecraft.client.main.main` (vanilla), Fabric/Quilt `KnotClient`, `--launchTarget forgeclient|neoforgeclient` (Neo)Forge, legacy `FMLEntityWrapper`-era launchers, and the Prism/MultiMC entrypoint classes — launcher-agnostically, without ever matching bare `java` (which would false-positive on Minecraft servers and Java IDEs).
+
+A separate `minecraft-launcher` entry (official launcher, Prism, MultiMC, GDLauncher, ATLauncher) is ordered **after** the game entry so a running game always wins over its launcher.
+
 ### Dictionary Loading Strategy
 
-1. **Startup** (`startActivityDetection`): Load best local source — cache file first (`{userData}/games-cache.json`), fall back to bundled seed (`resources/games.json`)
+1. **Startup** (`startActivityDetection`): Read both the cache (`{userData}/games-cache.json`) and the bundled seed (`resources/games.json`), load whichever has the **higher version**, and promote a winning seed into the cache. (Earlier builds let any valid cache shadow the seed, so dictionary updates shipped with new builds never reached existing installs.)
 2. **Background sync** (`syncDictionary`): Fire-and-forget async fetch from GitHub after startup
 
 ### Remote Sync (`syncDictionary()`)
@@ -1049,31 +1061,39 @@ Step 3: If remote version > local version → atomic write to cache, save ETag, 
 
 **Atomic file writes** (`atomicWrite()`): Writes to `{path}.tmp` then `fs.renameSync()` into place. Prevents corrupt cache on crash.
 
-**Hot-swap** (`hotSwapDictionary()`): Replaces `gameEntries` and `processMap` in memory without resetting `currentGameId` or `currentActivity`. Active detection state survives dictionary updates.
+**Hot-swap:** the remote update replaces `gameEntries` in memory without resetting `currentGameId` or `currentActivity`. Active detection state survives dictionary updates.
 
 ### Process Polling
 
 **Interval:** 15 seconds (`POLL_INTERVAL_MS`). First poll runs immediately on start.
 
-**Guard:** `isPolling` flag prevents overlapping polls if a previous `execFile` hasn't returned.
+**Guard:** `isPolling` flag prevents overlapping polls while a previous scan is still in flight.
 
-**Error handling:** First `execFile` failure logs warning and stops detection entirely (`stopActivityDetection()`). The `hasErrored` flag prevents repeated log spam.
+**Error handling:** First command failure (ps/tasklist path) logs a warning and stops detection entirely (`stopActivityDetection()`). The `hasErrored` flag prevents repeated log spam. The Linux `/proc` walk is crash-guarded and degrades to the `ps` path instead of stopping detection.
 
-### Platform Commands
+### Platform Process Sources
 
-| Platform | Command | Output Format |
-|----------|---------|---------------|
+| Platform | Source | Notes |
+|----------|--------|-------|
+| Linux | `/proc` walk | exe symlink → cmdline → comm; exe readlink failures (EACCES on other users' processes) fall through to the next source |
 | macOS | `ps -c -A -o comm` | One process name per line (header: `COMM`) |
-| Linux | `ps -A -o comm` | One process name per line (header: `COMM` or `COMMAND`) |
-| Windows | `tasklist /fo csv /nh` | CSV: `"ImageName","PID","SessionName","Session#","MemUsage"` |
+| Windows | `tasklist /fo csv /nh` | CSV: `"ImageName","PID",...` |
+| Linux fallback | `ps -A -o comm` | Only if the `/proc` walk throws |
 
-Max buffer: 1MB. Process names extracted and lowercased into a `Set<string>`.
+Max buffer for command output: 1MB. Command-based names are lowercased into a `Set<string>`; `/proc`-sourced names keep their case and are compared case-insensitively at match time.
 
-### Matching Algorithm (`poll()`)
+### Matching Algorithm (`findMatchingGame`)
 
-1. Parse running processes into a lowercase `Set<string>`
-2. Iterate `gameEntries` in dictionary order (first match wins = priority)
-3. For each entry, check if any of its `processes` (lowercased) are in the running set
+A running process matches a dictionary entry when any of these hold:
+
+1. **Name match (case-insensitive):** the process name equals one of `entry.processes`
+2. **comm truncation:** the dictionary name is longer than 15 characters, the process name is exactly 15 characters, and the dictionary name starts with it — because the kernel stores `comm` in a 16-byte buffer (`minecraft-launcher` → `minecraft-launc`)
+3. **Command-line pattern:** any of `entry.cmdlinePatterns` appears (case-insensitive) in the space-joined argv
+
+The first entry in dictionary order matched by any running process wins — dictionary order is the priority order. This is what makes the game beat its launcher when both run.
+
+State machine (unchanged semantics):
+
 4. **Game detected (new or changed):** Set `currentGameId`, build `Activity` object with `timestamps.start = Date.now()`, fire `onChangeCallback`
 5. **Same game still running:** No-op (no IPC sent)
 6. **Game exited (was detected, now gone):** Clear `currentGameId` and `currentActivity`, fire callback with `null`

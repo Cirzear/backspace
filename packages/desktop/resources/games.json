@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "games": [
     { "id": "cs2", "name": "Counter-Strike 2", "processes": ["cs2.exe", "cs2"] },
     { "id": "dota2", "name": "Dota 2", "processes": ["dota2.exe", "dota2"] },
@@ -47,7 +47,7 @@
     { "id": "warzone", "name": "Call of Duty: Warzone", "processes": ["cod.exe", "ModernWarfare.exe"] },
     { "id": "mw3", "name": "Call of Duty: MW III", "processes": ["cod23-cod.exe"] },
     { "id": "bo6", "name": "Call of Duty: Black Ops 6", "processes": ["cod24-cod.exe"] },
-    { "id": "minecraft", "name": "Minecraft", "processes": ["Minecraft.Windows.exe", "minecraft-launcher", "Minecraft"] },
+    { "id": "minecraft", "name": "Minecraft", "processes": ["Minecraft.Windows.exe", "Minecraft"], "cmdlinePatterns": ["net.minecraft.client.main.main", "net.minecraft.launchwrapper.launch", "net.fabricmc.loader.impl.launch.knot.knotclient", "org.quiltmc.loader.impl.launch.knot.knotclient", "--launchtarget forgeclient", "--launchtarget neoforgeclient", "net.minecraftforge.fml.loading.fmllaunchwrapper", "org.prismlauncher.entrypoint", "org.multimc.entrypoint"] },
     { "id": "valheim", "name": "Valheim", "processes": ["valheim.exe", "valheim"] },
     { "id": "subnautica", "name": "Subnautica", "processes": ["Subnautica.exe", "Subnautica"] },
     { "id": "subnautica-bz", "name": "Subnautica: Below Zero", "processes": ["SubnauticaZero.exe", "SubnauticaZero"] },
@@ -249,6 +249,8 @@
     { "id": "spotify", "name": "Spotify", "processes": ["Spotify.exe", "Spotify", "spotify"], "type": "listening" },
     { "id": "vlc", "name": "VLC Media Player", "processes": ["vlc.exe", "vlc", "VLC"], "type": "watching" },
     { "id": "obs", "name": "OBS Studio", "processes": ["obs64.exe", "obs", "OBS"], "type": "streaming" },
-    { "id": "mpv", "name": "mpv", "processes": ["mpv.exe", "mpv"], "type": "watching" }
+    { "id": "mpv", "name": "mpv", "processes": ["mpv.exe", "mpv"], "type": "watching" },
+    { "id": "minecraft-launcher", "name": "Minecraft Launcher", "processes": ["minecraft-launcher", "MinecraftLauncher.exe", "prismlauncher", "prismlauncher.exe", "multimc", "multimc.exe", "gdlauncher", "gdlauncher.exe", "atlauncher", "atlauncher.exe"], "cmdlinePatterns": ["atlauncher.jar"] },
+    { "id": "osu", "name": "osu!", "processes": ["osu!.exe", "osu!"] }
   ]
 }
