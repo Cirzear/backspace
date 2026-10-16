@@ -1,8 +1,8 @@
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Activity } from '@backspace/shared';
 import { setLanguage } from '../../i18n';
-import { ActivityCard } from './ActivityCard';
+import { ActivityCard, activityTimeText, isRenderableActivityImage } from './ActivityCard';
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -14,8 +14,46 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
+describe('isRenderableActivityImage', () => {
+  it('accepts only http(s) URLs', () => {
+    expect(isRenderableActivityImage('https://cdn.discordapp.com/app-assets/1/osu.png')).toBe(true);
+    expect(isRenderableActivityImage('http://example.com/a.png')).toBe(true);
+    expect(isRenderableActivityImage('data:image/png;base64,AAAA')).toBe(false);
+    expect(isRenderableActivityImage('javascript:alert(1)')).toBe(false);
+    expect(isRenderableActivityImage('/static/logo.png')).toBe(false);
+    expect(isRenderableActivityImage(undefined)).toBe(false);
+  });
+});
+
+describe('activityTimeText', () => {
+  const t = (key: string, opts?: Record<string, unknown>) =>
+    key === 'time.left' ? `${opts?.duration as string} left` : `${opts?.duration as string} elapsed`;
+  const fmt = (s: number) => {
+    const total = Math.max(0, Math.floor(s));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const sec = total % 60;
+    const seg = (v: number) => String(v).padStart(2, '0');
+    return h > 0 ? `${h}:${seg(m)}:${seg(sec)}` : `${seg(m)}:${seg(sec)}`;
+  };
+  const now = Date.parse('2026-09-04T12:00:00Z');
+
+  it('counts down while the end is in the future', () => {
+    expect(activityTimeText({ end: now + 90_000 }, now, t, fmt)).toBe('01:30 left');
+  });
+
+  it('falls back to elapsed once the end has passed', () => {
+    expect(activityTimeText({ start: now - 60_000, end: now - 1000 }, now, t, fmt)).toBe('01:00 elapsed');
+  });
+
+  it('shows nothing without usable timestamps', () => {
+    expect(activityTimeText({}, now, t, fmt)).toBeNull();
+    expect(activityTimeText({ start: now + 60_000 }, now, t, fmt)).toBeNull(); // future start
+  });
+});
+
 describe('ActivityCard', () => {
-  it('localizes the elapsed activity time', async () => {
+  it('localizes the elapsed activity time with locale-native digits', async () => {
     await setLanguage('ru');
     const activity: Activity = {
       type: 'playing',
@@ -26,7 +64,93 @@ describe('ActivityCard', () => {
     render(<ActivityCard activities={[activity]} />);
 
     expect(screen.getByText('Escape from Tarkov')).toBeInTheDocument();
-    expect(screen.getByText('Прошло 32 мин.')).toBeInTheDocument();
+    expect(screen.getByText('Прошло 32:00')).toBeInTheDocument();
+  });
+
+  it('ticks the elapsed time forward every second', () => {
+    const activity: Activity = {
+      type: 'playing',
+      name: 'Minecraft',
+      timestamps: { start: Date.now() - 5000 },
+    };
+    render(<ActivityCard activities={[activity]} />);
+    expect(screen.getByText('00:05 elapsed')).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(screen.getByText('00:06 elapsed')).toBeInTheDocument();
+  });
+
+  it('counts down while the activity end is in the future, then switches to elapsed', () => {
+    const activity: Activity = {
+      type: 'playing',
+      name: 'osu!',
+      timestamps: { start: Date.now() - 60_000, end: Date.now() + 120_000 },
+    };
+    render(<ActivityCard activities={[activity]} />);
+    expect(screen.getByText('02:00 left')).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(121_000);
+    });
+    expect(screen.getByText('03:01 elapsed')).toBeInTheDocument();
+  });
+
+  it('renders details and state lines with emoji shortcodes', () => {
+    const activity: Activity = {
+      type: 'playing',
+      name: 'osu!lazer',
+      details: 'Playing [Big Black] :fire:',
+      state: 'by Blue Stahli',
+      timestamps: { start: Date.now() - 1000 },
+    };
+    render(<ActivityCard activities={[activity]} />);
+    expect(screen.getByText('Playing [Big Black] 🔥')).toBeInTheDocument();
+    expect(screen.getByText('by Blue Stahli')).toBeInTheDocument();
+  });
+
+  it('renders large art with a tooltip and a small badge', () => {
+    const activity: Activity = {
+      type: 'playing',
+      name: 'osu!',
+      details: 'Idle',
+      assets: {
+        largeImage: 'https://cdn.example.com/osu.png',
+        largeText: 'osu!',
+        smallImage: 'https://cdn.example.com/rank.png',
+        smallText: 'SS',
+      },
+    };
+    render(<ActivityCard activities={[activity]} />);
+    const large = screen.getByAltText('osu!');
+    expect(large).toHaveAttribute('src', 'https://cdn.example.com/osu.png');
+    expect(large).toHaveAttribute('title', 'osu!');
+    const badge = screen.getByAltText('SS');
+    expect(badge).toHaveAttribute('src', 'https://cdn.example.com/rank.png');
+    expect(badge).toHaveAttribute('title', 'SS');
+  });
+
+  it('hides art when the image fails to load', () => {
+    const activity: Activity = {
+      type: 'playing',
+      name: 'osu!',
+      assets: { largeImage: 'https://cdn.example.com/broken.png' },
+    };
+    render(<ActivityCard activities={[activity]} />);
+    const img = screen.getByAltText('osu!');
+    fireEvent.error(img);
+    expect(screen.queryByAltText('osu!')).not.toBeInTheDocument();
+  });
+
+  it('never renders non-http art URLs', () => {
+    const activity: Activity = {
+      type: 'playing',
+      name: 'osu!',
+      assets: { largeImage: 'data:image/png;base64,AAAA', smallImage: 'javascript:alert(1)' },
+    };
+    render(<ActivityCard activities={[activity]} />);
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
   });
 
   it('renders emoji shortcodes in a custom status (issue #252)', () => {
@@ -37,5 +161,12 @@ describe('ActivityCard', () => {
   it('renders emoji shortcodes in the fallback custom status', () => {
     render(<ActivityCard activities={[]} fallbackCustomStatus="on call :pager:" />);
     expect(screen.getByText('on call 📟')).toBeInTheDocument();
+  });
+
+  it('shows no time line without timestamps', () => {
+    render(<ActivityCard activities={[{ type: 'playing', name: 'cs2' }]} />);
+    expect(screen.getByText('cs2')).toBeInTheDocument();
+    expect(screen.queryByText(/elapsed/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/left/)).not.toBeInTheDocument();
   });
 });
