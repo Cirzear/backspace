@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "games": [
     { "id": "cs2", "name": "Counter-Strike 2", "processes": ["cs2.exe", "cs2"] },
     { "id": "dota2", "name": "Dota 2", "processes": ["dota2.exe", "dota2"] },
@@ -251,6 +251,20 @@
     { "id": "obs", "name": "OBS Studio", "processes": ["obs64.exe", "obs", "OBS"], "type": "streaming" },
     { "id": "mpv", "name": "mpv", "processes": ["mpv.exe", "mpv"], "type": "watching" },
     { "id": "minecraft-launcher", "name": "Minecraft Launcher", "processes": ["minecraft-launcher", "MinecraftLauncher.exe", "prismlauncher", "prismlauncher.exe", "multimc", "multimc.exe", "gdlauncher", "gdlauncher.exe", "atlauncher", "atlauncher.exe"], "cmdlinePatterns": ["atlauncher.jar"] },
-    { "id": "osu", "name": "osu!", "processes": ["osu!.exe", "osu!"] }
+    { "id": "osu", "name": "osu!", "processes": ["osu!.exe", "osu!"] },
+    { "id": "wesnoth", "name": "The Battle for Wesnoth", "processes": ["wesnoth"] },
+    { "id": "luanti", "name": "Luanti", "processes": ["luanti"] },
+    { "id": "minetest", "name": "Minetest", "processes": ["minetest"] },
+    { "id": "openmw", "name": "OpenMW", "processes": ["openmw"] },
+    { "id": "0ad", "name": "0 A.D.", "processes": ["pyrogenesis"] },
+    { "id": "supertux", "name": "SuperTux", "processes": ["supertux2","supertux"] },
+    { "id": "supertuxkart", "name": "SuperTuxKart", "processes": ["supertuxkart"] },
+    { "id": "halflife", "name": "Half-Life", "processes": ["hl_linux","hl.exe"] },
+    { "id": "hl2", "name": "Half-Life 2", "processes": ["hl2_linux","hl2.exe"] },
+    { "id": "warzone2100", "name": "Warzone 2100", "processes": ["warzone2100"] },
+    { "id": "teeworlds", "name": "Teeworlds", "processes": ["teeworlds"] },
+    { "id": "endless-sky", "name": "Endless Sky", "processes": ["endless-sky"] },
+    { "id": "mindustry", "name": "Mindustry", "processes": ["Mindustry","mindustry"] },
+    { "id": "xonotic", "name": "Xonotic", "processes": ["xonotic","xonotic-linux64-sdl","xonotic-linux64-glx"] }
   ]
 }

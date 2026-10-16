@@ -14,7 +14,10 @@ Source files:
 - `packages/server/src/ws/events.ts` — handlePresenceUpdate, handleActivityUpdate, validateActivities
 - `packages/server/src/utils/presenceBoot.ts` — boot-time reset of orphaned `users.status` rows (federation-safe)
 - `packages/server/src/routes/users.ts` — REST showActivity toggle with server-side activity clear
-- `packages/desktop/src/activityDetector.ts` — Process polling, game dictionary matching (boundary: see Desktop section)
+- `packages/desktop/src/activityDetector.ts` — Process polling, dictionary + local-source matching (boundary: see Desktop section)
+- `packages/desktop/src/steamGames.ts` — Steam source: library manifests → install dirs (see desktop.md)
+- `packages/desktop/src/flatpakGames.ts` — Flatpak source: Game-category apps and their sandbox files dirs
+- `packages/desktop/src/gogGames.ts` — GOG source: ~/GOG Games metadata
 - `packages/desktop/src/preload.ts` — IPC channel exposure (activity-detected, get-current-activity)
 - `packages/desktop/src/main.ts` — startActivityDetection call, IPC handler registration
 
@@ -311,7 +314,9 @@ function handleActivityUpdate(event, userId) {
 
 ## Desktop Activity Detection (Boundary)
 
-This spec covers how detected activities enter the broadcast pipeline. The detection internals (process scanning, game dictionary matching, dictionary sync) belong to a future `desktop.md` spec.
+This spec covers how detected activities enter the broadcast pipeline. The detection internals (process scanning, dictionary matching, local game sources, dictionary sync) live in `desktop.md` → Activity Detection and Local Game Sources.
+
+Detection combines a curated process-name dictionary (`games.json`, synced from the repo) with local install metadata for Steam, Flatpak and GOG games, so any installed title is detectable even when unlisted. The dictionary wins on conflicts; sources fill the gaps.
 
 ### Summary of Detection Interface
 

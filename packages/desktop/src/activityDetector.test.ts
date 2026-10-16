@@ -313,11 +313,11 @@ describe('detectActivity', () => {
 
 // ─── Seed dictionary contract ───────────────────────────────────────────────
 
-describe('bundled seed dictionary (games.json v2)', () => {
+describe('bundled seed dictionary (games.json v3)', () => {
   const seed = JSON.parse(fs.readFileSync(seedPath, 'utf8')) as { version: number; games: unknown[] };
 
-  it('is versioned as v2', () => {
-    expect(seed.version).toBe(2);
+  it('is versioned as v3', () => {
+    expect(seed.version).toBe(3);
   });
 
   it('contains osu! for both wine and native lazer', () => {
@@ -354,6 +354,17 @@ describe('bundled seed dictionary (games.json v2)', () => {
   it('still detects the OBS regression case from the seed', () => {
     const obs = seed.games.find((g) => (g as { id: string }).id === 'obs') as { processes: string[] };
     expect(obs.processes).toContain('obs');
+  });
+
+  it('carries the native Linux titles without dedicated servers', () => {
+    const ids = seed.games.map((g) => (g as { id: string }).id);
+    for (const id of ['wesnoth', 'luanti', 'openmw', '0ad', 'supertuxkart', 'hl2', 'warzone2100', 'teeworlds', 'endless-sky', 'mindustry', 'xonotic']) {
+      expect(ids).toContain(id);
+    }
+    const all = seed.games.flatMap((g) => (g as { processes: string[] }).processes);
+    for (const server of ['wesnothd', 'minetestserver', 'luantiserver', 'teeworlds_srv']) {
+      expect(all).not.toContain(server);
+    }
   });
 });
 

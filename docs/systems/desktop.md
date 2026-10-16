@@ -1092,7 +1092,24 @@ A running process matches a dictionary entry when any of these hold:
 
 The first entry in dictionary order matched by any running process wins — dictionary order is the priority order. This is what makes the game beat its launcher when both run.
 
-State machine (unchanged semantics):
+### Local Game Sources (Steam, Flatpak, GOG)
+
+The dictionary only knows curated titles. Three source detectors extend detection to **any installed game** of their provider, consulted after the dictionary and in registration order:
+
+| Source | Data read | Match | Module |
+|--------|-----------|-------|--------|
+| Steam | `libraryfolders.vdf` (every library, any disk) + `appmanifest_*.acf` (name, installdir, StateFlags bit 4 = fully installed) | running exe path under `<lib>/steamapps/common/<installdir>/` — native and Proton identically (a Proton exe resolves there via Wine's Z: drive); `compatdata` prefixes rejected | `steamGames.ts` |
+| Flatpak | exported `.desktop` (`Game` category required) + `…/flatpak/app/<id>/<arch>/<branch>/active/files/` | running exe path under the app's `active/files` dir; launcher apps (Steam, Lutris, Bottles, Heroic, itch, Prism) excluded so they don't shadow their games | `flatpakGames.ts` |
+| GOG | `~/GOG Games/<dir>/` + `goggame-*.info` (display name, dir-name fallback) | exe path under the game dir (case-insensitive — info and filesystem disagree on case), with a command-line fallback for `start.sh` wrappers | `gogGames.ts` |
+
+Properties common to all sources:
+
+- **Priority:** dictionary first (curated names and types win), then sources in order — a Steam install of a dictionary-listed game reports the dictionary entry.
+- **Caching:** each provider's index caches for 60 seconds, so the 15s poll reuses it and installs/uninstalls show up within a minute.
+- **Roots:** Steam roots are realpath-deduplicated across `~/.steam/steam`, the native data dir, the Flatpak sandbox and the snap layout; Flatpak covers user and system installs.
+- **Linux-first:** the sources light up where the metadata exists (Linux). On Windows/macOS detection is dictionary-only.
+
+Detection flows through `detectActivity`: the dictionary is consulted first, then the source detectors above (in registration order) for anything installed but not curated. The state machine semantics are unchanged:
 
 4. **Game detected (new or changed):** Set `currentGameId`, build `Activity` object with `timestamps.start = Date.now()`, fire `onChangeCallback`
 5. **Same game still running:** No-op (no IPC sent)
