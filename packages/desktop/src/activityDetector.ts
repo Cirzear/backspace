@@ -4,6 +4,8 @@ import path from 'path';
 import fs from 'fs';
 import { app } from 'electron';
 import { findSteamGameForProcess, loadSteamIndex } from './steamGames';
+import { findFlatpakGameForProcess, loadFlatpakIndex } from './flatpakGames';
+import { findGogGameForProcess, loadGogIndex } from './gogGames';
 
 // ─── Local Activity type (structural match with @backspace/shared Activity) ─
 
@@ -252,7 +254,17 @@ const steamSourceDetector: SourceDetector = (info) => {
   return game ? { id: `steam-${game.appId}`, name: game.name, type: 'playing' } : null;
 };
 
-const sourceDetectors: SourceDetector[] = [steamSourceDetector];
+const flatpakSourceDetector: SourceDetector = (info) => {
+  const game = findFlatpakGameForProcess(info.exe, loadFlatpakIndex());
+  return game ? { id: `flatpak-${game.appId}`, name: game.name, type: 'playing' } : null;
+};
+
+const gogSourceDetector: SourceDetector = (info) => {
+  const game = findGogGameForProcess(info.exe, info.cmdline, loadGogIndex());
+  return game ? { id: `gog-${game.id}`, name: game.name, type: 'playing' } : null;
+};
+
+const sourceDetectors: SourceDetector[] = [steamSourceDetector, flatpakSourceDetector, gogSourceDetector];
 
 /**
  * Whether a running process matches a dictionary entry:
