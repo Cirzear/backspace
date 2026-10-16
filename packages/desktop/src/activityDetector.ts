@@ -70,6 +70,8 @@ interface ProcessInfo {
   name: string;
   /** Command line tokens joined with single spaces (empty when unavailable). */
   cmdline: string;
+  /** Full executable path from the /proc exe symlink, case preserved; null when unavailable. */
+  exe: string | null;
 }
 
 /**
@@ -138,7 +140,7 @@ export function readProcessInfos(procRoot = '/proc'): ProcessInfo[] {
     const name = pickProcName(exeLink, cmdlineTokens, comm);
     if (!name) continue; // kernel thread: no exe, no cmdline
 
-    infos.push({ pid: Number(pidStr), name, cmdline: cmdlineTokens.join(' ') });
+    infos.push({ pid: Number(pidStr), name, cmdline: cmdlineTokens.join(' '), exe: exeLink });
   }
 
   return infos;
@@ -177,7 +179,7 @@ export function readProcessInfoByPid(pid: number, procRoot = '/proc'): ProcessIn
 
   const name = pickProcName(exeLink, cmdlineTokens, comm);
   if (!name) return null;
-  return { pid, name, cmdline: cmdlineTokens.join(' ') };
+  return { pid, name, cmdline: cmdlineTokens.join(' '), exe: exeLink };
 }
 
 // ─── Platform process listing (fallback for non-Linux, or /proc unavailable) ─
@@ -225,7 +227,7 @@ export function parseProcessList(stdout: string, platform: string = process.plat
 
 /** Build ProcessInfo-like rows from a parsed name set (ps/tasklist fallback). */
 function infosFromNames(names: Set<string>): ProcessInfo[] {
-  return [...names].map((name) => ({ pid: 0, name, cmdline: '' }));
+  return [...names].map((name) => ({ pid: 0, name, cmdline: '', exe: null }));
 }
 
 // ─── Matching ───────────────────────────────────────────────────────────────

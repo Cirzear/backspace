@@ -173,21 +173,22 @@ describe('parseProcessList', () => {
 // ─── readProcessInfos (fake /proc) ──────────────────────────────────────────
 
 describe('readProcessInfos', () => {
-  it('reads pid, name and joined cmdline for regular processes', () => {
+  it('reads pid, name, cmdline and the full exe path for regular processes', () => {
     const root = makeFakeProc([
       { pid: 42, exe: '/usr/games/cs2', cmdline: ['/usr/games/cs2', '-novid'], comm: 'cs2' },
     ]);
     const infos = readProcessInfos(root);
     expect(infos).toHaveLength(1);
-    expect(infos[0]).toEqual({ pid: 42, name: 'cs2', cmdline: '/usr/games/cs2 -novid' });
+    expect(infos[0]).toEqual({ pid: 42, name: 'cs2', cmdline: '/usr/games/cs2 -novid', exe: '/usr/games/cs2' });
   });
 
-  it('resolves wine processes to the .exe basename', () => {
+  it('resolves wine processes to the .exe basename and keeps the prefix path', () => {
     const root = makeFakeProc([
       { pid: 7, exe: '/home/u/.wine/drive_c/Program Files/osu!/osu!.exe', cmdline: ['C:\\\\Program Files\\\\osu!\\\\osu!.exe'], comm: 'osu!.exe' },
     ]);
     const infos = readProcessInfos(root);
     expect(infos[0]?.name).toBe('osu!.exe');
+    expect(infos[0]?.exe).toBe('/home/u/.wine/drive_c/Program Files/osu!/osu!.exe');
   });
 
   it('falls back to comm when the exe symlink is unreadable and cmdline is empty', () => {
@@ -233,7 +234,7 @@ describe('readProcessInfoByPid', () => {
     const root = makeFakeProc([
       { pid: 42, exe: '/usr/games/cs2', cmdline: ['/usr/games/cs2'], comm: 'cs2' },
     ]);
-    expect(readProcessInfoByPid(42, root)).toEqual({ pid: 42, name: 'cs2', cmdline: '/usr/games/cs2' });
+    expect(readProcessInfoByPid(42, root)).toEqual({ pid: 42, name: 'cs2', cmdline: '/usr/games/cs2', exe: '/usr/games/cs2' });
     expect(readProcessInfoByPid(999, root)).toBeNull();
   });
 });
@@ -248,25 +249,25 @@ describe('findMatchingGame', () => {
   ];
 
   it('returns the first dictionary entry matched by any process', () => {
-    const infos = [{ pid: 1, name: 'obs', cmdline: '' }, { pid: 2, name: 'cs2', cmdline: '' }];
+    const infos = [{ pid: 1, name: 'obs', cmdline: '', exe: null }, { pid: 2, name: 'cs2', cmdline: '', exe: null }];
     expect(findMatchingGame(infos, dict)?.id).toBe('cs2');
   });
 
   it('prefers the game over the launcher when both run (dictionary order)', () => {
     const infos = [
-      { pid: 1, name: 'prismlauncher', cmdline: 'prismlauncher' },
-      { pid: 2, name: 'java', cmdline: '/usr/bin/java net.minecraft.client.main.Main --username x' },
+      { pid: 1, name: 'prismlauncher', cmdline: 'prismlauncher', exe: null },
+      { pid: 2, name: 'java', cmdline: '/usr/bin/java net.minecraft.client.main.Main --username x', exe: null },
     ];
     expect(findMatchingGame(infos, dict)?.id).toBe('minecraft');
   });
 
   it('detects the launcher alone via the truncated comm', () => {
-    const infos = [{ pid: 1, name: 'minecraft-launc', cmdline: 'minecraft-launcher' }];
+    const infos = [{ pid: 1, name: 'minecraft-launc', cmdline: 'minecraft-launcher', exe: null }];
     expect(findMatchingGame(infos, dict)?.id).toBe('minecraft-launcher');
   });
 
   it('returns null when nothing matches', () => {
-    const infos = [{ pid: 1, name: 'systemd', cmdline: '/sbin/init' }];
+    const infos = [{ pid: 1, name: 'systemd', cmdline: '/sbin/init', exe: null }];
     expect(findMatchingGame(infos, dict)).toBeNull();
   });
 });
