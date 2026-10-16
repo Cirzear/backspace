@@ -14,10 +14,11 @@ Source files:
 - `packages/server/src/ws/events.ts` — handlePresenceUpdate, handleActivityUpdate, validateActivities
 - `packages/server/src/utils/presenceBoot.ts` — boot-time reset of orphaned `users.status` rows (federation-safe)
 - `packages/server/src/routes/users.ts` — REST showActivity toggle with server-side activity clear
-- `packages/desktop/src/activityDetector.ts` — Process polling, dictionary + local-source matching (boundary: see Desktop section)
+- `packages/desktop/src/activityDetector.ts` — Process polling, dictionary + local-source matching, the IPC activity overlay (boundary: see Desktop section)
 - `packages/desktop/src/steamGames.ts` — Steam source: library manifests → install dirs (see desktop.md)
 - `packages/desktop/src/flatpakGames.ts` — Flatpak source: Game-category apps and their sandbox files dirs
 - `packages/desktop/src/gogGames.ts` — GOG source: ~/GOG Games metadata
+- `packages/desktop/src/richPresenceIpc.ts` — local rich presence IPC server (see desktop.md)
 - `packages/desktop/src/preload.ts` — IPC channel exposure (activity-detected, get-current-activity)
 - `packages/desktop/src/main.ts` — startActivityDetection call, IPC handler registration
 
@@ -314,19 +315,24 @@ function handleActivityUpdate(event, userId) {
 
 ## Desktop Activity Detection (Boundary)
 
-This spec covers how detected activities enter the broadcast pipeline. The detection internals (process scanning, dictionary matching, local game sources, dictionary sync) live in `desktop.md` → Activity Detection and Local Game Sources.
+This spec covers how detected activities enter the broadcast pipeline. The detection internals (process scanning, dictionary matching, local game sources, dictionary sync, the rich presence IPC server) live in `desktop.md` → Activity Detection, Local Game Sources and Rich Presence IPC Server.
 
-Detection combines a curated process-name dictionary (`games.json`, synced from the repo) with local install metadata for Steam, Flatpak and GOG games, so any installed title is detectable even when unlisted. The dictionary wins on conflicts; sources fill the gaps.
+Detection combines two sources:
+
+1. **Process scanning** — a curated process-name dictionary (`games.json`, synced from the repo) plus local install metadata for Steam, Flatpak and GOG games, so any installed title is detectable even when unlisted. The dictionary wins on conflicts; sources fill the gaps. Polled every 15s.
+2. **Rich presence IPC pushes** — games speaking the rich presence IPC protocol (osu!lazer & co.) push rich activities to the desktop's IPC server: details, state, absolute timestamps and art. Applied immediately as an overlay over the scan result; the last push wins.
 
 ### Summary of Detection Interface
 
 | Component | Role |
 |-----------|------|
-| `activityDetector.ts:startActivityDetection(callback)` | Starts 15s polling loop; calls `callback` with `Activity \| null` on change |
-| `activityDetector.ts:getCurrentActivity()` | Returns current detected `Activity` or `null` (synchronous) |
-| `main.ts:810-812` | Starts detection on app ready; forwards changes via IPC `activity-detected` |
-| `main.ts:814` | Registers `get-current-activity` IPC handler |
-| `preload.ts:73-78` | Exposes `onActivityDetected` (subscription) and `getCurrentActivity` (invoke) to renderer |
+| `activityDetector.ts:startActivityDetection(callback)` | Starts 15s polling loop; calls `callback` with the effective `Activity \| null` on change |
+| `activityDetector.ts:applyIpcActivity(push \| null)` | Overlays an IPC push immediately; `null` falls back to the scan |
+| `activityDetector.ts:resolveIpcGameName(pid)` | Display name for an unnamed push, from the dictionary via the pushing pid |
+| `activityDetector.ts:getCurrentActivity()` | Returns the effective `Activity \| null` (IPC push ?? scan, synchronous) |
+| `richPresenceIpc.ts:startRichPresenceIpcServer({ onActivity })` | Binds the ten protocol sockets and feeds pushes to `applyIpcActivity` |
+| `main.ts` | Starts detection and the IPC server on app ready; forwards changes via IPC `activity-detected`; registers `get-current-activity`; stops both in `before-quit` |
+| `preload.ts` | Exposes `onActivityDetected` (subscription) and `getCurrentActivity` (invoke) to renderer |
 
 ### Bridge to Activity Store
 

@@ -8,7 +8,11 @@ Source files:
 - `packages/desktop/src/updateDismissal.ts` — Per-version dismissal persisted to userData
 - `packages/desktop/src/updaterCache.ts` — Reclaims the updater download cache on manual-mode builds
 - `packages/desktop/src/notificationRetention.ts` — Holds each shown native notification until it is clicked, closed or fails (see Notifications)
-- `packages/desktop/src/activityDetector.ts` — Process polling, game dictionary loading/sync, activity change detection
+- `packages/desktop/src/activityDetector.ts` — Process polling, game dictionary loading/sync, local-source matching, the IPC activity overlay
+- `packages/desktop/src/steamGames.ts` — Steam source: library manifests → install dirs
+- `packages/desktop/src/flatpakGames.ts` — Flatpak source: Game-category apps and their sandbox files dirs
+- `packages/desktop/src/gogGames.ts` — GOG source: ~/GOG Games metadata
+- `packages/desktop/src/richPresenceIpc.ts` — local rich presence IPC server (see Rich Presence IPC Server)
 - `packages/desktop/src/keybindManager.ts` — Global keybinds via uIOhook, native keycode mapping, press/release tracking
 - `packages/web/src/stores/keybindStore.ts` — Client-side keybind persistence (Zustand + localStorage)
 - `packages/web/src/hooks/useKeybinds.ts` — Keybind dispatch: Electron IPC bridge + web capture-phase fallback
@@ -1111,28 +1115,61 @@ Properties common to all sources:
 
 Detection flows through `detectActivity`: the dictionary is consulted first, then the source detectors above (in registration order) for anything installed but not curated. The state machine semantics are unchanged:
 
-4. **Game detected (new or changed):** Set `currentGameId`, build `Activity` object with `timestamps.start = Date.now()`, fire `onChangeCallback`
+4. **Game detected (new or changed):** Build the `Activity` with `timestamps.start = Date.now()` and refresh the effective activity
 5. **Same game still running:** No-op (no IPC sent)
-6. **Game exited (was detected, now gone):** Clear `currentGameId` and `currentActivity`, fire callback with `null`
+6. **Game exited (was detected, now gone):** Clear the scan activity and refresh — emits only if the effective activity (IPC push ?? scan) actually changed
 7. **No game (and none before):** No-op
 
 ### Activity Object
 
 ```typescript
 interface Activity {
-  type: string;       // from GameEntry.type, default "playing"
-  name: string;       // from GameEntry.name
-  details?: string;   // unused currently
-  state?: string;     // unused currently
-  timestamps?: { start?: number; end?: number };
+  type: string;       // from GameEntry.type / IPC push, default "playing"
+  name: string;       // game name, or the IPC push's resolved name
+  details?: string;   // from IPC pushes (osu!lazer's current map)
+  state?: string;     // from IPC pushes (menu / spectating state)
+  timestamps?: { start?: number; end?: number };  // absolute ms; end enables the web countdown
+  assets?: { largeImage?: string; largeText?: string; smallImage?: string; smallText?: string };
 }
 ```
 
 ### Lifecycle
 
-- **Start:** `startActivityDetection(callback)` — called from `app.whenReady()`
-- **Stop:** `stopActivityDetection()` — called from `before-quit`
-- **Query:** `getCurrentActivity()` — exposed via `get-current-activity` IPC handle
+- **Start:** `startActivityDetection(callback)` — called from `app.whenReady()`, followed by `startRichPresenceIpcServer({ onActivity: applyIpcActivity })`
+- **Stop:** `stopActivityDetection()` + `stopRichPresenceIpcServer()` — called from `before-quit`
+- **Query:** `getCurrentActivity()` — exposed via `get-current-activity` IPC handle; returns the effective activity (IPC push ?? scan)
+- **Overlay:** `applyIpcActivity(push | null)` — applies an IPC push immediately (map switches are visible within a second, not on the next poll); a null push falls back to the scan-detected game
+
+---
+
+## Rich Presence IPC Server (activity push)
+
+`richPresenceIpc.ts` speaks the local IPC protocol games use for rich presence, so games that push rich activity (osu!lazer with its current map and menu state) can be surfaced directly instead of only being detected by process name.
+
+### Protocol
+
+- Frames: `[i32 LE opcode][i32 LE length][JSON payload]`; opcodes 0 HANDSHAKE, 1 FRAME, 2 CLOSE, 3 PING, 4 PONG
+- Handshake payload `{v, client_id}`; the raw-JSON (unframed) handshake some client libraries send is accepted too — including multiple messages glued into one segment, split by a brace scanner
+- Commands ride in FRAME payloads `{cmd, args, nonce}`: `SET_ACTIVITY` (applied), `SUBSCRIBE`/`UNSUBSCRIBE` (ACKed, no join/spectate events are ever dispatched), anything else gets an error ACK and keeps the connection
+- `PING` answers `PONG` with the same payload; a client `CLOSE` ends the connection
+
+### Sockets and coexistence
+
+- All ten protocol socket slots are bound, one `net.Server` per path, across `XDG_RUNTIME_DIR` and the TMPDIR chain; sockets are `chmod 600`
+- Slots answering a probe belong to a live server (usually the first-party desktop client) and are left untouched; socket files left by crashed servers are probed (`ECONNREFUSED`) and reclaimed; non-socket files are never deleted
+- With that client already running, a connecting game may land in either server — the same behavior as running two copies of it
+
+### Push semantics
+
+- `SET_ACTIVITY` payloads are normalized: strings clamped to the shared activity limits by codepoints, `timestamps` kept as absolute ms, and asset keys resolved against the protocol's app-assets CDN path (`app-assets/<client_id>/<key>.png`). The client_id is validated as 1..64 digits at handshake, so it cannot inject path segments; asset keys are restricted to their documented charset
+- `buttons`, `party` and `secrets` are never read, let alone relayed
+- A push for a dead pid is stale: dropped, and it voids that connection's earlier push
+- A 2.5s disconnect grace absorbs client reconnects (Lachee's auto-reconnect); a monotonic sequence number makes the last push win across connections
+- Name resolution for unnamed pushes: the push's own name → the dictionary via the pushing pid (`resolveIpcGameName`: read `/proc/<pid>`, match like a scan) → a small known-client map (osu!lazer) → "Unknown game"
+
+### Overlay
+
+The effective activity is `applyIpcActivity`'s overlay while a push is live, otherwise the scan-detected game (see Activity Detection → Lifecycle). Emissions fire only when the effective activity actually changed, and a scan-game exit that happens under an active overlay is not lost: clearing the overlay afterwards yields no activity rather than a ghost.
 
 ---
 
