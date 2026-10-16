@@ -3,6 +3,7 @@ import https from 'https';
 import path from 'path';
 import fs from 'fs';
 import { app } from 'electron';
+import { findSteamGameForProcess, loadSteamIndex } from './steamGames';
 
 // ─── Local Activity type (structural match with @backspace/shared Activity) ─
 
@@ -232,6 +233,27 @@ function infosFromNames(names: Set<string>): ProcessInfo[] {
 
 // ─── Matching ───────────────────────────────────────────────────────────────
 
+/** A resolved game, whichever source produced it. */
+export interface MatchedGame {
+  id: string;
+  name: string;
+  type: string;
+}
+
+/**
+ * A source detector resolves a running process to an installed game the
+ * dictionary does not know (Steam libraries, Flatpak, GOG, ...). Returning
+ * null lets the next source try.
+ */
+export type SourceDetector = (info: ProcessInfo) => MatchedGame | null;
+
+const steamSourceDetector: SourceDetector = (info) => {
+  const game = findSteamGameForProcess(info.exe, loadSteamIndex());
+  return game ? { id: `steam-${game.appId}`, name: game.name, type: 'playing' } : null;
+};
+
+const sourceDetectors: SourceDetector[] = [steamSourceDetector];
+
 /**
  * Whether a running process matches a dictionary entry:
  * - exact process-name match (case-insensitive), or
@@ -267,6 +289,31 @@ export function findMatchingGame(infos: ProcessInfo[], entries: GameEntry[]): Ga
   for (const entry of entries) {
     for (const info of infos) {
       if (matchesProcessName(entry, info.name, info.cmdline)) return entry;
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve the current activity: the dictionary wins when it matches (its
+ * curated names take priority), and source detectors fill the gaps for any
+ * installed game the dictionary does not list. First source to claim a
+ * process wins; sources are tried in registration order.
+ */
+export function detectActivity(
+  infos: ProcessInfo[],
+  entries: GameEntry[],
+  sources: SourceDetector[] = sourceDetectors,
+): MatchedGame | null {
+  const dictionaryMatch = findMatchingGame(infos, entries);
+  if (dictionaryMatch) {
+    return { id: dictionaryMatch.id, name: dictionaryMatch.name, type: dictionaryMatch.type ?? 'playing' };
+  }
+
+  for (const source of sources) {
+    for (const info of infos) {
+      const match = source(info);
+      if (match) return match;
     }
   }
   return null;
@@ -571,12 +618,12 @@ async function syncDictionary(): Promise<void> {
  * Apply a matched game (or its absence) to the detection state machine and
  * fire the change callback when the visible activity changed.
  */
-function applyMatchedGame(matched: GameEntry | null): void {
+function applyMatchedGame(matched: MatchedGame | null): void {
   if (matched) {
     if (matched.id !== currentGameId) {
       currentGameId = matched.id;
       currentActivity = {
-        type: matched.type ?? 'playing',
+        type: matched.type,
         name: matched.name,
         timestamps: { start: Date.now() },
       };
@@ -606,7 +653,7 @@ function poll(): void {
       return;
     }
     isPolling = false;
-    applyMatchedGame(findMatchingGame(infos, gameEntries));
+    applyMatchedGame(detectActivity(infos, gameEntries));
     return;
   }
 
@@ -629,7 +676,7 @@ function pollViaCommand(): void {
     }
 
     const infos = infosFromNames(parseProcessList(stdout));
-    applyMatchedGame(findMatchingGame(infos, gameEntries));
+    applyMatchedGame(detectActivity(infos, gameEntries));
   });
 }
 

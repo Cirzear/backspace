@@ -9,10 +9,12 @@ import {
   parseProcessList,
   matchesProcessName,
   findMatchingGame,
+  detectActivity,
   parseGameEntry,
   validateDictionaryObject,
   loadDictionaryFile,
   loadBestDictionary,
+  type SourceDetector,
 } from './activityDetector';
 
 vi.mock('electron', () => ({
@@ -269,6 +271,43 @@ describe('findMatchingGame', () => {
   it('returns null when nothing matches', () => {
     const infos = [{ pid: 1, name: 'systemd', cmdline: '/sbin/init', exe: null }];
     expect(findMatchingGame(infos, dict)).toBeNull();
+  });
+});
+
+// ─── detectActivity: dictionary vs sources ──────────────────────────────────
+
+describe('detectActivity', () => {
+  const dict = [
+    { id: 'tf2', name: 'Team Fortress 2', processes: ['tf2_linux', 'tf2_osx', 'tf_win64.exe'] },
+  ];
+
+  const steamSource: SourceDetector = (info) =>
+    info.exe?.includes('/steamapps/common/')
+      ? { id: 'steam-424242', name: 'Dictionaryless Steam Game', type: 'playing' }
+      : null;
+
+  it('prefers the dictionary over a source when both match', () => {
+    const infos = [{ pid: 1, name: 'tf2_linux', cmdline: '', exe: '/x/steamapps/common/Team Fortress 2/hl2_linux' }];
+    const match = detectActivity(infos, dict, [steamSource]);
+    expect(match).toEqual({ id: 'tf2', name: 'Team Fortress 2', type: 'playing' });
+  });
+
+  it('falls through to sources for games the dictionary does not list', () => {
+    const infos = [{ pid: 1, name: 'sonic-bin', cmdline: '', exe: '/x/steamapps/common/Sonic/sonic-bin' }];
+    const match = detectActivity(infos, dict, [steamSource]);
+    expect(match).toEqual({ id: 'steam-424242', name: 'Dictionaryless Steam Game', type: 'playing' });
+  });
+
+  it('tries sources in registration order and keeps the first claim', () => {
+    const infos = [{ pid: 1, name: 'unknown', cmdline: '', exe: '/games/somewhere/game' }];
+    const first: SourceDetector = () => ({ id: 'source-a', name: 'A', type: 'playing' });
+    const second: SourceDetector = () => ({ id: 'source-b', name: 'B', type: 'playing' });
+    expect(detectActivity(infos, dict, [first, second])?.id).toBe('source-a');
+  });
+
+  it('returns null when neither dictionary nor sources match', () => {
+    const infos = [{ pid: 1, name: 'systemd', cmdline: '/sbin/init', exe: '/sbin/init' }];
+    expect(detectActivity(infos, dict, [steamSource])).toBeNull();
   });
 });
 
