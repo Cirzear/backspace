@@ -6,6 +6,7 @@ import { app } from 'electron';
 import { findSteamGameForProcess, loadSteamIndex } from './steamGames';
 import { findFlatpakGameForProcess, loadFlatpakIndex } from './flatpakGames';
 import { findGogGameForProcess, loadGogIndex } from './gogGames';
+import type { IpcActivityPush } from './richPresenceIpc';
 
 // ─── Local Activity type (structural match with @backspace/shared Activity) ─
 
@@ -20,6 +21,14 @@ interface Activity {
   details?: string;
   state?: string;
   timestamps?: ActivityTimestamps;
+  assets?: ActivityAssets;
+}
+
+interface ActivityAssets {
+  largeImage?: string;
+  largeText?: string;
+  smallImage?: string;
+  smallText?: string;
 }
 
 // ─── Game dictionary types ──────────────────────────────────────────────────
@@ -58,7 +67,8 @@ const COMM_MAX = 15;
 
 let gameEntries: GameEntry[] = [];
 let dictionaryVersion = 0;
-let currentGameId: string | null = null;
+let scanActivity: Activity | null = null;
+let ipcOverride: Activity | null = null;
 let currentActivity: Activity | null = null;
 let intervalId: NodeJS.Timeout | null = null;
 let isPolling = false;
@@ -627,26 +637,85 @@ async function syncDictionary(): Promise<void> {
 // ─── Poll logic ─────────────────────────────────────────────────────────────
 
 /**
- * Apply a matched game (or its absence) to the detection state machine and
- * fire the change callback when the visible activity changed.
+ * Apply a matched game (or its absence) to the scan layer of the detection
+ * state, then refresh the effective activity.
  */
 function applyMatchedGame(matched: MatchedGame | null): void {
-  if (matched) {
-    if (matched.id !== currentGameId) {
-      currentGameId = matched.id;
-      currentActivity = {
-        type: matched.type,
-        name: matched.name,
-        timestamps: { start: Date.now() },
-      };
-      onChangeCallback?.(currentActivity);
+  scanActivity = matched
+    ? {
+      type: matched.type,
+      name: matched.name,
+      timestamps: { start: Date.now() },
     }
-    // Same game still running — no change, skip IPC
-  } else if (currentGameId !== null) {
-    currentGameId = null;
-    currentActivity = null;
-    onChangeCallback?.(null);
+    : null;
+  refreshEffectiveActivity();
+}
+
+/**
+ * The effective activity is the IPC push when one is live (richer: real
+ * details, map state, art), otherwise the scan-detected game. A change is
+ * emitted only when the effective activity actually changed.
+ */
+function refreshEffectiveActivity(): void {
+  const effective = ipcOverride ?? scanActivity;
+  if (JSON.stringify(effective) !== JSON.stringify(currentActivity)) {
+    currentActivity = effective;
+    onChangeCallback?.(currentActivity);
   }
+}
+
+// ─── IPC overlay (IPC-pushed activities) ────────────────────────────────────
+
+/**
+ * Client ids of apps known to push rich presence without a name of their
+ * own; their pushes get this display name when neither the push nor the
+ * process dictionary can supply one.
+ */
+const KNOWN_CLIENT_APPS: Record<string, string> = {
+  // osu!lazer's desktop client
+  '1216669957799018608': 'osu!lazer',
+};
+
+/**
+ * Resolve a display name for an IPC push by looking its pid up in the
+ * dictionary: the /proc entry of the pushing process, matched like a scan.
+ * `procRoot` is injectable for tests.
+ */
+export function resolveIpcGameName(pid: number | null, procRoot = '/proc'): string | null {
+  if (pid === null || pid <= 0) return null;
+  const info = readProcessInfoByPid(pid, procRoot);
+  if (!info) return null;
+  const entry = findMatchingGame([info], gameEntries);
+  return entry ? entry.name : null;
+}
+
+/**
+ * Overlay an IPC-pushed activity over process detection. A null push
+ * clears the overlay and falls back to the scan-detected game. Changes take
+ * effect immediately — a map switch is visible within a second, not on the
+ * next 15s poll.
+ */
+export function applyIpcActivity(push: IpcActivityPush | null): void {
+  if (!push) {
+    ipcOverride = null;
+  } else {
+    const a = push.activity;
+    ipcOverride = {
+      type: a.type,
+      name: a.name || resolveIpcGameName(push.pid) || KNOWN_CLIENT_APPS[push.clientId] || 'Unknown game',
+      details: a.details,
+      state: a.state,
+      timestamps: a.timestamps,
+      assets: a.assets,
+    };
+  }
+  refreshEffectiveActivity();
+}
+
+/** Test seam: inject the scan-detected activity without touching /proc. */
+export function __testSetScanActivity(activity: Activity | null): void {
+  scanActivity = activity;
+  refreshEffectiveActivity();
 }
 
 function poll(): void {

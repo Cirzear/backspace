@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -14,8 +14,15 @@ import {
   validateDictionaryObject,
   loadDictionaryFile,
   loadBestDictionary,
+  startActivityDetection,
+  stopActivityDetection,
+  getCurrentActivity,
+  applyIpcActivity,
+  resolveIpcGameName,
+  __testSetScanActivity,
   type SourceDetector,
 } from './activityDetector';
+import type { IpcActivityPush, IpcActivityPayload } from './richPresenceIpc';
 
 vi.mock('electron', () => ({
   app: { getPath: () => '/nonexistent-userdata' },
@@ -453,5 +460,123 @@ describe('loadBestDictionary', () => {
   it('returns null when both sources are unusable', () => {
     const dir = tmp();
     expect(loadBestDictionary(path.join(dir, 'missing-a'), path.join(dir, 'missing-b'))).toBeNull();
+  });
+});
+
+// ─── IPC overlay over process detection ────────────────────────────────────
+
+describe('IPC activity overlay', () => {
+  const emitted: Array<{ name?: string; details?: string } | null> = [];
+
+  // One shared detection session: loads the real seed dictionary and
+  // registers the emit callback. The poll interval never fires mid-test.
+  beforeAll(() => {
+    startActivityDetection((activity) => emitted.push(activity));
+  });
+  afterAll(() => {
+    stopActivityDetection();
+  });
+  afterEach(() => {
+    applyIpcActivity(null);
+    __testSetScanActivity(null);
+  });
+
+  const push = (over: Partial<IpcActivityPush> = {}) =>
+    applyIpcActivity({
+      clientId: '1216669957799018608',
+      pid: null,
+      activity: { type: 'playing', details: 'Idle', state: 'In menu' },
+      ...over,
+    });
+
+  it('overlays an IPC push over the scan-detected game immediately', () => {
+    __testSetScanActivity({ type: 'playing', name: 'osu!', timestamps: { start: 1 } });
+    const before = emitted.length;
+    push({ activity: { type: 'playing', details: 'Playing [Big Black]', state: 'by Blue Stahli' } });
+    expect(emitted.length).toBe(before + 1);
+    expect(getCurrentActivity()).toMatchObject({ type: 'playing', details: 'Playing [Big Black]' });
+  });
+
+  it('falls back to the scan game when the push clears', () => {
+    __testSetScanActivity({ type: 'playing', name: 'osu!', timestamps: { start: 1 } });
+    push();
+    applyIpcActivity(null);
+    expect(getCurrentActivity()).toMatchObject({ name: 'osu!' });
+  });
+
+  it('emits null when the overlay clears and no scan game remains', () => {
+    push();
+    applyIpcActivity(null);
+    expect(getCurrentActivity()).toBeNull();
+  });
+
+  it('emits only when the effective activity changed', () => {
+    __testSetScanActivity({ type: 'playing', name: 'osu!' });
+    const before = emitted.length;
+    // Re-setting an identical scan activity must not re-emit
+    __testSetScanActivity({ type: 'playing', name: 'osu!' });
+    expect(emitted.length).toBe(before);
+  });
+
+  it('shows a map switch immediately, not on the next poll', () => {
+    push({ activity: { type: 'playing', details: 'map A' } });
+    const before = emitted.length;
+    push({ activity: { type: 'playing', details: 'map B' } });
+    expect(emitted.length).toBe(before + 1);
+    expect(getCurrentActivity()).toMatchObject({ details: 'map B' });
+  });
+
+  it('names unnamed pushes through the known-client map', () => {
+    push({ activity: { type: 'playing', details: 'Idle' }, pid: null, clientId: '1216669957799018608' });
+    expect(getCurrentActivity()).toMatchObject({ name: 'osu!lazer', details: 'Idle' });
+  });
+
+  it('keeps the push-provided name when present', () => {
+    push({ activity: { type: 'playing', name: 'Custom Name' } as IpcActivityPayload });
+    expect(getCurrentActivity()).toMatchObject({ name: 'Custom Name' });
+  });
+
+  it('passes art and timestamps through to the Activity', () => {
+    push({
+      activity: {
+        type: 'playing',
+        timestamps: { start: 1700000000, end: 1700000300 },
+        assets: {
+          largeImage: 'https://cdn.discordapp.com/app-assets/1216669957799018608/osu_logo_lazer.png',
+          largeText: 'osu!',
+          smallImage: 'https://example.com/rank.png',
+          smallText: 'SS',
+        },
+      },
+    });
+    const a = getCurrentActivity();
+    expect(a?.timestamps).toEqual({ start: 1700000000, end: 1700000300 });
+    expect(a?.assets?.largeImage).toContain('osu_logo_lazer.png');
+    expect(a?.assets?.smallText).toBe('SS');
+  });
+
+  it('resolves game names for a pid through the dictionary', () => {
+    const root = makeFakeProc([
+      {
+        pid: 42,
+        exe: '/usr/lib/jvm/java-21/bin/java',
+        cmdline: ['/usr/bin/java', '-Xmx2G', 'net.minecraft.client.main.Main'],
+        comm: 'java',
+      },
+    ]);
+    expect(resolveIpcGameName(42, root)).toBe('Minecraft');
+    expect(resolveIpcGameName(null, root)).toBeNull();
+    expect(resolveIpcGameName(999, root)).toBeNull();
+  });
+
+  it('reports a scan game exit that happened under an active overlay', () => {
+    __testSetScanActivity({ type: 'playing', name: 'Minecraft' });
+    push({ activity: { type: 'playing', details: 'deep in a map' } });
+    // Game exits while the overlay is live
+    __testSetScanActivity(null);
+    expect(getCurrentActivity()).toMatchObject({ details: 'deep in a map' });
+    // Overlay clears afterwards — nothing is left
+    applyIpcActivity(null);
+    expect(getCurrentActivity()).toBeNull();
   });
 });

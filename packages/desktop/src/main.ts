@@ -15,7 +15,8 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { pathToFileURL } from 'url';
-import { startActivityDetection, stopActivityDetection, getCurrentActivity } from './activityDetector';
+import { startActivityDetection, stopActivityDetection, getCurrentActivity, applyIpcActivity } from './activityDetector';
+import { startRichPresenceIpcServer, stopRichPresenceIpcServer } from './richPresenceIpc';
 import { KeybindManager } from './keybindManager';
 import { deriveStartMinimizedFromArgs, parseExecPathFromDesktopFile, shouldReapplyAppImage } from './autoLaunch';
 import {
@@ -1481,6 +1482,14 @@ if (!gotTheLock) {
       mainWindow?.webContents.send('activity-detected', activity);
     });
 
+    // Rich presence IPC server: games (osu!lazer & co.) push richer
+    // activity that overlays process detection
+    startRichPresenceIpcServer({
+      onActivity: (push) => applyIpcActivity(push),
+    }).catch((err) => {
+      console.warn('[main] Rich presence IPC server failed to start:', err);
+    });
+
     ipcMain.handle('get-current-activity', () => getCurrentActivity());
 
     // Linux/AppImage path-refresh ONLY. On Windows and macOS the OS is the source
@@ -1541,6 +1550,7 @@ if (!gotTheLock) {
     systemAudio.stop();
     isQuitting = true;
     stopActivityDetection();
+    stopRichPresenceIpcServer();
     keybindManager.stop();
   });
 }
