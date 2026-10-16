@@ -8,20 +8,36 @@ export function initActivityBridge(): void {
   if (!window.backspace?.onActivityDetected) return; // not Electron
 
   // Subscribe to future activity changes from main process
-  unsubscribe = window.backspace.onActivityDetected((activity) => {
-    if (activity) {
-      useActivityStore.getState().pushActivities([activity as Activity]);
-    } else {
-      useActivityStore.getState().pushActivities([]);
-    }
-  });
+  if (window.backspace.onActivitiesDetected) {
+    unsubscribe = window.backspace.onActivitiesDetected((activities) => {
+      const list = Array.isArray(activities) ? (activities as Activity[]) : [];
+      useActivityStore.getState().pushActivities(list);
+    });
 
-  // Request current state (handles instance-switch: game was already running)
-  window.backspace.getCurrentActivity?.().then((activity: unknown) => {
-    if (activity) {
-      useActivityStore.getState().pushActivities([activity as Activity]);
-    }
-  }).catch(() => {});
+    window.backspace.getCurrentActivities?.().then((activities: unknown) => {
+      if (Array.isArray(activities)) {
+        useActivityStore.getState().pushActivities(activities as Activity[]);
+      }
+    }).catch(() => {});
+  } else {
+    unsubscribe = window.backspace.onActivityDetected((activity) => {
+      if (Array.isArray(activity)) {
+        useActivityStore.getState().pushActivities(activity as Activity[]);
+      } else if (activity) {
+        useActivityStore.getState().pushActivities([activity as Activity]);
+      } else {
+        useActivityStore.getState().pushActivities([]);
+      }
+    });
+
+    window.backspace.getCurrentActivity?.().then((activity: unknown) => {
+      if (Array.isArray(activity)) {
+        useActivityStore.getState().pushActivities(activity as Activity[]);
+      } else if (activity) {
+        useActivityStore.getState().pushActivities([activity as Activity]);
+      }
+    }).catch(() => {});
+  }
 }
 
 export function teardownActivityBridge(): void {

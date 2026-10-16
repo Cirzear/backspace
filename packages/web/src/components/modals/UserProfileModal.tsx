@@ -25,6 +25,8 @@ import { getProfileMember, useProfileMemberRoles } from '../../hooks/useProfileM
 import { useShownStatus } from '../../hooks/useShownStatus';
 import { ProfileRoles } from '../ui/ProfileRoles';
 import { ProfileSpaceNickname } from '../ui/ProfileSpaceNickname';
+import { useActivityStore, activitiesFor, EMPTY_ACTIVITIES } from '../../stores/activityStore';
+import { ProfileActivities } from '../ui/ProfileActivities';
 
 type Tab = 'about' | 'friends' | 'spaces';
 
@@ -65,6 +67,15 @@ export function UserProfileModal() {
   const friendship: FriendshipStatus = user
     ? getFriendshipStatus({ viewedUser: user, origin: userOrigin, self, friends, requests })
     : { state: 'none' };
+
+  const isYou = friendship.state === 'self';
+  const activities = useActivityStore((s) =>
+    user
+      ? isYou && s.myActivities
+        ? s.myActivities
+        : activitiesFor(s.userActivities, user, userOrigin)
+      : EMPTY_ACTIVITIES,
+  );
 
   const loadUser = useCallback(async (id: string, origin: string) => {
     try {
@@ -311,6 +322,8 @@ export function UserProfileModal() {
         <div className="flex-1 overflow-y-auto scrollbar-thin p-5 min-h-[200px]">
           {activeTab === 'about' && (
             <div className="space-y-4">
+              <ProfileActivities activities={activities} skipCustom={!!user.customStatus} />
+
               {/* Bio */}
               {user.bio && (
                 <div>

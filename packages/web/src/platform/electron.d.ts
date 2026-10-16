@@ -172,9 +172,13 @@ interface BackspaceElectronAPI {
   setAutoLaunchSettings: (settings: { openAtLogin?: boolean; startMinimized?: boolean }) =>
     Promise<{ openAtLogin: boolean; startMinimized: boolean }>;
 
-  // Activity detection (game/app process scanning)
+  // Activity detection (game/app process scanning & media detection)
   onActivityDetected: (callback: (activity: unknown) => void) => (() => void);
+  onActivitiesDetected?: (callback: (activities: unknown[]) => void) => (() => void);
   getCurrentActivity: () => Promise<unknown>;
+  getCurrentActivities?: () => Promise<unknown[]>;
+  getActivitySettings?: () => Promise<{ enablePreemption: boolean }>;
+  setActivitySettings?: (settings: { enablePreemption?: boolean }) => Promise<{ enablePreemption: boolean }>;
 
   // Keybind support
   getKeybindPortalStatus?: () => Promise<KeybindPortalStatus | null>;

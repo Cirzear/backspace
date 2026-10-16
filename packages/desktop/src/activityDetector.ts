@@ -3,6 +3,11 @@ import https from 'https';
 import path from 'path';
 import fs from 'fs';
 import { app } from 'electron';
+import {
+  type ActivitySettings,
+  loadActivitySettings,
+  saveActivitySettings,
+} from './activitySettings';
 
 // ─── Local Activity type (structural match with @backspace/shared Activity) ─
 
@@ -28,6 +33,12 @@ interface GameEntry {
   type?: string;
 }
 
+export interface TrackedApp {
+  entry: GameEntry;
+  firstSeenAt: number;
+  lastStartedAt: number;
+}
+
 interface VersionedDictionary {
   version: number;
   games: GameEntry[];
@@ -41,6 +52,8 @@ const REMOTE_URL = 'https://raw.githubusercontent.com/TheZwiss/backspace/main/pa
 
 let processMap: Map<string, GameEntry> = new Map();
 let gameEntries: GameEntry[] = [];
+let trackedApps: Map<string, TrackedApp> = new Map();
+let currentSettings: ActivitySettings = loadActivitySettings();
 let currentGameId: string | null = null;
 let currentActivity: Activity | null = null;
 let intervalId: NodeJS.Timeout | null = null;
@@ -163,8 +176,12 @@ function loadDictionary(filePath: string): { success: boolean; version: number }
 function hotSwapDictionary(newEntries: GameEntry[], newMap: Map<string, GameEntry>): void {
   gameEntries = newEntries;
   processMap = newMap;
-  // Note: currentGameId and currentActivity are intentionally preserved
-  // so detection state survives dictionary updates.
+  for (const [id, tracked] of trackedApps.entries()) {
+    const updated = newEntries.find((e) => e.id === id);
+    if (updated) {
+      tracked.entry = updated;
+    }
+  }
 }
 
 // ─── Remote sync ────────────────────────────────────────────────────────────
@@ -440,6 +457,59 @@ function parseProcessList(stdout: string): Set<string> {
 
 // ─── Poll logic ─────────────────────────────────────────────────────────────
 
+/**
+ * Resolves the primary active application according to preemption configuration.
+ *
+ * - When preemption is enabled:
+ *   Returns the application that was most recently launched/detected (highest lastStartedAt).
+ * - When preemption is disabled:
+ *   If the current active application is still running, preserves it.
+ *   Otherwise, returns the first detected running application (lowest firstSeenAt).
+ */
+export function resolveActiveActivity(
+  tracked: Map<string, TrackedApp>,
+  enablePreemption: boolean,
+  currentId: string | null,
+): TrackedApp | null {
+  if (tracked.size === 0) return null;
+
+  const list = Array.from(tracked.values());
+
+  if (enablePreemption) {
+    list.sort((a, b) => b.lastStartedAt - a.lastStartedAt);
+    return list[0] ?? null;
+  }
+
+  if (currentId && tracked.has(currentId)) {
+    return tracked.get(currentId)!;
+  }
+
+  list.sort((a, b) => a.firstSeenAt - b.firstSeenAt);
+  return list[0] ?? null;
+}
+
+function updateCurrentActivity(): void {
+  const matched = resolveActiveActivity(trackedApps, currentSettings.enablePreemption, currentGameId);
+
+  if (matched) {
+    if (matched.entry.id !== currentGameId) {
+      currentGameId = matched.entry.id;
+      currentActivity = {
+        type: matched.entry.type ?? 'playing',
+        name: matched.entry.name,
+        timestamps: { start: matched.firstSeenAt },
+      };
+      onChangeCallback?.(currentActivity);
+    }
+  } else {
+    if (currentGameId !== null) {
+      currentGameId = null;
+      currentActivity = null;
+      onChangeCallback?.(null);
+    }
+  }
+}
+
 function poll(): void {
   if (isPolling) return; // Previous poll still in-flight
   isPolling = true;
@@ -459,40 +529,34 @@ function poll(): void {
     }
 
     const runningProcesses = parseProcessList(stdout);
+    const now = Date.now();
+    const currentlyRunning = new Set<string>();
 
-    // Find first matching game (dictionary order = priority)
-    let matchedEntry: GameEntry | null = null;
     for (const entry of gameEntries) {
       for (const proc of entry.processes) {
         if (runningProcesses.has(proc.toLowerCase())) {
-          matchedEntry = entry;
+          currentlyRunning.add(entry.id);
+          const existing = trackedApps.get(entry.id);
+          if (!existing) {
+            trackedApps.set(entry.id, {
+              entry,
+              firstSeenAt: now,
+              lastStartedAt: now,
+            });
+          }
           break;
         }
       }
-      if (matchedEntry) break;
     }
 
-    if (matchedEntry) {
-      if (matchedEntry.id !== currentGameId) {
-        // New game detected (or game changed)
-        currentGameId = matchedEntry.id;
-        currentActivity = {
-          type: matchedEntry.type ?? 'playing',
-          name: matchedEntry.name,
-          timestamps: { start: Date.now() },
-        };
-        onChangeCallback?.(currentActivity);
+    // Drop apps that have exited
+    for (const id of Array.from(trackedApps.keys())) {
+      if (!currentlyRunning.has(id)) {
+        trackedApps.delete(id);
       }
-      // Same game still running — no change, skip IPC
-    } else {
-      if (currentGameId !== null) {
-        // Game exited
-        currentGameId = null;
-        currentActivity = null;
-        onChangeCallback?.(null);
-      }
-      // No game was running before either — skip
     }
+
+    updateCurrentActivity();
   });
 }
 
@@ -538,8 +602,22 @@ export function stopActivityDetection(): void {
     intervalId = null;
   }
   onChangeCallback = null;
+  trackedApps.clear();
 }
 
 export function getCurrentActivity(): Activity | null {
   return currentActivity;
+}
+
+export function getActivitySettings(): ActivitySettings {
+  return { ...currentSettings };
+}
+
+export function setActivitySettings(newSettings: Partial<ActivitySettings>): ActivitySettings {
+  if (typeof newSettings.enablePreemption === 'boolean') {
+    currentSettings.enablePreemption = newSettings.enablePreemption;
+    saveActivitySettings(currentSettings);
+    updateCurrentActivity();
+  }
+  return { ...currentSettings };
 }

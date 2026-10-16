@@ -44,4 +44,33 @@ describe('ActivityCard', () => {
     expect(el).toBeInTheDocument();
     expect(el).toHaveAttribute('title', 'on call 📟');
   });
+
+  it('renders music status with song title and artist', () => {
+    const musicActivity: Activity = {
+      type: 'listening',
+      name: '海阔天空',
+      details: 'Beyond',
+      assets: { smallText: '网易云音乐' },
+    };
+
+    render(<ActivityCard activities={[musicActivity]} />);
+    expect(screen.getByText('海阔天空 · Beyond')).toBeInTheDocument();
+    expect(screen.getByText('网易云音乐')).toBeInTheDocument();
+  });
+
+  it('renders dual status when user is gaming and listening to music', () => {
+    const gameActivity: Activity = {
+      type: 'playing',
+      name: 'Cyberpunk 2077',
+    };
+    const musicActivity: Activity = {
+      type: 'listening',
+      name: 'Easy On Me',
+      details: 'Adele',
+    };
+
+    render(<ActivityCard activities={[gameActivity, musicActivity]} />);
+    expect(screen.getByText('Cyberpunk 2077')).toBeInTheDocument();
+    expect(screen.getByText('Easy On Me · Adele')).toBeInTheDocument();
+  });
 });

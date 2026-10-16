@@ -62,6 +62,8 @@ export default defineConfig(({ mode }) => ({
     extensions: ['.tsx', '.ts', '.jsx', '.js', '.mjs', '.mts', '.json'],
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),
+      '@capacitor/core': path.resolve(import.meta.dirname, '../../node_modules/.pnpm/@capacitor+core@8.5.2/node_modules/@capacitor/core'),
+      '@capacitor/app': path.resolve(import.meta.dirname, '../../node_modules/.pnpm/@capacitor+app@8.1.1_@capacitor+core@8.5.2/node_modules/@capacitor/app'),
     },
   },
   server: {

@@ -356,6 +356,12 @@
         "description": "启动后隐藏至系统托盘，而不是显示窗口"
       }
     },
+    "activity": {
+      "preemption": {
+        "label": "状态抢占机制",
+        "description": "开启后只展示最近启动的应用或游戏；关闭时保持首次检测到的应用或游戏作为状态，直至其关闭。"
+      }
+    },
     "updates": {
       "appName": "Backspace 桌面端",
       "versionLabel": "版本 {{version}}",

@@ -128,13 +128,22 @@ contextBridge.exposeInMainWorld('backspace', {
   setAutoLaunchSettings: (settings: { openAtLogin?: boolean; startMinimized?: boolean }) =>
     ipcRenderer.invoke('set-auto-launch-settings', settings),
 
-  // Activity detection (game/app process scanning)
+  // Activity detection (game/app process scanning & media detection)
   onActivityDetected: (callback: (activity: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, activity: unknown) => callback(activity);
     ipcRenderer.on('activity-detected', handler);
     return () => { ipcRenderer.removeListener('activity-detected', handler); };
   },
+  onActivitiesDetected: (callback: (activities: unknown[]) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, activities: unknown[]) => callback(activities);
+    ipcRenderer.on('activities-detected', handler);
+    return () => { ipcRenderer.removeListener('activities-detected', handler); };
+  },
   getCurrentActivity: () => ipcRenderer.invoke('get-current-activity'),
+  getCurrentActivities: () => ipcRenderer.invoke('get-current-activities'),
+  getActivitySettings: () => ipcRenderer.invoke('get-activity-settings'),
+  setActivitySettings: (settings: { enablePreemption?: boolean }) =>
+    ipcRenderer.invoke('set-activity-settings', settings),
 
   // Keybind support
   getKeybindPortalStatus: () => ipcRenderer.invoke('keybind-portal-status'),

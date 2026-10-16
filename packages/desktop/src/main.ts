@@ -19,7 +19,18 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { pathToFileURL } from 'url';
-import { startActivityDetection, stopActivityDetection, getCurrentActivity } from './activityDetector';
+import {
+  startActivityDetection,
+  stopActivityDetection,
+  getCurrentActivity,
+  getActivitySettings,
+  setActivitySettings,
+} from './activityDetector';
+import {
+  startMediaDetection,
+  stopMediaDetection,
+  getCurrentMediaActivity,
+} from './mediaDetector';
 import { KeybindManager } from './keybindManager';
 import { deriveStartMinimizedFromArgs, parseExecPathFromDesktopFile, shouldReapplyAppImage } from './autoLaunch';
 import {
@@ -963,12 +974,40 @@ if (!gotTheLock) {
 
     desktopUpdater.initAutoUpdater();
 
-    // ─── Activity Detection ────────────────────────────────────────────────
+    // ─── Activity & Media Detection ────────────────────────────────────────
+    let latestProcessActivity = getCurrentActivity();
+    let latestMediaActivity = getCurrentMediaActivity();
+
+    const broadcastActivities = () => {
+      const activities = [];
+      if (latestProcessActivity) activities.push(latestProcessActivity);
+      if (latestMediaActivity) activities.push(latestMediaActivity);
+
+      mainWindow?.webContents.send('activities-detected', activities);
+      mainWindow?.webContents.send('activity-detected', latestProcessActivity || latestMediaActivity || null);
+    };
+
     startActivityDetection((activity) => {
-      mainWindow?.webContents.send('activity-detected', activity);
+      latestProcessActivity = activity;
+      broadcastActivities();
     });
 
-    ipcMain.handle('get-current-activity', () => getCurrentActivity());
+    startMediaDetection((media) => {
+      latestMediaActivity = media;
+      broadcastActivities();
+    });
+
+    ipcMain.handle('get-current-activity', () => latestProcessActivity || latestMediaActivity || null);
+    ipcMain.handle('get-current-activities', () => {
+      const activities = [];
+      if (latestProcessActivity) activities.push(latestProcessActivity);
+      if (latestMediaActivity) activities.push(latestMediaActivity);
+      return activities;
+    });
+    ipcMain.handle('get-activity-settings', () => getActivitySettings());
+    ipcMain.handle('set-activity-settings', (_event, settings: { enablePreemption?: boolean }) =>
+      setActivitySettings(settings),
+    );
 
     // Linux/AppImage path-refresh ONLY. On Windows and macOS the OS is the source
     // of truth for openAtLogin (Task 4) and we must not override user changes made
@@ -1028,6 +1067,7 @@ if (!gotTheLock) {
     systemAudio.stop();
     isQuitting = true;
     stopActivityDetection();
+    stopMediaDetection();
     keybindManager.stop();
   });
 }

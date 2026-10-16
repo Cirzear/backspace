@@ -11,6 +11,8 @@ export interface ActivityEntry {
   activities: Activity[];
 }
 
+export const EMPTY_ACTIVITIES: Activity[] = [];
+
 /**
  * The activities held for `subject` as delivered or listed by `origin`.
  * Every reader goes through this, so all views of one person agree.
@@ -20,7 +22,7 @@ export function activitiesFor(
   subject: PresenceSubject,
   origin: string,
 ): Activity[] {
-  return userActivities.get(userKey(subject, origin)) ?? [];
+  return userActivities.get(userKey(subject, origin)) ?? EMPTY_ACTIVITIES;
 }
 
 interface ActivityState {

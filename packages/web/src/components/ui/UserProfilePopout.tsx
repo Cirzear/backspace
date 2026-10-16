@@ -23,6 +23,8 @@ import { useShownStatus } from '../../hooks/useShownStatus';
 import { viewerCanEditMemberRoles } from '../../utils/roleHierarchy';
 import { ProfileRoles } from './ProfileRoles';
 import { ProfileSpaceNickname } from './ProfileSpaceNickname';
+import { useActivityStore, activitiesFor } from '../../stores/activityStore';
+import { ProfileActivities } from './ProfileActivities';
 
 /** Gap between the card and the element it was opened from. */
 const ANCHOR_OFFSET = 8;
@@ -55,6 +57,9 @@ export function UserProfilePopout({ user: propUser, origin, onClose, anchor, pla
   const shownStatus = useShownStatus(user, origin, user.status);
   const self = useSelfIdentity();
   const isYou = isMine(user, origin, self);
+  const activities = useActivityStore((s) =>
+    isYou && s.myActivities ? s.myActivities : activitiesFor(s.userActivities, user, origin),
+  );
   const roles = useProfileMemberRoles(member);
   const isMobile = useUIStore((s) => s.isMobile);
   // Edit Roles opens the member role editor, which is desktop-only. It is
@@ -200,6 +205,9 @@ export function UserProfilePopout({ user: propUser, origin, onClose, anchor, pla
             </div>
           )}
         </div>
+
+        {/* Dynamic Activities (Gaming, Music with progress, Streaming, etc.) */}
+        <ProfileActivities activities={activities} skipCustom={!!user.customStatus} />
 
         {/* Bio */}
         {user.bio && (
