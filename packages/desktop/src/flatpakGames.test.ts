@@ -136,11 +136,22 @@ describe('findFlatpakGameForProcess', () => {
 // ─── install dirs ───────────────────────────────────────────────────────────
 
 describe('getFlatpakInstallDirs', () => {
-  it('finds the user install dir and skips missing system dir', () => {
+  it('finds the user install dir and skips missing system dirs', () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'flatpak-roots-'));
     fs.mkdirSync(path.join(home, '.local', 'share', 'flatpak'), { recursive: true });
-    const dirs = getFlatpakInstallDirs(home);
+    const dirs = getFlatpakInstallDirs(home, [path.join(home, 'system-flatpak')]);
     expect(dirs).toHaveLength(1);
     expect(dirs[0]).toBe(path.join(home, '.local', 'share', 'flatpak'));
+  });
+
+  it('appends existing system dirs after the user dir', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'flatpak-roots-'));
+    fs.mkdirSync(path.join(home, '.local', 'share', 'flatpak'), { recursive: true });
+    const system = path.join(home, 'system-flatpak');
+    fs.mkdirSync(system, { recursive: true });
+    expect(getFlatpakInstallDirs(home, [system])).toEqual([
+      path.join(home, '.local', 'share', 'flatpak'),
+      system,
+    ]);
   });
 });

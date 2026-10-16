@@ -72,12 +72,15 @@ export function isLauncherAppId(appId: string): boolean {
   return LAUNCHER_ID_MARKERS.some((marker) => lower.includes(marker));
 }
 
-/** Flatpak installation dirs: the user dir first, then the system one. */
-export function getFlatpakInstallDirs(home: string = os.homedir()): string[] {
-  return [
-    path.join(home, '.local', 'share', 'flatpak'),
-    '/var/lib/flatpak',
-  ].filter((dir) => {
+/** System-wide Flatpak installation dirs (parameterized so tests stay host-independent). */
+const SYSTEM_INSTALL_DIRS = ['/var/lib/flatpak'];
+
+/** Flatpak installation dirs: the user dir first, then the system ones. */
+export function getFlatpakInstallDirs(
+  home: string = os.homedir(),
+  systemDirs: string[] = SYSTEM_INSTALL_DIRS,
+): string[] {
+  return [path.join(home, '.local', 'share', 'flatpak'), ...systemDirs].filter((dir) => {
     try {
       fs.accessSync(dir);
       return true;
