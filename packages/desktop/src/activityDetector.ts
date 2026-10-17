@@ -660,6 +660,11 @@ function refreshEffectiveActivity(): void {
   const effective = ipcOverride ?? scanActivity;
   if (JSON.stringify(effective) !== JSON.stringify(currentActivity)) {
     currentActivity = effective;
+    console.log(
+      `[ActivityDetector] Effective activity: ${
+        effective ? `${effective.name} (source: ${ipcOverride ? 'ipc' : 'scan'}, details: ${effective.details ? 'yes' : 'no'})` : 'none'
+      }`,
+    );
     onChangeCallback?.(currentActivity);
   }
 }
@@ -700,9 +705,28 @@ export function applyIpcActivity(push: IpcActivityPush | null): void {
     ipcOverride = null;
   } else {
     const a = push.activity;
+    // Resolve the display name step by step so the log can say where it
+    // came from: the push itself, the /proc dictionary lookup, a known
+    // client id, or the last-resort fallback.
+    const pushedName = a.name ?? null;
+    const procName = pushedName ?? resolveIpcGameName(push.pid);
+    const knownName = KNOWN_CLIENT_APPS[push.clientId] ?? null;
+    const name = pushedName ?? procName ?? knownName ?? 'Unknown game';
+    let nameSource = 'fallback';
+    if (pushedName) nameSource = 'push';
+    else if (procName) nameSource = 'process lookup';
+    else if (knownName) nameSource = 'known client id';
+    console.log(
+      `[ActivityDetector] IPC activity: client=${push.clientId} pid=${push.pid ?? 'none'}` +
+      ` name=${JSON.stringify(name)} (${nameSource})` +
+      ` details=${a.details ? JSON.stringify(a.details) : 'none'}` +
+      ` state=${a.state ? 'yes' : 'no'}` +
+      ` timestamps=${a.timestamps ? 'yes' : 'no'}` +
+      ` assets=${a.assets ? 'yes' : 'no'}`,
+    );
     ipcOverride = {
       type: a.type,
-      name: a.name || resolveIpcGameName(push.pid) || KNOWN_CLIENT_APPS[push.clientId] || 'Unknown game',
+      name,
       details: a.details,
       state: a.state,
       timestamps: a.timestamps,

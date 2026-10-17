@@ -375,6 +375,7 @@ function handleHandshakePayload(conn: Connection, payload: unknown): boolean {
   }
   conn.clientId = obj.client_id;
   conn.handshakeDone = true;
+  console.log(`[RichPresenceIpc] Handshake ok (client ${conn.clientId})`);
   reply(conn, {
     cmd: 'DISPATCH',
     evt: 'READY',
@@ -415,16 +416,6 @@ function handleCommandPayload(conn: Connection, payload: unknown): void {
 function handleSetActivity(conn: Connection, args: Record<string, unknown>, nonce: unknown): void {
   const pid = typeof args.pid === 'number' && Number.isFinite(args.pid) ? Math.trunc(args.pid) : null;
 
-  // A push for a dead pid is stale: the game is gone, and any earlier push
-  // from that game is equally stale.
-  if (pid !== null && !isProcessAlive(pid)) {
-    conn.pid = pid;
-    conn.push = null;
-    recompute();
-    reply(conn, { cmd: 'SET_ACTIVITY', data: null, evt: null, nonce });
-    return;
-  }
-
   const rawActivity = args.activity;
   if (!rawActivity || typeof rawActivity !== 'object') {
     conn.pid = pid;
@@ -434,7 +425,18 @@ function handleSetActivity(conn: Connection, args: Record<string, unknown>, nonc
     return;
   }
 
+  // The live connection is the source of truth for liveness: a client that
+  // just sent a frame is running, even when the pid it reports is dead (an
+  // AppImage wrapper's pid, a pid from another namespace) or bogus. Pushes
+  // from a game that exits are dropped by the disconnect grace instead.
   const activity = normalizeActivity(rawActivity as Record<string, unknown>, conn.clientId);
+  const pidAlive = pid === null || isProcessAlive(pid);
+  console.log(
+    `[RichPresenceIpc] Push from client ${conn.clientId}: pid=${pid ?? 'none'} alive=${pidAlive}` +
+    ` name=${activity.name ?? 'none'} details=${activity.details ? 'yes' : 'no'}` +
+    ` state=${activity.state ? 'yes' : 'no'} assets=${activity.assets ? 'yes' : 'no'}` +
+    (pidAlive ? '' : ' — stale pid, push kept'),
+  );
   conn.pid = pid;
   conn.push = { seq: ++seqCounter, push: { clientId: conn.clientId, pid, activity } };
   recompute();
@@ -456,6 +458,7 @@ function recompute(): void {
   const changed = JSON.stringify(next) !== JSON.stringify(lastPush);
   if (changed) {
     lastPush = next;
+    console.log(`[RichPresenceIpc] Activity ${next ? `update (client ${next.clientId})` : 'cleared'}`);
     onActivityCb?.(next);
   }
 }
