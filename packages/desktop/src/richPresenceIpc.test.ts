@@ -284,7 +284,7 @@ describe('RichPresenceIpcServer', () => {
     await client.connected();
     client.handshakeFramed();
     const ready = await client.nextReply();
-    expect(ready.payload).toMatchObject({ v: 1, config: { cdn_host: 'cdn.discordapp.com' } });
+    expect(ready.payload).toMatchObject({ cmd: 'DISPATCH', evt: 'READY', data: { v: 1, cfg: { cdn_host: 'cdn.discordapp.com', api_endpoint: '//discord.com/api', environment: 'production' }, config: { cdn_host: 'cdn.discordapp.com', api_endpoint: '//discord.com/api', environment: 'production' }, user: { id: '123456789012345678', username: 'backspace', discriminator: '0', avatar: null, bot: false, flags: 0 } } });
     client.destroy();
     live.close();
   });
@@ -297,11 +297,13 @@ describe('RichPresenceIpcServer', () => {
     const ready = await client.nextReply();
     expect(ready.op).toBe(1);
     expect(ready.payload).toEqual({
-      v: 1,
-      config: {
-        cdn_host: 'cdn.discordapp.com',
-        api_endpoint: '//discord.com/api',
-        environment: 'production',
+      cmd: 'DISPATCH',
+      evt: 'READY',
+      data: {
+        v: 1,
+        cfg: { cdn_host: 'cdn.discordapp.com', api_endpoint: '//discord.com/api', environment: 'production' },
+        config: { cdn_host: 'cdn.discordapp.com', api_endpoint: '//discord.com/api', environment: 'production' },
+        user: { id: '123456789012345678', username: 'backspace', discriminator: '0', avatar: null, bot: false, flags: 0 },
       },
     });
     client.destroy();

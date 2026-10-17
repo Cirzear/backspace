@@ -376,11 +376,13 @@ function handleHandshakePayload(conn: Connection, payload: unknown): boolean {
   conn.clientId = obj.client_id;
   conn.handshakeDone = true;
   reply(conn, {
-    v: 1,
-    config: {
-      cdn_host: 'cdn.discordapp.com',
-      api_endpoint: '//discord.com/api',
-      environment: 'production',
+    cmd: 'DISPATCH',
+    evt: 'READY',
+    data: {
+      v: 1,
+      cfg: { cdn_host: 'cdn.discordapp.com', api_endpoint: '//discord.com/api', environment: 'production' },
+      config: { cdn_host: 'cdn.discordapp.com', api_endpoint: '//discord.com/api', environment: 'production' },
+      user: { id: '123456789012345678', username: 'backspace', discriminator: '0', avatar: null, bot: false, flags: 0 },
     },
   });
   return true;
