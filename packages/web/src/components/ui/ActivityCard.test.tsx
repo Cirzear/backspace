@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Activity } from '@backspace/shared';
 import { setLanguage } from '../../i18n';
-import { ActivityCard, activityTimeText, isRenderableActivityImage } from './ActivityCard';
+import { ActivityCard, ActivityDetailCard, activityTimeText, isRenderableActivityImage } from './ActivityCard';
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -168,5 +168,113 @@ describe('ActivityCard', () => {
     expect(screen.getByText('cs2')).toBeInTheDocument();
     expect(screen.queryByText(/elapsed/)).not.toBeInTheDocument();
     expect(screen.queryByText(/left/)).not.toBeInTheDocument();
+  });
+});
+
+describe('ActivityDetailCard', () => {
+  it('renders the full activity with details, state, time and art', () => {
+    const activity: Activity = {
+      type: 'playing',
+      name: 'osu!',
+      details: 'Playing Freedom Dive',
+      state: 'On the beatmap',
+      timestamps: { start: Date.now() - 32 * 60 * 1000 },
+      assets: {
+        largeImage: 'https://cdn.example.com/osu.png',
+        largeText: 'osu!',
+        smallImage: 'https://cdn.example.com/mode.png',
+        smallText: 'osu! mode',
+      },
+    };
+
+    render(<ActivityDetailCard activities={[activity]} />);
+
+    expect(screen.getByText('osu!')).toBeInTheDocument();
+    expect(screen.getByText('Playing Freedom Dive')).toBeInTheDocument();
+    expect(screen.getByText('On the beatmap')).toBeInTheDocument();
+    expect(screen.getByText('32:00 elapsed')).toBeInTheDocument();
+    const large = screen.getByAltText('osu!');
+    expect(large).toHaveAttribute('src', 'https://cdn.example.com/osu.png');
+    expect(large).toHaveAttribute('title', 'osu!');
+    const badge = screen.getByAltText('osu! mode');
+    expect(badge).toHaveAttribute('src', 'https://cdn.example.com/mode.png');
+    expect(badge).toHaveAttribute('title', 'osu! mode');
+  });
+
+  it('falls back to details as the headline when the activity lost its name', () => {
+    // An empty name leaves the details as the headline; the details are not
+    // repeated on a second line (that line needs a name to sit under).
+    const activity: Activity = {
+      type: 'playing',
+      name: '',
+      details: 'backspace push test',
+      state: 'Playing (RPC test)',
+      timestamps: { start: Date.now() - 32 * 60 * 1000 },
+    };
+
+    render(<ActivityDetailCard activities={[activity]} />);
+
+    expect(screen.getByText('backspace push test')).toBeInTheDocument();
+    expect(screen.getByText('Playing (RPC test)')).toBeInTheDocument();
+    expect(screen.getByText('32:00 elapsed')).toBeInTheDocument();
+  });
+
+  it('renders nothing without a displayable activity', () => {
+    const { container } = render(<ActivityDetailCard activities={[]} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('renders nothing for a custom status activity', () => {
+    const { container } = render(
+      <ActivityDetailCard activities={[{ type: 'custom', name: 'on call' }]} />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('hides each art image independently when it fails to load', () => {
+    const activity: Activity = {
+      type: 'playing',
+      name: 'osu!',
+      assets: {
+        largeImage: 'https://cdn.example.com/broken.png',
+        largeText: 'osu!',
+        smallImage: 'https://cdn.example.com/rank.png',
+        smallText: 'SS',
+      },
+    };
+
+    render(<ActivityDetailCard activities={[activity]} />);
+
+    fireEvent.error(screen.getByAltText('osu!'));
+    expect(screen.queryByAltText('osu!')).not.toBeInTheDocument();
+    // Only the broken image hides itself; the badge survives.
+    expect(screen.getByAltText('SS')).toBeInTheDocument();
+  });
+
+  it('renders a small-only badge as the full-size image', () => {
+    const activity: Activity = {
+      type: 'playing',
+      name: 'osu!',
+      assets: { smallImage: 'https://cdn.example.com/rank.png', smallText: 'SS' },
+    };
+
+    render(<ActivityDetailCard activities={[activity]} />);
+
+    expect(screen.getByText('osu!')).toBeInTheDocument();
+    const img = screen.getByAltText('SS');
+    expect(img).toHaveAttribute('src', 'https://cdn.example.com/rank.png');
+    expect(img.className).toContain('w-[60px]');
+  });
+
+  it('never renders non-http art URLs', () => {
+    const activity: Activity = {
+      type: 'playing',
+      name: 'osu!',
+      assets: { largeImage: 'data:image/png;base64,AAAA', smallImage: 'javascript:alert(1)' },
+    };
+
+    render(<ActivityDetailCard activities={[activity]} />);
+
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
   });
 });

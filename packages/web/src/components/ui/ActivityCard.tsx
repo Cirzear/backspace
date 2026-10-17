@@ -155,3 +155,79 @@ export function ActivityCard({ activities, fallbackCustomStatus }: ActivityCardP
     </div>
   );
 }
+
+/**
+ * The profile popout's activity card: the full rich presence view. Shows the
+ * headline, the details/state lines, a live elapsed/countdown time line and
+ * the asset images — the large image with the small badge overlay — when the
+ * push carried them. Art is rendered only for remote http(s) URLs and each
+ * image hides itself when it fails to load, matching the row treatment.
+ */
+export function ActivityDetailCard({ activities }: { activities: Activity[] }) {
+  useEmojiShortcodeNames();
+  const { t } = useTranslation('common');
+  const { formatDuration } = useFormatters();
+  const primary = getPrimaryActivity(activities);
+
+  // Hooks stay above the early returns below (Rules of Hooks)
+  const hasTimer = !!primary && primary.type !== 'custom' &&
+    (typeof primary.timestamps?.start === 'number' || typeof primary.timestamps?.end === 'number');
+  const now = useNowTick(hasTimer);
+
+  if (!primary || primary.type === 'custom') return null;
+
+  // The RPC wire format has no app name, so a push can arrive without one;
+  // its details then stand in as the headline.
+  const headline = primary.name || primary.details;
+  if (!headline) return null;
+
+  const assets = primary.assets;
+  const largeImage = isRenderableActivityImage(assets?.largeImage) ? assets.largeImage : null;
+  const smallImage = isRenderableActivityImage(assets?.smallImage) ? assets.smallImage : null;
+  const timeText = activityTimeText(primary.timestamps ?? {}, now, t, formatDuration);
+
+  return (
+    <div className="flex gap-3 items-start">
+      {(largeImage || smallImage) && (
+        <div className="relative shrink-0 w-[60px] h-[60px]">
+          {largeImage && (
+            <ActivityArt
+              src={largeImage}
+              alt={assets?.largeText || headline}
+              className="w-[60px] h-[60px] rounded-[10px] object-cover bg-white/[0.04]"
+            />
+          )}
+          {smallImage && (
+            <ActivityArt
+              src={smallImage}
+              alt={assets?.smallText}
+              className={largeImage
+                ? 'absolute -bottom-1.5 -right-1.5 w-[22px] h-[22px] rounded-full object-cover bg-[#13131a] ring-2 ring-[rgba(20,20,26,0.85)]'
+                : 'w-[60px] h-[60px] rounded-[10px] object-cover bg-white/[0.04]'}
+            />
+          )}
+        </div>
+      )}
+      <div className="flex-1 min-w-0">
+        <div className="text-[13px] font-medium leading-[1.3] text-txt-primary truncate">
+          {replaceEmojiShortcodes(headline)}
+        </div>
+        {primary.details && primary.name && (
+          <div className="text-[12px] leading-[1.3] text-txt-secondary truncate">
+            {replaceEmojiShortcodes(primary.details)}
+          </div>
+        )}
+        {primary.state && (
+          <div className="text-[12px] leading-[1.3] text-txt-secondary truncate">
+            {replaceEmojiShortcodes(primary.state)}
+          </div>
+        )}
+        {timeText && (
+          <div className="text-[11px] leading-[1.3] text-txt-tertiary tabular-nums">
+            {timeText}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

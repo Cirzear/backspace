@@ -8,7 +8,8 @@ Source files:
 - `packages/web/src/hooks/useWebSocket.ts` — Ready payload handling, presence_update reception, reconnect re-push
 - `packages/web/src/components/layout/ActivityPanel.tsx` — Friends activity sidebar (DM home view)
 - `packages/web/src/components/layout/MemberSidebar.tsx` — Space member list with activity display
-- `packages/web/src/components/ui/ActivityCard.tsx` — Activity display component, accent color helpers
+- `packages/web/src/components/ui/ActivityCard.tsx` — Activity display component (rows show the details line when the activity carries one; `ActivityDetailCard` is the profile popout's full card with state, elapsed time and assets), accent color helpers
+- `packages/web/src/components/ui/UserProfilePopout.tsx` — Profile popout; renders the full activity card via `ActivityDetailCard`
 - `packages/web/src/components/modals/settingsPanels/PrivacyPanel.tsx` — showActivity toggle UI
 - `packages/server/src/ws/handler.ts` — ConnectionManager (in-memory activity state, rate limiting, disconnect cleanup)
 - `packages/server/src/ws/events.ts` — handlePresenceUpdate, handleActivityUpdate, validateActivities

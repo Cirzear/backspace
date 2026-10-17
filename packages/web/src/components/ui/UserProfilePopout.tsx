@@ -23,6 +23,9 @@ import { useShownStatus } from '../../hooks/useShownStatus';
 import { viewerCanEditMemberRoles } from '../../utils/roleHierarchy';
 import { ProfileRoles } from './ProfileRoles';
 import { ProfileSpaceNickname } from './ProfileSpaceNickname';
+import { useActivityStore, activitiesFor } from '../../stores/activityStore';
+import { getPrimaryActivity } from '@backspace/shared/src/activities.js';
+import { ActivityDetailCard } from './ActivityCard';
 
 /** Gap between the card and the element it was opened from. */
 const ANCHOR_OFFSET = 8;
@@ -55,6 +58,14 @@ export function UserProfilePopout({ user: propUser, origin, onClose, anchor, pla
   const shownStatus = useShownStatus(user, origin, user.status);
   const self = useSelfIdentity();
   const isYou = isMine(user, origin, self);
+
+  // Rich presence: the activity this person's own surfaces show (their game,
+  // with the details a local RPC push enriched it with). The popout is where
+  // the full card fits: details, state, elapsed time and the asset images.
+  const userActivities = useActivityStore((s) => s.userActivities);
+  const activities = activitiesFor(userActivities, user, origin);
+  const primaryActivity = getPrimaryActivity(activities);
+  const showActivityCard = !!primaryActivity && primaryActivity.type !== 'custom';
 
   const roles = useProfileMemberRoles(member);
   const isMobile = useUIStore((s) => s.isMobile);
@@ -201,6 +212,14 @@ export function UserProfilePopout({ user: propUser, origin, onClose, anchor, pla
             </div>
           )}
         </div>
+
+        {/* Rich presence activity: the game card with details and assets */}
+        {showActivityCard && (
+          <>
+            <div className="border-t border-white/[0.06] my-3" />
+            <ActivityDetailCard activities={activities} />
+          </>
+        )}
 
         {/* Bio */}
         {user.bio && (
