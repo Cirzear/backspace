@@ -192,7 +192,8 @@ export function resolveAssetUrl(value: string, clientId: string): string | undef
   const v = value.trim();
   if (!v) return undefined;
   if (/^https?:\/\//i.test(v)) {
-    return v.length <= LIMITS.MAX_URL_LENGTH ? v : v.slice(0, LIMITS.MAX_URL_LENGTH);
+    // A cut-off URL points somewhere else (or nowhere): drop it instead
+    return v.length <= LIMITS.MAX_URL_LENGTH ? v : undefined;
   }
   if (v.startsWith('spotify:') || v.startsWith('twitch:')) return undefined; // External schemas we cannot resolve
   if (!/^[a-zA-Z0-9_-]+$/.test(v)) return undefined; // Not a legal asset key
@@ -269,26 +270,6 @@ export function normalizeActivity(raw: Record<string, unknown>, clientId: string
 /** Validate a handshake client_id: 1..64 digits, nothing else. */
 export function isValidClientId(clientId: unknown): clientId is string {
   return typeof clientId === 'string' && CLIENT_ID_RE.test(clientId);
-}
-
-// ─── Process liveness ───────────────────────────────────────────────────────
-
-function isProcessAlive(pid: number): boolean {
-  if (pid <= 0) return false;
-  if (process.platform === 'linux') {
-    try {
-      fs.accessSync(path.join('/proc', String(pid)));
-      return true;
-    } catch {
-      return false;
-    }
-  }
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === 'EPERM'; // Exists, other user
-  }
 }
 
 // ─── Server state ───────────────────────────────────────────────────────────
@@ -435,12 +416,10 @@ function handleSetActivity(conn: Connection, args: Record<string, unknown>, nonc
   // AppImage wrapper's pid, a pid from another namespace) or bogus. Pushes
   // from a game that exits are dropped by the disconnect grace instead.
   const activity = normalizeActivity(rawActivity as Record<string, unknown>, conn.clientId);
-  const pidAlive = pid === null || isProcessAlive(pid);
   console.log(
-    `[RichPresenceIpc] Push from client ${conn.clientId}: pid=${pid ?? 'none'} alive=${pidAlive}` +
+    `[RichPresenceIpc] Push from client ${conn.clientId}: pid=${pid ?? 'none'}` +
     ` name=${activity.name ?? 'none'} details=${activity.details ? 'yes' : 'no'}` +
-    ` state=${activity.state ? 'yes' : 'no'} assets=${activity.assets ? 'yes' : 'no'}` +
-    (pidAlive ? '' : ' — stale pid, push kept'),
+    ` state=${activity.state ? 'yes' : 'no'} assets=${activity.assets ? 'yes' : 'no'}`,
   );
   conn.pid = pid;
   conn.push = { seq: ++seqCounter, push: { clientId: conn.clientId, pid, activity } };

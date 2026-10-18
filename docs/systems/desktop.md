@@ -1161,9 +1161,9 @@ interface Activity {
 
 ### Push semantics
 
-- `SET_ACTIVITY` payloads are normalized: strings clamped to the shared activity limits by codepoints, `timestamps` kept as absolute ms, and asset keys resolved against the protocol's app-assets CDN path (`app-assets/<client_id>/<key>.png`). The client_id is validated as 1..64 digits at handshake, so it cannot inject path segments; asset keys are restricted to their documented charset
+- `SET_ACTIVITY` payloads are normalized: strings clamped to the shared activity limits by codepoints, `timestamps` converted to absolute ms (the protocol sends unix seconds; values below 1e12 are multiplied by 1000), and asset keys resolved against the protocol's app-assets CDN path (`app-assets/<client_id>/<key>.png`). The client_id is validated as 1..64 digits at handshake, so it cannot inject path segments; asset keys are restricted to their documented charset
 - `buttons`, `party` and `secrets` are never read, let alone relayed
-- A push for a dead pid is stale: dropped, and it voids that connection's earlier push
+- The live connection is the source of truth: a push is kept whatever pid it reports (AppImage wrappers and pids from another namespace report pids that are dead or unknown here). A game that exits is dropped by the disconnect grace when its socket closes
 - A 2.5s disconnect grace absorbs client reconnects (Lachee's auto-reconnect); a monotonic sequence number makes the last push win across connections
 - Name resolution for unnamed pushes: the push's own name → the dictionary via the pushing pid (`resolveIpcGameName`: read `/proc/<pid>`, match like a scan) → a small known-client map (osu!lazer) → "Unknown game"
 

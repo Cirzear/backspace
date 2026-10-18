@@ -641,14 +641,24 @@ async function syncDictionary(): Promise<void> {
  * state, then refresh the effective activity.
  */
 function applyMatchedGame(matched: MatchedGame | null): void {
-  scanActivity = matched
-    ? {
-      type: matched.type,
-      name: matched.name,
-      timestamps: { start: Date.now() },
-    }
-    : null;
+  scanActivity = nextScanActivity(matched, scanActivity, Date.now());
   refreshEffectiveActivity();
+}
+
+/**
+ * The scan layer's activity for one poll. While the same game keeps running
+ * the previous activity is returned unchanged, so its `timestamps.start`
+ * stays the moment the game was first seen: rebuilding it on every 15s poll
+ * restarted the elapsed clock and made every poll look like a change.
+ */
+export function nextScanActivity(
+  matched: MatchedGame | null,
+  previous: Activity | null,
+  now: number,
+): Activity | null {
+  if (!matched) return null;
+  if (previous && previous.name === matched.name && previous.type === matched.type) return previous;
+  return { type: matched.type, name: matched.name, timestamps: { start: now } };
 }
 
 /**
@@ -709,7 +719,7 @@ export function applyIpcActivity(push: IpcActivityPush | null): void {
     // came from: the push itself, the /proc dictionary lookup, a known
     // client id, or the last-resort fallback.
     const pushedName = a.name ?? null;
-    const procName = pushedName ?? resolveIpcGameName(push.pid);
+    const procName = pushedName ? null : resolveIpcGameName(push.pid);
     const knownName = KNOWN_CLIENT_APPS[push.clientId] ?? null;
     const name = pushedName ?? procName ?? knownName ?? 'Unknown game';
     let nameSource = 'fallback';

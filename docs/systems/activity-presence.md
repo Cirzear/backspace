@@ -329,6 +329,7 @@ Detection combines two sources:
 |-----------|------|
 | `activityDetector.ts:startActivityDetection(callback)` | Starts 15s polling loop; calls `callback` with the effective `Activity \| null` on change |
 | `activityDetector.ts:applyIpcActivity(push \| null)` | Overlays an IPC push immediately; `null` falls back to the scan |
+| `activityDetector.ts:nextScanActivity(matched, previous, now)` | The scan layer's activity per poll; returns `previous` while the same game runs, so `timestamps.start` (the elapsed clock) is stable |
 | `activityDetector.ts:resolveIpcGameName(pid)` | Display name for an unnamed push, from the dictionary via the pushing pid |
 | `activityDetector.ts:getCurrentActivity()` | Returns the effective `Activity \| null` (IPC push ?? scan, synchronous) |
 | `richPresenceIpc.ts:startRichPresenceIpcServer({ onActivity })` | Binds the ten protocol sockets and feeds pushes to `applyIpcActivity` |

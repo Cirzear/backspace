@@ -127,6 +127,13 @@ describe('activity normalization', () => {
     const long = 'x'.repeat(300);
     expect(normalizeActivity({ details: long, state: long }, '1').details).toHaveLength(128);
   });
+
+  it('drops an overlong art URL instead of cutting it off', () => {
+    const url = `https://example.com/${'a'.repeat(600)}.png`;
+    expect(normalizeActivity({ assets: { large_image: url } }, '1').assets).toBeUndefined();
+    const ok = 'https://example.com/cover.png';
+    expect(normalizeActivity({ assets: { large_image: ok } }, '1').assets?.largeImage).toBe(ok);
+  });
 });
 
 // ─── Server (real sockets in a sandboxed runtime dir) ───────────────────────

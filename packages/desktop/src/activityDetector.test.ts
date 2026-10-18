@@ -20,6 +20,7 @@ import {
   applyIpcActivity,
   resolveIpcGameName,
   __testSetScanActivity,
+  nextScanActivity,
   type SourceDetector,
 } from './activityDetector';
 import type { IpcActivityPush, IpcActivityPayload } from './richPresenceIpc';
@@ -460,6 +461,31 @@ describe('loadBestDictionary', () => {
   it('returns null when both sources are unusable', () => {
     const dir = tmp();
     expect(loadBestDictionary(path.join(dir, 'missing-a'), path.join(dir, 'missing-b'))).toBeNull();
+  });
+});
+
+// ─── Scan layer stability ───────────────────────────────────────────────────
+
+describe('nextScanActivity', () => {
+  const game = { id: 'osu', name: 'osu!', type: 'playing' };
+
+  it('starts the clock when a game is first seen', () => {
+    expect(nextScanActivity(game, null, 1000)).toEqual({ type: 'playing', name: 'osu!', timestamps: { start: 1000 } });
+  });
+
+  it('keeps the same activity object while the game keeps running', () => {
+    const first = nextScanActivity(game, null, 1000);
+    expect(nextScanActivity(game, first, 16_000)).toBe(first);
+  });
+
+  it('restarts the clock when a different game takes over', () => {
+    const first = nextScanActivity(game, null, 1000);
+    const next = nextScanActivity({ id: 'mpv', name: 'mpv', type: 'watching' }, first, 16_000);
+    expect(next).toEqual({ type: 'watching', name: 'mpv', timestamps: { start: 16_000 } });
+  });
+
+  it('clears when nothing matches', () => {
+    expect(nextScanActivity(null, nextScanActivity(game, null, 1000), 2000)).toBeNull();
   });
 });
 
