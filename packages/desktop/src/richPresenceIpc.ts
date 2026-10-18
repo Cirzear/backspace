@@ -221,11 +221,16 @@ function clampOptionalString(value: unknown, max: number): string | undefined {
   return s || undefined;
 }
 
+// Discord RPC transmits timestamps as unix SECONDS, while the web renders elapsed
+// time from Date.now() milliseconds. Values below 1e12 are seconds (millisecond
+// epochs crossed 1e12 in 2001; second epochs stay below it until year 33658).
+const toEpochMs = (value: number): number => (value > 0 && value < 1e12 ? value * 1000 : value);
+
 function clampTimestamps(value: unknown): { start?: number; end?: number } | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const t = value as Record<string, unknown>;
-  const start = typeof t.start === 'number' && Number.isFinite(t.start) ? t.start : undefined;
-  const end = typeof t.end === 'number' && Number.isFinite(t.end) ? t.end : undefined;
+  const start = typeof t.start === 'number' && Number.isFinite(t.start) ? toEpochMs(t.start) : undefined;
+  const end = typeof t.end === 'number' && Number.isFinite(t.end) ? toEpochMs(t.end) : undefined;
   if (start === undefined && end === undefined) return undefined;
   return start !== undefined || end !== undefined ? { start, end } : undefined;
 }

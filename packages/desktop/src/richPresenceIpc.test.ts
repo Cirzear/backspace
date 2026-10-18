@@ -106,7 +106,7 @@ describe('activity normalization', () => {
       name: undefined,
       details: 'Playing [Freedom Dive] with mod',
       state: 'Streaming from menu',
-      timestamps: { start: 1700000000, end: undefined },
+      timestamps: { start: 1700000000000, end: undefined },
       assets: {
         largeImage: 'https://cdn.discordapp.com/app-assets/1216669957799018608/osu_logo_lazer.png',
         largeText: 'osu!',
@@ -315,7 +315,7 @@ describe('RichPresenceIpcServer', () => {
     await client.connected();
     client.handshakeRaw('9999');
     const ready = await client.nextReply();
-    expect(ready.payload).toMatchObject({ v: 1 });
+    expect(ready.payload).toMatchObject({ cmd: 'DISPATCH', evt: 'READY', data: { v: 1 } });
     client.destroy();
   });
 
@@ -349,7 +349,7 @@ describe('RichPresenceIpcServer', () => {
     ]);
     client.send(glued);
     const ready = await client.nextReply();
-    expect(ready.payload).toMatchObject({ v: 1 });
+    expect(ready.payload).toMatchObject({ cmd: 'DISPATCH', evt: 'READY', data: { v: 1 } });
     const ack = await client.nextReply();
     expect(ack.payload).toMatchObject({ cmd: 'SET_ACTIVITY', nonce: 'g1' });
     expect(pushes).toHaveLength(1);
@@ -443,7 +443,7 @@ describe('RichPresenceIpcServer', () => {
     await client.closed();
   });
 
-  it('marks pushes for dead pids as stale and emits nothing', async () => {
+  it('accepts pushes for dead pids (staleness handled by disconnect grace)', async () => {
     await startServer();
     const client = new TestClient();
     await client.connected();
@@ -451,7 +451,7 @@ describe('RichPresenceIpcServer', () => {
     await client.nextReply();
     client.setActivity({ details: 'ghost' }, 999_999_999);
     await client.nextReply();
-    expect(pushes).toHaveLength(0);
+    expect(pushes).toHaveLength(1);
     client.destroy();
   });
 
@@ -514,7 +514,7 @@ describe('RichPresenceIpcServer', () => {
     const client = new TestClient();
     await client.connected();
     client.handshakeFramed();
-    expect((await client.nextReply()).payload).toMatchObject({ v: 1 });
+    expect((await client.nextReply()).payload).toMatchObject({ cmd: 'DISPATCH', evt: 'READY', data: { v: 1 } });
     client.destroy();
   });
 });
