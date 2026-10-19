@@ -147,4 +147,20 @@ describe('activityStore game icon enrichment', () => {
     await vi.advanceTimersByTimeAsync(5000 + 4000);
     expect(mockWsSendAll).toHaveBeenCalledWith({ type: 'activity_update', activities: [GAME_ACTIVITY] });
   });
+  it('sends nothing for a push whose icon was still uploading when sharing was switched off', async () => {
+    getGameIcon.mockResolvedValue({ data: 'aWNjb24=', mime: 'image/png' });
+    let finishUpload: (value: { id: string; url: string }) => void = () => undefined;
+    mockUpload.mockReturnValue(new Promise((resolve) => { finishUpload = resolve; }));
+
+    useActivityStore.getState().pushActivities([GAME_ACTIVITY]);
+    await vi.advanceTimersByTimeAsync(5000); // the debounce fired, the upload is in flight
+    useActivityStore.getState().setShowActivity(false);
+    mockWsSendAll.mockClear();
+
+    finishUpload({ id: 'abc', url: 'https://chat.test/api/game-icons/assets/abc.webp' });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(mockWsSendAll).not.toHaveBeenCalled();
+    expect(useActivityStore.getState().myActivities).toBeNull();
+  });
 });

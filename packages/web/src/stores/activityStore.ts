@@ -254,6 +254,8 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
     set({ showActivity: show });
     if (!show) {
       if (pushTimer) { clearTimeout(pushTimer); pushTimer = null; }
+      // A push still uploading its icon must not send after sharing was switched off
+      pushSeq++;
       wsSendAll({ type: 'activity_update', activities: [] });
       set({ myActivities: null });
     }

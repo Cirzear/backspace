@@ -9,6 +9,7 @@ import {
   warmGameIconForIpc,
   sniffImageMime,
   parseDesktopEntry,
+  execProgramName,
   __testResetGameIconCache,
   type GameIconTarget,
 } from './gameIcons';
@@ -130,6 +131,76 @@ describe('findGameIcon', () => {
     expect(icon?.mime).toBe('image/png');
   });
 
+  it('never takes an icon from the game executable itself', async () => {
+    // An executable that happens to start with image magic bytes is still a binary
+    const exe = write(path.join(home, 'game', 'bin', 'game'), PNG);
+    expect(await findGameIcon(target({ name: 'Some Game', exe }), home)).toBeNull();
+  });
+
+  it('reads no file larger than the limit, and never reads one to find out', async () => {
+    const mount = path.join(home, 'mount');
+    const exe = write(path.join(mount, 'usr', 'bin', 'game'), Buffer.from('elf'));
+    const big = path.join(mount, '.DirIcon');
+    fs.writeFileSync(big, Buffer.alloc(0));
+    fs.truncateSync(big, 600 * 1024); // sparse, over the 512 KiB limit
+    fs.writeFileSync(path.join(mount, 'icon.png'), PNG);
+    const reads: string[] = [];
+    const original = fs.promises.readFile;
+    fs.promises.readFile = ((...args: Parameters<typeof original>) => {
+      reads.push(String(args[0]));
+      return original(...args);
+    }) as typeof original;
+    try {
+      const icon = await findGameIcon(target({ exe }), home);
+      // The oversized .DirIcon is skipped without being read; the next candidate wins
+      expect(icon?.bytes.equals(PNG)).toBe(true);
+    } finally {
+      fs.promises.readFile = original;
+    }
+    expect(reads).toEqual([]);
+  });
+
+  it('ignores a candidate that is not a regular file', async () => {
+    const mount = path.join(home, 'mount2');
+    const exe = write(path.join(mount, 'usr', 'bin', 'game'), Buffer.from('elf'));
+    fs.mkdirSync(path.join(mount, '.DirIcon'));
+    expect(await findGameIcon(target({ exe }), home)).toBeNull();
+  });
+
+  it('does not hand a java game the icon of another java program', async () => {
+    const iconFile = write(path.join(home, 'jd', 'icon.png'), PNG);
+    write(path.join(home, '.local', 'share', 'applications', 'jdownloader.desktop'), Buffer.from([
+      '[Desktop Entry]',
+      'Name=JDownloader 2',
+      'Exec=java -jar /opt/jd/JDownloader.jar',
+      `Icon=${iconFile}`,
+    ].join('\n')));
+    expect(await findGameIcon(target({ name: 'Minecraft', exe: '/usr/lib/jvm/java-21/bin/java' }), home)).toBeNull();
+  });
+
+  it('still matches a host-run game by its display name', async () => {
+    const iconFile = write(path.join(home, 'mc', 'icon.png'), PNG);
+    write(path.join(home, '.local', 'share', 'applications', 'mc.desktop'), Buffer.from([
+      '[Desktop Entry]',
+      'Name=Minecraft',
+      'Exec=java -jar /opt/mc/launcher.jar',
+      `Icon=${iconFile}`,
+    ].join('\n')));
+    const icon = await findGameIcon(target({ name: 'Minecraft', exe: '/usr/lib/jvm/java-21/bin/java' }), home);
+    expect(icon?.mime).toBe('image/png');
+  });
+
+  it('does not match a program whose name merely contains the executable name', async () => {
+    const iconFile = write(path.join(home, 'x', 'icon.png'), PNG);
+    write(path.join(home, '.local', 'share', 'applications', 'other.desktop'), Buffer.from([
+      '[Desktop Entry]',
+      'Name=Other App',
+      'Exec=/opt/other/mygame-editor',
+      `Icon=${iconFile}`,
+    ].join('\n')));
+    expect(await findGameIcon(target({ name: 'My Game', exe: '/opt/mygame/bin/mygame' }), home)).toBeNull();
+  });
+
   it('returns null when nothing matches', async () => {
     expect(await findGameIcon(target({ name: 'Nothing' }), home)).toBeNull();
   });
@@ -165,5 +236,16 @@ describe('warm cache', () => {
   it('tolerates a dead pid', async () => {
     await warmGameIconForIpc('Dead Pid Game', 999_999_999, '/proc');
     expect(getGameIcon('Dead Pid Game')).toBeNull();
+  });
+});
+
+
+describe('execProgramName', () => {
+  it('names the program an Exec line runs', () => {
+    expect(execProgramName('/opt/mygame/bin/MyGame %U')).toBe('mygame');
+    expect(execProgramName('env FOO=1 BAR=2 /opt/x/run')).toBe('run');
+    expect(execProgramName('"/opt/my game/bin/start" --flag')).toBe('start');
+    expect(execProgramName('java -jar a.jar')).toBe('java');
+    expect(execProgramName('')).toBe('');
   });
 });

@@ -115,11 +115,14 @@ describe('game icons', () => {
     // Filler rows go straight into the database; the upload budget stays untouched
     const insertAsset = sqlite.prepare('INSERT INTO game_icon_assets (id, created_at) VALUES (?, 1)');
     const insertIcon = sqlite.prepare("INSERT INTO game_icons (user_id, icon_id, created_at) VALUES ('alice', ?, 1)");
-    for (let index = 0; index < MAX_GAME_ICONS_PER_USER; index += 1) {
-      const id = index.toString(16).padStart(64, '0');
-      insertAsset.run(id);
-      insertIcon.run(id);
-    }
+    // One transaction: tens of thousands of filler rows stay fast
+    sqlite.transaction(() => {
+      for (let index = 0; index < MAX_GAME_ICONS_PER_USER; index += 1) {
+        const id = index.toString(16).padStart(64, '0');
+        insertAsset.run(id);
+        insertIcon.run(id);
+      }
+    })();
     const over = await pngBytes('#abcdef');
     const response = await upload(over);
     expect(response.statusCode).toBe(409);

@@ -10,8 +10,12 @@
 export const MAX_GAME_ICON_BYTES = 512 * 1024;
 /** Longest edge of the stored icon; the largest UI surface showing it is far smaller. */
 export const GAME_ICON_DIMENSION = 256;
-/** Distinct icons one account may keep. A session plays far fewer games. */
-export const MAX_GAME_ICONS_PER_USER = 128;
+/**
+ * Distinct icons one account may keep. The limit is per account, not per
+ * instance, and exists to bound abuse, not to ration play: the real brake is
+ * the upload rate below (this many uploads take over 40 hours at full speed).
+ */
+export const MAX_GAME_ICONS_PER_USER = 25_600;
 /** Uploads one account may send per minute; icon uploads are rare and batched never. */
 export const GAME_ICON_UPLOADS_PER_MINUTE = 10;
 export const GAME_ICON_ID_PATTERN = /^[a-f0-9]{64}$/;

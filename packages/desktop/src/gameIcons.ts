@@ -43,8 +43,12 @@ export interface GameIconTarget {
   cmdline: string;
 }
 
-/** Icons are small images; anything bigger than this is not worth uploading. */
-const MAX_ICON_BYTES = 2 * 1024 * 1024;
+/**
+ * Icons are small images; anything bigger is not read. Kept in sync with
+ * MAX_GAME_ICON_BYTES in @backspace/shared, the most the server accepts: a
+ * larger file would only travel to the renderer and come back refused.
+ */
+const MAX_ICON_BYTES = 512 * 1024;
 /** A .desktop file larger than this is not a desktop entry. */
 const MAX_DESKTOP_FILE_BYTES = 64 * 1024;
 /** Bound the .desktop scan: a system has hundreds, not millions. */
@@ -75,11 +79,23 @@ export function sniffImageMime(bytes: Buffer): string | null {
 async function readIconFile(file: string): Promise<GameIcon | null> {
   let bytes: Buffer;
   try {
-    bytes = await fs.promises.readFile(file);
+    // Look before reading: a candidate can be any file on the machine, and
+    // only a regular file within the limit is ever read, into a buffer of
+    // exactly its size (a symlink such as an AppImage's .DirIcon is followed).
+    const stat = await fs.promises.stat(file);
+    if (!stat.isFile() || stat.size === 0 || stat.size > MAX_ICON_BYTES) return null;
+    const handle = await fs.promises.open(file, 'r');
+    try {
+      const buffer = Buffer.alloc(stat.size);
+      const { bytesRead } = await handle.read(buffer, 0, stat.size, 0);
+      bytes = buffer.subarray(0, bytesRead);
+    } finally {
+      await handle.close();
+    }
   } catch {
     return null;
   }
-  if (bytes.length === 0 || bytes.length > MAX_ICON_BYTES) return null;
+  if (bytes.length === 0) return null;
   const mime = sniffImageMime(bytes);
   return mime ? { bytes, mime } : null;
 }
@@ -169,7 +185,6 @@ function exeSiblingIcons(exe: string): string[] {
   const baseNoExt = base.replace(/\.[^.]+$/, '');
   const files: string[] = [];
   for (const dir of exeDirCandidates(exe)) {
-    files.push(path.join(dir, base));
     if (baseNoExt !== base) files.push(path.join(dir, `${baseNoExt}.png`));
     for (const name of EXE_DIR_ICON_NAMES) files.push(path.join(dir, name));
   }
@@ -205,6 +220,24 @@ export function parseDesktopEntry(text: string): DesktopEntry | null {
   }
   if (!icon) return null;
   return { exec, name, icon };
+}
+
+/**
+ * Programs that host or launch a game instead of being it. A game running on
+ * one has the host's name as its executable, so a .desktop entry that merely
+ * runs the same host (JDownloader on java) says nothing about the game.
+ */
+const HOST_PROGRAMS = /^(java|javaw|python[\d.]*|wine(64|-preloader|loader)?|mono|dotnet|node|nodejs|electron|ruby|perl|lua|luajit|love|sh|bash|dash|zsh|env|flatpak|bwrap|steam|reaper|proton|gamescope|gamemoderun|mangohud|ld-linux[\w.-]*|pressure-vessel[\w-]*|steam-runtime[\w-]*)$/i;
+
+/** The program an Exec= line runs: `env` and its assignments skipped, quotes respected, directory dropped, lowercased. */
+export function execProgramName(exec: string): string {
+  const tokens = exec.match(/"[^"]*"|\S+/g) ?? [];
+  for (const raw of tokens) {
+    const token = raw.replace(/^"|"$/g, '');
+    if (token === 'env' || /^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) continue;
+    return path.basename(token).toLowerCase();
+  }
+  return '';
 }
 
 function desktopDirectories(home: string): string[] {
@@ -273,8 +306,9 @@ function iconFromDesktopEntry(entry: DesktopEntry, home: string): string[] {
 
 /**
  * Generic resolution for everything without a dedicated source: files next to
- * the executable first, then the system's .desktop entries whose Exec names
- * the same binary (or whose Name is the game's display name).
+ * the executable first, then the system's .desktop entries whose Exec runs
+ * the same program (never a host such as java or wine) or whose Name is the
+ * game's display name.
  */
 async function genericIcon(target: GameIconTarget, home: string): Promise<GameIcon | null> {
   const exeBase = target.exe ? path.basename(target.exe).toLowerCase() : '';
@@ -284,7 +318,7 @@ async function genericIcon(target: GameIconTarget, home: string): Promise<GameIc
   }
   const nameLower = target.name.trim().toLowerCase();
   for (const entry of readDesktopEntries(home)) {
-    const execMatches = exeBase !== '' && entry.exec.toLowerCase().includes(exeBase);
+    const execMatches = exeBase !== '' && !HOST_PROGRAMS.test(exeBase) && execProgramName(entry.exec) === exeBase;
     const nameMatches = nameLower !== '' && entry.name.trim().toLowerCase() === nameLower;
     if (!execMatches && !nameMatches) continue;
     const icon = await firstExistingIcon(iconFromDesktopEntry(entry, home));

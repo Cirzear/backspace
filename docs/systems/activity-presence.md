@@ -327,6 +327,8 @@ Detection combines two sources:
 
 The activity card shows an icon for the detected game. Icons never come from a third-party art service: the desktop extracts them from the player's own machine — Steam's `appcache/librarycache` (by app id), Flatpak's exported hicolor icons, GOG's `support/icon.png`, an AppImage mount's `.DirIcon` (the pushing process's `/proc/<pid>/exe` leads there), and `.desktop` entries resolved through the hicolor theme directories (`gameIcons.ts`). The icon is warmed in the background when a game is matched, and the renderer picks it up through the `get-game-icon` IPC, uploads it to the user's own instance (`POST /api/game-icons`, uploads.md §15) and caches the instance URL by game name, so every later activity for that game carries the URL without another upload. The protocol's Discord asset keys are dropped at normalization; only http(s) art a game pushes as a full URL passes through.
 
+The extractor reads only regular files of at most 512 KiB (a `stat` first, then a read bounded to that size; the same limit as the server's `MAX_GAME_ICON_BYTES`) and never the game's own executable. A `.desktop` entry is matched when its `Exec=` runs the same program as the game's executable (`execProgramName`: `env` and its assignments skipped, directory dropped, compared whole) or its `Name=` equals the game's display name. A host program (java, wine, python, mono, sh, steam, ...) never matches by `Exec=`, since every game it hosts has that executable name: such a game matches by name only. The store clears the push in flight when sharing is switched off (`pushSeq`), so an icon upload that was running cannot send the activity afterwards.
+
 ### Summary of Detection Interface
 
 | Component | Role |

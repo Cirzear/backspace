@@ -765,12 +765,12 @@ The activity a game reports can carry an icon, and that icon comes from the play
 
 `POST /api/game-icons` takes `{ image }`, canonical base64 in the JSON body of the authenticated API client, and mirrors the sticker route's shape:
 
-1. more than 10 uploads per account per minute are refused (`429 rate_limited`), as is a full set (`409 game_icon_collection_full`, 128 distinct icons, `MAX_GAME_ICONS_PER_USER`);
+1. more than 10 uploads per account per minute are refused (`429 rate_limited`), as is a full set (`409 game_icon_collection_full`, 25,600 distinct icons per account, `MAX_GAME_ICONS_PER_USER`);
 2. sharp decodes at most 512 KiB (`MAX_GAME_ICON_BYTES`) of PNG, JPEG or WebP and re-encodes to a still WebP fitting 256 x 256 without enlarging (`game_icon_invalid_image` otherwise);
 3. the asset is stored content-addressed (`game-icons/<sha256>.webp` under the upload directory, written atomically), the row upserted in `game_icon_assets`, and the account's entry recorded in `game_icons`. The same bytes from another machine or account deduplicate to the same file;
 4. the response is `{ id, url }` with the absolute instance URL (`/api/game-icons/assets/<sha256>.webp`), which the renderer attaches to the activity's `assets.largeImage` and caches by game name (`localStorage`), so one upload serves every later activity for that game.
 
-`GET /api/game-icons/assets/<id>.webp` is public with the same sandbox headers as a sticker asset (immutable cache, `default-src 'none'`), so a federated peer's browser loads it the way it loads any image embed. There is deliberately no janitor: icons are bounded by the per-account quota (128 files of at most a few dozen KiB each), referenced only from the transient presence stream.
+`GET /api/game-icons/assets/<id>.webp` is public with the same sandbox headers as a sticker asset (immutable cache, `default-src 'none'`), so a federated peer's browser loads it the way it loads any image embed. There is no janitor and no removal route yet: an asset stays after its last account row is gone (account deletion removes only the rows), and the per-account quota is the only bound on what one account can store (25,600 icons of normally a few dozen KiB each; the 10 uploads per minute make filling it a matter of days). A lifecycle (removal, cleanup of unreferenced assets, a byte budget) is open work.
 
 ---
 
