@@ -251,6 +251,74 @@ describe('ActivityDetailCard', () => {
     expect(screen.getByAltText('SS')).toBeInTheDocument();
   });
 
+  it('promotes the badge to the full-size image when the large image fails', () => {
+    const activity: Activity = {
+      type: 'playing',
+      name: 'osu!',
+      assets: {
+        largeImage: 'https://cdn.example.com/broken.png',
+        largeText: 'osu!',
+        smallImage: 'https://cdn.example.com/rank.png',
+        smallText: 'SS',
+      },
+    };
+
+    render(<ActivityDetailCard activities={[activity]} />);
+
+    expect(screen.getByAltText('SS').className).toContain('absolute');
+    fireEvent.error(screen.getByAltText('osu!'));
+    const promoted = screen.getByAltText('SS');
+    expect(promoted.className).toContain('w-[60px]');
+    expect(promoted.className).not.toContain('absolute');
+  });
+
+  it('leaves no empty frame behind when every image fails', () => {
+    const activity: Activity = {
+      type: 'playing',
+      name: 'osu!',
+      assets: {
+        largeImage: 'https://cdn.example.com/broken.png',
+        largeText: 'osu!',
+        smallImage: 'https://cdn.example.com/rank2.png',
+        smallText: 'SS',
+      },
+    };
+
+    const { container } = render(<ActivityDetailCard activities={[activity]} />);
+
+    expect(container.querySelector('.w-\\[60px\\]')).not.toBeNull();
+    fireEvent.error(screen.getByAltText('osu!'));
+    fireEvent.error(screen.getByAltText('SS'));
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelector('.w-\\[60px\\]')).toBeNull();
+  });
+
+  it('leaves no empty frame in the row card when its image fails', () => {
+    const activity: Activity = {
+      type: 'playing',
+      name: 'osu!',
+      assets: { largeImage: 'https://cdn.example.com/broken.png' },
+    };
+
+    const { container } = render(<ActivityCard activities={[activity]} />);
+
+    expect(container.querySelector('.w-9')).not.toBeNull();
+    fireEvent.error(screen.getByAltText('osu!'));
+    expect(container.querySelector('.w-9')).toBeNull();
+  });
+
+  it('tries a new image after a different one failed', () => {
+    const broken: Activity = { type: 'playing', name: 'osu!', assets: { largeImage: 'https://cdn.example.com/broken.png' } };
+    const fixed: Activity = { type: 'playing', name: 'osu!', assets: { largeImage: 'https://cdn.example.com/fixed.png' } };
+
+    const { rerender } = render(<ActivityDetailCard activities={[broken]} />);
+    fireEvent.error(screen.getByAltText('osu!'));
+    expect(screen.queryByAltText('osu!')).not.toBeInTheDocument();
+
+    rerender(<ActivityDetailCard activities={[fixed]} />);
+    expect(screen.getByAltText('osu!')).toHaveAttribute('src', 'https://cdn.example.com/fixed.png');
+  });
+
   it('renders a small-only badge as the full-size image', () => {
     const activity: Activity = {
       type: 'playing',

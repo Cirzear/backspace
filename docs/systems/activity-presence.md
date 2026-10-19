@@ -410,6 +410,8 @@ Renders the primary activity for a user. Used inside both `ActivityPanel` and `M
 3. If primary is `custom` → render `primary.name` as plain text
 4. If primary is rich (non-custom) → render `primary.name` + elapsed time (if `timestamps.start` set)
 
+**Art:** rendered by `ActivityArtwork`, which owns the load state of both images. An image that fails to load is dropped, a badge left without its large image is promoted to the full-size image, and with nothing left the frame is not rendered (no empty box). A failure is remembered per URL, so a new URL is tried.
+
 **Elapsed time format** (`formatElapsed`): `"Xh Ym"` if hours > 0, otherwise `"Xm"`.
 
 ### Helper Functions (exported from `ActivityCard.tsx`)

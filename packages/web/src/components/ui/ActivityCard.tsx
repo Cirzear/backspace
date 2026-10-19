@@ -52,11 +52,68 @@ export function activityTimeText(
   return null;
 }
 
-/** Activity art with a title tooltip that disappears when the image fails. */
-function ActivityArt({ src, alt, className }: { src: string; alt?: string; className?: string }) {
-  const [failed, setFailed] = useState(false);
-  if (failed) return null;
-  return <img src={src} alt={alt ?? ''} title={alt} className={className} onError={() => setFailed(true)} loading="lazy" />;
+/** The class sets of one artwork size: the wrapper, the large image, the badge and a lone image. */
+interface ArtworkSize {
+  wrapper: string;
+  large: string;
+  badge: string;
+  single: string;
+}
+
+const ROW_ART: ArtworkSize = {
+  wrapper: 'relative shrink-0 w-9 h-9',
+  large: 'w-9 h-9 rounded-md object-cover',
+  badge: 'absolute -bottom-1 -right-1 w-4 h-4 rounded-full object-cover ring-2 ring-white',
+  single: 'w-9 h-9 rounded-md object-cover',
+};
+
+const POPOUT_ART: ArtworkSize = {
+  wrapper: 'relative shrink-0 w-[60px] h-[60px]',
+  large: 'w-[60px] h-[60px] rounded-[10px] object-cover bg-white/[0.04]',
+  badge: 'absolute -bottom-1.5 -right-1.5 w-[22px] h-[22px] rounded-full object-cover bg-[#13131a] ring-2 ring-[rgba(20,20,26,0.85)]',
+  single: 'w-[60px] h-[60px] rounded-[10px] object-cover bg-white/[0.04]',
+};
+
+interface ActivityArtworkProps {
+  largeImage: string | null;
+  smallImage: string | null;
+  largeAlt: string;
+  smallAlt?: string;
+  size: ArtworkSize;
+}
+
+/**
+ * The art of an activity: the large image with the small one as a corner badge.
+ * It owns the load state of both images, so the frame never stays behind empty:
+ * an image that fails to load is dropped, and a badge left without its large
+ * image is promoted to the full-size image. With nothing left to show it
+ * renders nothing at all.
+ */
+function ActivityArtwork({ largeImage, smallImage, largeAlt, smallAlt, size }: ActivityArtworkProps) {
+  const [failed, setFailed] = useState<ReadonlySet<string>>(new Set());
+  const markFailed = (src: string) => setFailed((prev) => new Set(prev).add(src));
+
+  const large = largeImage && !failed.has(largeImage) ? largeImage : null;
+  const small = smallImage && !failed.has(smallImage) ? smallImage : null;
+  if (!large && !small) return null;
+
+  return (
+    <div className={size.wrapper}>
+      {large && (
+        <img src={large} alt={largeAlt} title={largeAlt} className={size.large} onError={() => markFailed(large)} loading="lazy" />
+      )}
+      {small && (
+        <img
+          src={small}
+          alt={smallAlt ?? ''}
+          title={smallAlt}
+          className={large ? size.badge : size.single}
+          onError={() => markFailed(small)}
+          loading="lazy"
+        />
+      )}
+    </div>
+  );
 }
 
 /** Returns the accent border color class for an activity type */
@@ -112,26 +169,13 @@ export function ActivityCard({ activities, fallbackCustomStatus }: ActivityCardP
   // Rich activity — art, name, details/state and time (card wrapper is on the parent row)
   return (
     <div className="flex items-center gap-1.5 min-w-0">
-      {(largeImage || smallImage) && (
-        <div className="relative shrink-0 w-9 h-9">
-          {largeImage && (
-            <ActivityArt
-              src={largeImage}
-              alt={assets?.largeText || primary.name}
-              className="w-9 h-9 rounded-md object-cover"
-            />
-          )}
-          {smallImage && (
-            <ActivityArt
-              src={smallImage}
-              alt={assets?.smallText}
-              className={largeImage
-                ? 'absolute -bottom-1 -right-1 w-4 h-4 rounded-full object-cover ring-2 ring-white'
-                : 'w-9 h-9 rounded-md object-cover'}
-            />
-          )}
-        </div>
-      )}
+      <ActivityArtwork
+        largeImage={largeImage}
+        smallImage={smallImage}
+        largeAlt={assets?.largeText || primary.name}
+        smallAlt={assets?.smallText}
+        size={ROW_ART}
+      />
       <div className="min-w-0 flex-1">
         <div className="text-[11px] leading-[1.3] text-txt-secondary truncate">
           {primary.name}
@@ -188,26 +232,13 @@ export function ActivityDetailCard({ activities }: { activities: Activity[] }) {
 
   return (
     <div className="flex gap-3 items-start">
-      {(largeImage || smallImage) && (
-        <div className="relative shrink-0 w-[60px] h-[60px]">
-          {largeImage && (
-            <ActivityArt
-              src={largeImage}
-              alt={assets?.largeText || headline}
-              className="w-[60px] h-[60px] rounded-[10px] object-cover bg-white/[0.04]"
-            />
-          )}
-          {smallImage && (
-            <ActivityArt
-              src={smallImage}
-              alt={assets?.smallText}
-              className={largeImage
-                ? 'absolute -bottom-1.5 -right-1.5 w-[22px] h-[22px] rounded-full object-cover bg-[#13131a] ring-2 ring-[rgba(20,20,26,0.85)]'
-                : 'w-[60px] h-[60px] rounded-[10px] object-cover bg-white/[0.04]'}
-            />
-          )}
-        </div>
-      )}
+      <ActivityArtwork
+        largeImage={largeImage}
+        smallImage={smallImage}
+        largeAlt={assets?.largeText || headline}
+        smallAlt={assets?.smallText}
+        size={POPOUT_ART}
+      />
       <div className="flex-1 min-w-0">
         <div className="text-[13px] font-medium leading-[1.3] text-txt-primary truncate">
           {replaceEmojiShortcodes(headline)}
