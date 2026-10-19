@@ -267,7 +267,22 @@
     "activity": {
       "sectionTitle": "活动状态",
       "label": "分享活动状态",
-      "description": "允许他人查看您正在进行的活动，例如您正在玩的游戏或正在听的音乐。"
+      "description": "允许他人查看您正在进行的活动，例如您正在玩的游戏或正在听的音乐。",
+      "game": {
+        "label": "你正在玩的游戏",
+        "description": "如果没有检测到你的游戏，可以自己填写名称。它会一直显示，直到你清除。",
+        "placeholder": "游戏名称",
+        "set": "设置",
+        "clear": "清除",
+        "showing": "正在显示：{{name}}",
+        "detectedLabel": "当前检测到",
+        "detectedDescription": "用另一个名称显示检测到的游戏，下次会记住。",
+        "renamePlaceholder": "显示为…",
+        "renameLabel": "将 {{name}} 显示为",
+        "renamedLabel": "已重命名的游戏",
+        "renamedItem": "{{detected}} → {{chosen}}",
+        "restore": "恢复"
+      }
     }
   },
   "connections": {

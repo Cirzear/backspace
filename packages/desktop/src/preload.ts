@@ -133,6 +133,7 @@ contextBridge.exposeInMainWorld('backspace', {
     return () => { ipcRenderer.removeListener('activity-detected', handler); };
   },
   getCurrentActivity: () => ipcRenderer.invoke('get-current-activity'),
+  listKnownGames: (): Promise<string[]> => ipcRenderer.invoke('list-known-games'),
   // Locally extracted game icon (Steam library cache, .desktop entries,
   // AppImage/GOG directories), base64; the renderer uploads it to the
   // user's instance so the activity can carry an instance-hosted icon URL.

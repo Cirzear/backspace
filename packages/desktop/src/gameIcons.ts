@@ -1,9 +1,9 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { getSteamRoots } from './steamGames';
-import { loadFlatpakIndex, getFlatpakInstallDirs } from './flatpakGames';
-import { loadGogIndex } from './gogGames';
+import { findSteamGameForProcess, getSteamRoots, loadSteamIndex } from './steamGames';
+import { findFlatpakGameForProcess, loadFlatpakIndex, getFlatpakInstallDirs } from './flatpakGames';
+import { findGogGameForProcess, loadGogIndex } from './gogGames';
 
 /**
  * Local game icon extraction.
@@ -327,6 +327,42 @@ async function genericIcon(target: GameIconTarget, home: string): Promise<GameIc
   return null;
 }
 
+const STORE_ID = /^(steam|flatpak|gog)-/;
+
+/**
+ * The store id (`steam-<appid>`, `flatpak-<id>`, `gog-<id>`) of an installed
+ * game, for a target whose own id says nothing about a store: a game the
+ * dictionary matched, or one the player named by hand. First by the running
+ * executable, which is exact, then by the display name equal to the name the
+ * store's manifest gives, ignoring case. Null when no store knows the game.
+ */
+function installedGameId(target: GameIconTarget, home: string): string | null {
+  if (STORE_ID.test(target.id)) return null;
+  const steam = loadSteamIndex(getSteamRoots(home), true);
+  const flatpak = loadFlatpakIndex(getFlatpakInstallDirs(home), true);
+  const gog = loadGogIndex(home, true);
+
+  if (target.exe) {
+    const bySteam = findSteamGameForProcess(target.exe, steam);
+    if (bySteam) return `steam-${bySteam.appId}`;
+    const byFlatpak = findFlatpakGameForProcess(target.exe, flatpak);
+    if (byFlatpak) return `flatpak-${byFlatpak.appId}`;
+    const byGog = findGogGameForProcess(target.exe, target.cmdline, gog);
+    if (byGog) return `gog-${byGog.id}`;
+  }
+
+  const name = target.name.trim().toLowerCase();
+  if (name === '') return null;
+  const sameName = (candidate: string) => candidate.trim().toLowerCase() === name;
+  const bySteamName = steam.find((game) => sameName(game.name));
+  if (bySteamName) return `steam-${bySteamName.appId}`;
+  const byFlatpakName = flatpak.find((game) => sameName(game.name));
+  if (byFlatpakName) return `flatpak-${byFlatpakName.appId}`;
+  const byGogName = gog.find((game) => sameName(game.name));
+  if (byGogName) return `gog-${byGogName.id}`;
+  return null;
+}
+
 /**
  * Find an icon for a detected game. Sources are tried in order of precision;
  * the first readable image file wins. Every miss is cheap (a stat), every hit
@@ -336,22 +372,25 @@ export async function findGameIcon(
   target: GameIconTarget,
   home: string = os.homedir(),
 ): Promise<GameIcon | null> {
-  if (target.id.startsWith('steam-')) {
-    const appId = Number(target.id.slice('steam-'.length));
+  // A dictionary match or a hand-typed name still belongs to a store when the
+  // machine has the game installed through one
+  const id = installedGameId(target, home) ?? target.id;
+  if (id.startsWith('steam-')) {
+    const appId = Number(id.slice('steam-'.length));
     if (Number.isInteger(appId) && appId > 0) {
       const icon = await steamIcon(appId, home);
       if (icon) return icon;
     }
   }
-  if (target.id.startsWith('flatpak-')) {
-    const appId = target.id.slice('flatpak-'.length);
+  if (id.startsWith('flatpak-')) {
+    const appId = id.slice('flatpak-'.length);
     if (appId) {
       const icon = await flatpakIcon(appId, home);
       if (icon) return icon;
     }
   }
-  if (target.id.startsWith('gog-')) {
-    const gameId = target.id.slice('gog-'.length);
+  if (id.startsWith('gog-')) {
+    const gameId = id.slice('gog-'.length);
     if (gameId) {
       const icon = await gogIcon(gameId, home);
       if (icon) return icon;
@@ -364,8 +403,8 @@ export async function findGameIcon(
 
 /** game name → resolved icon; a null value is a remembered miss. */
 const iconCache = new Map<string, GameIcon | null>();
-/** game name → in-flight warm-up, so repeated polls never pile up reads. */
-const iconWarmed = new Set<string>();
+/** game name → in-flight warm-up, so repeated polls never pile up reads and a second asker waits for the first. */
+const iconWarming = new Map<string, Promise<void>>();
 
 /**
  * Resolve and cache the icon for a game the detector just matched. The
@@ -375,18 +414,26 @@ const iconWarmed = new Set<string>();
  * next push asks for it.
  */
 export function warmGameIcon(target: GameIconTarget, home: string = os.homedir()): Promise<void> {
-  if (!target.name || iconCache.has(target.name) || iconWarmed.has(target.name)) return Promise.resolve();
-  iconWarmed.add(target.name);
-  return findGameIcon(target, home)
+  if (!target.name || iconCache.has(target.name)) return Promise.resolve();
+  const pending = iconWarming.get(target.name);
+  if (pending) return pending;
+  const warming = findGameIcon(target, home)
     .then((icon) => {
       iconCache.set(target.name, icon);
-      if (icon) {
-        console.log(`[ActivityDetector] Game icon resolved for "${target.name}" (${icon.bytes.length} bytes, ${icon.mime})`);
-      }
+      console.log(
+        icon
+          ? `[ActivityDetector] Game icon resolved for "${target.name}" (${icon.bytes.length} bytes, ${icon.mime})`
+          : `[ActivityDetector] No game icon found for "${target.name}"`,
+      );
     })
     .catch(() => {
       iconCache.set(target.name, null);
+    })
+    .finally(() => {
+      iconWarming.delete(target.name);
     });
+  iconWarming.set(target.name, warming);
+  return warming;
 }
 
 /**
@@ -395,7 +442,7 @@ export function warmGameIcon(target: GameIconTarget, home: string = os.homedir()
  * root, two levels above the mounted binary).
  */
 export function warmGameIconForIpc(name: string, pid: number | null, procRoot = '/proc'): Promise<void> {
-  if (!name || iconCache.has(name) || iconWarmed.has(name)) return Promise.resolve();
+  if (!name || iconCache.has(name) || iconWarming.has(name)) return Promise.resolve();
   let exe: string | null = null;
   if (pid !== null && pid > 0) {
     try {
@@ -412,8 +459,18 @@ export function getGameIcon(name: string): GameIcon | null {
   return iconCache.get(name) ?? null;
 }
 
+/**
+ * The icon for a game name the renderer asks about, waiting for the lookup
+ * when one is not finished (or never started: a game the player named by
+ * hand was never detected, so nothing warmed it).
+ */
+export async function resolveGameIcon(name: string): Promise<GameIcon | null> {
+  await warmGameIcon({ id: '', name, exe: null, cmdline: '' });
+  return getGameIcon(name);
+}
+
 /** Tests only: forget every cached icon. */
 export function __testResetGameIconCache(): void {
   iconCache.clear();
-  iconWarmed.clear();
+  iconWarming.clear();
 }

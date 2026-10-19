@@ -268,7 +268,22 @@
     "activity": {
       "sectionTitle": "Activity Status",
       "label": "Share Activity Status",
-      "description": "Allow others to see what you're up to, like games you're playing or music you're listening to."
+      "description": "Allow others to see what you're up to, like games you're playing or music you're listening to.",
+      "game": {
+        "label": "Game you're playing",
+        "description": "If your game wasn't detected, name it yourself. It stays shown until you clear it.",
+        "placeholder": "Game name",
+        "set": "Set",
+        "clear": "Clear",
+        "showing": "Showing: {{name}}",
+        "detectedLabel": "Detected right now",
+        "detectedDescription": "Show a detected game under a different name. It is remembered for next time.",
+        "renamePlaceholder": "Show as…",
+        "renameLabel": "Show {{name}} as",
+        "renamedLabel": "Renamed games",
+        "renamedItem": "{{detected}} → {{chosen}}",
+        "restore": "Restore"
+      }
     }
   },
   "connections": {

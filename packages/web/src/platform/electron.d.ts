@@ -174,6 +174,8 @@ interface BackspaceElectronAPI {
   // Activity detection (game/app process scanning)
   onActivityDetected: (callback: (activity: unknown) => void) => (() => void);
   getCurrentActivity: () => Promise<unknown>;
+  /** Game names for the manual-game picker (dictionary + installed games); absent on older desktops. */
+  listKnownGames?: () => Promise<string[]>;
   /**
    * Locally extracted game icon (Steam library cache, .desktop entries,
    * AppImage/GOG directories) as base64, or null when none was found. The

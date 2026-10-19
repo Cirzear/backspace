@@ -916,6 +916,8 @@ All handlers registered in `main.ts:registerIpcHandlers()`.
 | `get-auto-launch-settings` | R->M | `{ openAtLogin, startMinimized }` | Merge OS state with saved prefs |
 | `set-auto-launch-settings` | R->M | `{ openAtLogin, startMinimized }` | Save + apply to OS |
 | `get-current-activity` | R->M | `Activity \| null` | Current detected game activity |
+| `list-known-games` | R->M | `string[]` | Game names for the manual-game picker: the dictionary's games plus every Steam, Flatpak and GOG game installed here (deduplicated without regard to case, sorted, at most 5000) |
+| `get-game-icon` | R->M | `{ data, mime } \| null` | Icon for a game name (base64). Waits for a lookup in flight and starts one for a name nothing warmed, so a hand-typed game gets its icon too |
 | `check-accessibility` | R->M | `boolean` | macOS accessibility permission check |
 | `get-recovery-state` | R->M | `RecoveryState` | Recovery page reads initial state on mount |
 | `get-update-status` | R->M | `UpdateSnapshot` | Renderer reads the current snapshot on mount |

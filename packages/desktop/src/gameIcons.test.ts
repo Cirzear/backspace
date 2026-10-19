@@ -5,6 +5,7 @@ import path from 'path';
 import {
   findGameIcon,
   getGameIcon,
+  resolveGameIcon,
   warmGameIcon,
   warmGameIconForIpc,
   sniffImageMime,
@@ -208,6 +209,59 @@ describe('findGameIcon', () => {
   it('skips files that are not accepted images', async () => {
     write(path.join(home, '.local', 'share', 'Steam', 'appcache', 'librarycache', '1234_icon.jpg'), NOT_AN_IMAGE);
     expect(await findGameIcon(target({ id: 'steam-1234' }), home)).toBeNull();
+  });
+});
+
+function installSteamGame(appId: number, name: string): void {
+  const steam = path.join(home, '.local', 'share', 'Steam');
+  write(
+    path.join(steam, 'steamapps', `appmanifest_${appId}.acf`),
+    Buffer.from(`"AppState"\n{\n\t"appid"\t\t"${appId}"\n\t"name"\t\t"${name}"\n\t"installdir"\t\t"${name}"\n\t"StateFlags"\t\t"4"\n}\n`),
+  );
+  write(path.join(steam, 'appcache', 'librarycache', `${appId}_icon.jpg`), JPEG);
+}
+
+describe('installed games the dictionary or the player named', () => {
+  it('gives a dictionary-matched game its Steam icon by the installed name', async () => {
+    installSteamGame(1245620, 'ELDEN RING');
+    // The dictionary's key says nothing about a store
+    const icon = await findGameIcon(target({ id: 'elden-ring', name: 'Elden Ring' }), home);
+    expect(icon?.mime).toBe('image/jpeg');
+  });
+
+  it('gives it the Steam icon by the running executable', async () => {
+    installSteamGame(70, 'Half-Life');
+    const exe = path.join(home, '.local', 'share', 'Steam', 'steamapps', 'common', 'Half-Life', 'hl.sh');
+    write(exe, Buffer.from('#!/bin/sh'));
+    const icon = await findGameIcon(target({ id: 'half-life', name: 'HL', exe }), home);
+    expect(icon?.mime).toBe('image/jpeg');
+  });
+
+  it('finds nothing for a name no store knows', async () => {
+    installSteamGame(1245620, 'ELDEN RING');
+    expect(await findGameIcon(target({ id: '', name: 'Another Game' }), home)).toBeNull();
+  });
+});
+
+describe('resolveGameIcon', () => {
+  it('looks a name up that nothing warmed, as a hand-typed game is', async () => {
+    installSteamGame(1245620, 'ELDEN RING');
+    const original = os.homedir;
+    os.homedir = () => home;
+    try {
+      const icon = await resolveGameIcon('elden ring');
+      expect(icon?.mime).toBe('image/jpeg');
+    } finally {
+      os.homedir = original;
+    }
+  });
+
+  it('waits for a lookup already in flight instead of answering too early', async () => {
+    write(path.join(home, '.local', 'share', 'Steam', 'appcache', 'librarycache', '1234_icon.jpg'), JPEG);
+    const warming = warmGameIcon(target({ id: 'steam-1234', name: 'Slow Game' }), home);
+    const icon = await resolveGameIcon('Slow Game');
+    await warming;
+    expect(icon?.mime).toBe('image/jpeg');
   });
 });
 

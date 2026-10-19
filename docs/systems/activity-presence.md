@@ -323,9 +323,18 @@ Detection combines two sources:
 1. **Process scanning** — a curated process-name dictionary (`games.json`, synced from the repo) plus local install metadata for Steam, Flatpak and GOG games, so any installed title is detectable even when unlisted. The dictionary wins on conflicts; sources fill the gaps. Polled every 15s.
 2. **Rich presence IPC pushes** — games speaking the rich presence IPC protocol (osu!lazer & co.) push rich activities to the desktop's IPC server: details, state, absolute timestamps and art. Applied immediately as an overlay over the scan result; the last push wins.
 
+### Manual game and renames (`utils/gameOverrides.ts`, `ActivityGameSection`)
+
+The player has a say over the game shown as playing (Settings → Privacy, under the activity toggle; web and desktop alike):
+
+- **Manual game.** A name the player types for a game rich presence missed. It replaces every detected `playing` activity (music and video stay), carries no timestamps, and stays until the player clears it — there is no timer. The desktop offers suggestions (`list-known-games`); the web client takes any name.
+- **Rename.** A detected game can be shown under another name, remembered by detected name (case-insensitive, at most 200, oldest dropped). Applies to `playing` activities only.
+
+Order in `pushActivities`: detected → manual game → icon lookup (by the name the machine knows) → renames → send. Both choices live in this client's `localStorage` (`backspace_game_overrides`), not on the server: the server and federation see an ordinary `playing` activity, and nothing changes in the wire format. They are per browser/desktop profile and are cleared on sign-in and sign-out.
+
 ### Game icons
 
-The activity card shows an icon for the detected game. Icons never come from a third-party art service: the desktop extracts them from the player's own machine — Steam's `appcache/librarycache` (by app id), Flatpak's exported hicolor icons, GOG's `support/icon.png`, an AppImage mount's `.DirIcon` (the pushing process's `/proc/<pid>/exe` leads there), and `.desktop` entries resolved through the hicolor theme directories (`gameIcons.ts`). The icon is warmed in the background when a game is matched, and the renderer picks it up through the `get-game-icon` IPC, uploads it to the user's own instance (`POST /api/game-icons`, uploads.md §15) and caches the instance URL by game name, so every later activity for that game carries the URL without another upload. The protocol's Discord asset keys are dropped at normalization; only http(s) art a game pushes as a full URL passes through.
+The activity card shows an icon for the detected game. Icons never come from a third-party art service: the desktop extracts them from the player's own machine — Steam's `appcache/librarycache` (by app id), Flatpak's exported hicolor icons, GOG's `support/icon.png`, an AppImage mount's `.DirIcon` (the pushing process's `/proc/<pid>/exe` leads there), and `.desktop` entries resolved through the hicolor theme directories (`gameIcons.ts`). A game the dictionary matched, or one the player typed, is looked up in the Steam, Flatpak and GOG indexes too — by its running executable, then by a display name equal to the store's, ignoring case — so a dictionary entry for a Steam game still gets its library-cache icon. The icon is warmed in the background when a game is matched, and the renderer picks it up through the `get-game-icon` IPC, uploads it to the user's own instance (`POST /api/game-icons`, uploads.md §15) and caches the instance URL by game name, so every later activity for that game carries the URL without another upload. The protocol's Discord asset keys are dropped at normalization; only http(s) art a game pushes as a full URL passes through.
 
 The extractor reads only regular files of at most 512 KiB (a `stat` first, then a read bounded to that size; the same limit as the server's `MAX_GAME_ICON_BYTES`) and never the game's own executable. A `.desktop` entry is matched when its `Exec=` runs the same program as the game's executable (`execProgramName`: `env` and its assignments skipped, directory dropped, compared whole) or its `Name=` equals the game's display name. A host program (java, wine, python, mono, sh, steam, ...) never matches by `Exec=`, since every game it hosts has that executable name: such a game matches by name only. The store clears the push in flight when sharing is switched off (`pushSeq`), so an icon upload that was running cannot send the activity afterwards.
 
@@ -340,7 +349,7 @@ The extractor reads only regular files of at most 512 KiB (a `stat` first, then 
 | `activityDetector.ts:getCurrentActivity()` | Returns the effective `Activity \| null` (IPC push ?? scan, synchronous) |
 | `richPresenceIpc.ts:startRichPresenceIpcServer({ onActivity })` | Binds the ten protocol sockets and feeds pushes to `applyIpcActivity` |
 | `gameIcons.ts:warmGameIcon(target)` / `warmGameIconForIpc(name, pid)` | Extract the detected game's icon locally in the background (Steam cache, Flatpak, GOG, AppImage, .desktop) and cache it by game name |
-| `gameIcons.ts:getGameIcon(name)` | The warmed icon for a game name, served to the renderer over the `get-game-icon` IPC |
+| `gameIcons.ts:resolveGameIcon(name)` | The icon for a game name, served to the renderer over the `get-game-icon` IPC; waits for a lookup in flight and starts one for a name nothing warmed |
 | `main.ts` → renderer → `POST /api/game-icons` | The renderer uploads the extracted bytes to the user's own instance and attaches the returned URL to the activity's `assets.largeImage` (cached per game name) |
 | `main.ts` | Starts detection and the IPC server on app ready; forwards changes via IPC `activity-detected`; registers `get-current-activity`; stops both in `before-quit` |
 | `preload.ts` | Exposes `onActivityDetected` (subscription) and `getCurrentActivity` (invoke) to renderer |
@@ -366,7 +375,10 @@ interface ActivityState {
   activityWriters: Map<string, string>;     // userKey → origin whose delivery set that entry last
   originRows: Map<string, Map<string, PresenceSubject>>; // origin → (row id → subject), older servers' ready rows only
   showActivity: boolean;                     // Current user's visibility preference
-  myActivities: Activity[] | null;           // Current user's own activities (cached locally)
+  myActivities: Activity[] | null;           // Current user's own activities as sent: manual game and renames applied
+  detectedActivities: Activity[];            // What the machine detected, before the player's own choices
+  manualGame: string | null;                 // A game the player named themselves
+  gameRenames: Record<string, string>;       // Detected name (lowercased) → name the player wants shown
 }
 ```
 
@@ -379,8 +391,11 @@ interface ActivityState {
 | `initActivities(entries, origin, coveredRows?)` | A `ready` is the origin's snapshot: removes the entries whose writer is `origin`, then sets the snapshot's entries (`readyActivityEntries`) with `origin` as writer. Entries another origin set last are left to that origin. A current server's snapshot covers everyone it reports on (space and DM members and friends), so all its entries are replaced (`coveredRows` null). An older server's covered only the space and DM members its `ready` lists (`readyRowIndex`, passed as `coveredRows`), so only those rows' entries are replaced; a friend it reports on only live keeps what it last reported |
 | `setOriginRows(origin, rows)` | Keeps the rows an older server's `ready` listed (`readyRowIndex`), or drops them (`null`, a current server) |
 | `setShowActivity(show)` | Sets flag; if `false`: cancels debounce, sends empty `activity_update` via `wsSendAll`, clears `myActivities` |
-| `pushActivities(activities)` | Guards on `showActivity`; sets `myActivities` immediately; starts/resets 5s debounce timer; on fire: sends `activity_update` via `wsSendAll` |
-| `reset()` | Cancels timer, clears all state |
+| `pushActivities(activities)` | Records `activities` as `detectedActivities`; guards on `showActivity`; sets `myActivities` (manual game and renames applied) immediately; starts/resets 5s debounce timer; on fire: sends `activity_update` via `wsSendAll` |
+| `setManualGame(name \| null)` | Names the game being played (sanitized; null or blank clears it), persists, republishes |
+| `setGameRename(detectedName, chosen \| null)` | Remembers the name to show for a detected game (null restores it), persists, republishes |
+| `republish()` | Pushes `detectedActivities` again when something is, or was, shown; used after a choice changes, when sharing is switched on and on connect (a manual game stands even with nothing detected) |
+| `reset()` | Cancels timer, clears all state and the persisted choices (sign-in/sign-out) |
 
 ### Keying
 

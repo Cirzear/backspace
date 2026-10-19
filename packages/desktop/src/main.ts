@@ -15,8 +15,8 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { pathToFileURL } from 'url';
-import { startActivityDetection, stopActivityDetection, getCurrentActivity, applyIpcActivity } from './activityDetector';
-import { getGameIcon } from './gameIcons';
+import { startActivityDetection, stopActivityDetection, getCurrentActivity, applyIpcActivity, listKnownGameNames } from './activityDetector';
+import { resolveGameIcon } from './gameIcons';
 import { startRichPresenceIpcServer, stopRichPresenceIpcServer } from './richPresenceIpc';
 import { KeybindManager } from './keybindManager';
 import { deriveStartMinimizedFromArgs, parseExecPathFromDesktopFile, shouldReapplyAppImage } from './autoLaunch';
@@ -1492,12 +1492,15 @@ if (!gotTheLock) {
     });
 
     ipcMain.handle('get-current-activity', () => getCurrentActivity());
+    ipcMain.handle('list-known-games', () => listKnownGameNames());
 
     // The renderer uploads the icon to the user's instance itself (it holds
     // the session); main only hands over the bytes it extracted locally.
-    ipcMain.handle('get-game-icon', (_event, name: unknown) => {
-      if (typeof name !== 'string' || name.length === 0) return null;
-      const icon = getGameIcon(name);
+    ipcMain.handle('get-game-icon', async (_event, name: unknown) => {
+      if (typeof name !== 'string' || name.length === 0 || name.length > 256) return null;
+      // Waits for a lookup in flight, and starts one for a game nothing warmed
+      // (a name the player typed by hand)
+      const icon = await resolveGameIcon(name);
       if (!icon) return null;
       return { data: icon.bytes.toString('base64'), mime: icon.mime };
     });

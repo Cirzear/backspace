@@ -441,8 +441,13 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
         window.backspace.getCurrentActivity().then((activity: unknown) => {
           if (activity) {
             useActivityStore.getState().pushActivities([activity as Activity]);
+          } else {
+            // Nothing detected: a game the player named themselves still stands
+            useActivityStore.getState().republish();
           }
         }).catch(() => {});
+      } else if (isHome) {
+        useActivityStore.getState().republish();
       }
 
       // Re-push current activities to newly connected instances so their

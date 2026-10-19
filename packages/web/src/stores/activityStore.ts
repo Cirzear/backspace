@@ -3,6 +3,15 @@ import type { Activity } from '@backspace/shared';
 import { wsSendAll } from '../hooks/useWebSocket';
 import { api } from '../api/client';
 import { userKey, type PresenceSubject } from '../utils/identity';
+import {
+  clearOverrides,
+  loadOverrides,
+  sanitizeGameName,
+  saveOverrides,
+  setRename,
+  withManualGame,
+  withRenames,
+} from '../utils/gameOverrides';
 
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
 /** Monotonic push generation: a debounce that fired but is still enriching must not send after a newer push arrived. */
@@ -158,6 +167,12 @@ interface ActivityState {
   originRows: Map<string, Map<string, PresenceSubject>>;
   showActivity: boolean;
   myActivities: Activity[] | null;
+  /** What the machine detected, before the player's own choices (`utils/gameOverrides.ts`). */
+  detectedActivities: Activity[];
+  /** A game the player named themselves; replaces detected "playing" activities until cleared. */
+  manualGame: string | null;
+  /** Detected name (lowercased) → the name the player wants shown for it. */
+  gameRenames: Record<string, string>;
 
   setUserActivities: (subject: PresenceSubject, origin: string, activities: Activity[]) => void;
   clearUserActivities: (subject: PresenceSubject, origin: string) => void;
@@ -174,8 +189,16 @@ interface ActivityState {
   setOriginRows: (origin: string, rows: Map<string, PresenceSubject> | null) => void;
   setShowActivity: (show: boolean) => void;
   pushActivities: (activities: Activity[]) => void;
+  /** Name the game being played (null clears it). Blank names clear it too. */
+  setManualGame: (name: string | null) => void;
+  /** Show a detected game under another name from now on (null restores its own name). */
+  setGameRename: (detectedName: string, chosen: string | null) => void;
+  /** Push again what is currently effective, when there is something to show. */
+  republish: () => void;
   reset: () => void;
 }
+
+const initialOverrides = loadOverrides();
 
 export const useActivityStore = create<ActivityState>((set, get) => ({
   userActivities: new Map(),
@@ -183,6 +206,9 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
   originRows: new Map(),
   showActivity: true,
   myActivities: null,
+  detectedActivities: [],
+  manualGame: initialOverrides.manual,
+  gameRenames: initialOverrides.renames,
 
   setUserActivities: (subject, origin, activities) => {
     const key = userKey(subject, origin);
@@ -258,33 +284,69 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
       pushSeq++;
       wsSendAll({ type: 'activity_update', activities: [] });
       set({ myActivities: null });
+    } else {
+      get().republish();
     }
   },
 
   pushActivities: (activities) => {
+    set({ detectedActivities: activities });
     if (!get().showActivity) return;
-    set({ myActivities: activities });
+    const effective = (list: Activity[]) => withRenames(
+      withManualGame(list, get().manualGame),
+      get().gameRenames,
+    );
+    set({ myActivities: effective(activities) });
     if (pushTimer) clearTimeout(pushTimer);
     const seq = ++pushSeq;
     pushTimer = setTimeout(() => {
       pushTimer = null;
+      // Icons are looked up by the name the machine knows the game by, so the
+      // player's rename is applied after they are attached, not before.
+      const base = withManualGame(activities, get().manualGame);
       // Cached icons attach synchronously, so a push that needs no upload
       // sends exactly as it did before icons existed.
-      const withCached = attachCachedIcons(activities);
+      const withCached = attachCachedIcons(base);
       const pending = pendingIconNames(withCached);
       if (pending.length === 0) {
-        set({ myActivities: withCached });
-        wsSendAll({ type: 'activity_update', activities: withCached });
+        const final = withRenames(withCached, get().gameRenames);
+        set({ myActivities: final });
+        wsSendAll({ type: 'activity_update', activities: final });
         return;
       }
       void uploadAndAttachIcons(withCached, pending).then((enriched) => {
         // A newer push arrived while this one was uploading: it supersedes
         // this send, and its own timer will deliver the fresher list.
         if (seq !== pushSeq) return;
-        set({ myActivities: enriched });
-        wsSendAll({ type: 'activity_update', activities: enriched });
+        const final = withRenames(enriched, get().gameRenames);
+        set({ myActivities: final });
+        wsSendAll({ type: 'activity_update', activities: final });
       });
     }, 5000);
+  },
+
+  setManualGame: (name) => {
+    const manualGame = name === null ? null : sanitizeGameName(name);
+    set({ manualGame });
+    saveOverrides({ manual: manualGame, renames: get().gameRenames });
+    get().republish();
+  },
+
+  setGameRename: (detectedName, chosen) => {
+    const gameRenames = setRename(get().gameRenames, detectedName, chosen);
+    set({ gameRenames });
+    saveOverrides({ manual: get().manualGame, renames: gameRenames });
+    get().republish();
+  },
+
+  republish: () => {
+    const { detectedActivities, manualGame, myActivities, showActivity } = get();
+    if (!showActivity) return;
+    // Nothing to show and nothing shown before: do not send an empty update.
+    // With something shown before (a cleared manual game), the empty list is
+    // exactly what must reach the others.
+    if (detectedActivities.length === 0 && manualGame === null && (myActivities?.length ?? 0) === 0) return;
+    get().pushActivities(detectedActivities);
   },
 
   reset: () => {
@@ -297,6 +359,11 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
       originRows: new Map(),
       showActivity: true,
       myActivities: null,
+      detectedActivities: [],
+      manualGame: null,
+      gameRenames: {},
     });
+    // The choices belong to the signed-in player; the next account starts clean
+    clearOverrides();
   },
 }));

@@ -881,3 +881,33 @@ export function stopActivityDetection(): void {
 export function getCurrentActivity(): Activity | null {
   return currentActivity;
 }
+
+const MAX_KNOWN_GAME_NAMES = 5000;
+
+/**
+ * Names the picker offers as suggestions: the dictionary plus every game this
+ * machine has installed through Steam, Flatpak or GOG. Deduplicated without
+ * regard to case and sorted; a player may still type any other name.
+ */
+export function listKnownGameNames(): string[] {
+  const seen = new Map<string, string>();
+  const add = (name: string) => {
+    const trimmed = name.trim();
+    if (trimmed === '') return;
+    const key = trimmed.toLowerCase();
+    if (!seen.has(key)) seen.set(key, trimmed);
+  };
+  for (const entry of gameEntries) {
+    if ((entry.type ?? 'playing') === 'playing') add(entry.name);
+  }
+  for (const loader of [loadSteamIndex, loadFlatpakIndex, loadGogIndex]) {
+    try {
+      for (const game of loader()) add(game.name);
+    } catch {
+      // A source that cannot be read contributes no suggestions
+    }
+  }
+  return [...seen.values()]
+    .sort((a, b) => a.localeCompare(b))
+    .slice(0, MAX_KNOWN_GAME_NAMES);
+}

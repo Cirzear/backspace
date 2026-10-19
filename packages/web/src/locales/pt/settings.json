@@ -269,7 +269,22 @@
     "activity": {
       "sectionTitle": "Status de atividade",
       "label": "Compartilhar status de atividade",
-      "description": "Permite que outras pessoas vejam o que você está fazendo, como jogos que você está jogando ou músicas que está ouvindo."
+      "description": "Permite que outras pessoas vejam o que você está fazendo, como jogos que você está jogando ou músicas que está ouvindo.",
+      "game": {
+        "label": "Jogo que você está jogando",
+        "description": "Se o seu jogo não foi detectado, informe o nome você mesmo. Ele continua visível até você removê-lo.",
+        "placeholder": "Nome do jogo",
+        "set": "Definir",
+        "clear": "Remover",
+        "showing": "Exibindo: {{name}}",
+        "detectedLabel": "Detectado agora",
+        "detectedDescription": "Mostre um jogo detectado com outro nome. O nome fica salvo para a próxima vez.",
+        "renamePlaceholder": "Mostrar como…",
+        "renameLabel": "Mostrar {{name}} como",
+        "renamedLabel": "Jogos renomeados",
+        "renamedItem": "{{detected}} → {{chosen}}",
+        "restore": "Restaurar"
+      }
     }
   },
   "connections": {

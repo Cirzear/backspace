@@ -268,7 +268,22 @@
     "activity": {
       "sectionTitle": "Aktivitätsstatus",
       "label": "Aktivitätsstatus teilen",
-      "description": "Andere dürfen sehen, was du gerade machst, etwa welche Spiele du spielst oder welche Musik du hörst."
+      "description": "Andere dürfen sehen, was du gerade machst, etwa welche Spiele du spielst oder welche Musik du hörst.",
+      "game": {
+        "label": "Spiel, das du spielst",
+        "description": "Wurde dein Spiel nicht erkannt, nenne es selbst. Es bleibt sichtbar, bis du es entfernst.",
+        "placeholder": "Spielname",
+        "set": "Festlegen",
+        "clear": "Entfernen",
+        "showing": "Angezeigt: {{name}}",
+        "detectedLabel": "Gerade erkannt",
+        "detectedDescription": "Zeige ein erkanntes Spiel unter einem anderen Namen. Das wird für das nächste Mal gemerkt.",
+        "renamePlaceholder": "Anzeigen als…",
+        "renameLabel": "{{name}} anzeigen als",
+        "renamedLabel": "Umbenannte Spiele",
+        "renamedItem": "{{detected}} → {{chosen}}",
+        "restore": "Zurücksetzen"
+      }
     }
   },
   "connections": {
