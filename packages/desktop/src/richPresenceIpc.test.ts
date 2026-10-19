@@ -59,17 +59,18 @@ describe('activity normalization', () => {
     expect(clampByCodepoints('🎮🎮🎮', 2)).toBe('🎮🎮');
   });
 
-  it('resolves asset keys against the CDN and passes http(s) through', () => {
-    expect(resolveAssetUrl('osu_logo_lazer', '1216669957799018608'))
-      .toBe('https://cdn.discordapp.com/app-assets/1216669957799018608/osu_logo_lazer.png');
-    expect(resolveAssetUrl('https://example.com/art.png', '123')).toBe('https://example.com/art.png');
+  it('passes http(s) art through and drops everything else, asset keys included', () => {
+    // Asset keys only resolve through Discord's CDN, which this server never
+    // contacts; icons come from the local machine instead (gameIcons.ts)
+    expect(resolveAssetUrl('osu_logo_lazer')).toBeUndefined();
+    expect(resolveAssetUrl('https://example.com/art.png')).toBe('https://example.com/art.png');
   });
 
   it('drops asset references it cannot resolve safely', () => {
-    expect(resolveAssetUrl('spotify:abc', '123')).toBeUndefined();
-    expect(resolveAssetUrl('../evil/path', '123')).toBeUndefined();
-    expect(resolveAssetUrl('a b', '123')).toBeUndefined();
-    expect(resolveAssetUrl('', '123')).toBeUndefined();
+    expect(resolveAssetUrl('spotify:abc')).toBeUndefined();
+    expect(resolveAssetUrl('../evil/path')).toBeUndefined();
+    expect(resolveAssetUrl('a b')).toBeUndefined();
+    expect(resolveAssetUrl('')).toBeUndefined();
   });
 
   it('accepts only digit-string client ids', () => {
@@ -99,7 +100,6 @@ describe('activity normalization', () => {
         party: { size: [1, 8] },
         secrets: { join: 'super-secret' },
       },
-      '1216669957799018608',
     );
     expect(normalized).toEqual({
       type: 'playing',
@@ -108,7 +108,7 @@ describe('activity normalization', () => {
       state: 'Streaming from menu',
       timestamps: { start: 1700000000000, end: undefined },
       assets: {
-        largeImage: 'https://cdn.discordapp.com/app-assets/1216669957799018608/osu_logo_lazer.png',
+        largeImage: undefined,
         largeText: 'osu!',
         smallImage: 'https://example.com/rank.png',
         smallText: 'SS rank',
@@ -120,19 +120,19 @@ describe('activity normalization', () => {
   });
 
   it('maps activity types and clamps overlong strings', () => {
-    expect(normalizeActivity({ type: 2 }, '1').type).toBe('listening');
-    expect(normalizeActivity({ type: 'watching' }, '1').type).toBe('watching');
-    expect(normalizeActivity({ type: 4 }, '1').type).toBe('playing'); // custom → playing
-    expect(normalizeActivity({ type: 'bogus' }, '1').type).toBe('playing');
+    expect(normalizeActivity({ type: 2 }).type).toBe('listening');
+    expect(normalizeActivity({ type: 'watching' }).type).toBe('watching');
+    expect(normalizeActivity({ type: 4 }).type).toBe('playing'); // custom → playing
+    expect(normalizeActivity({ type: 'bogus' }).type).toBe('playing');
     const long = 'x'.repeat(300);
-    expect(normalizeActivity({ details: long, state: long }, '1').details).toHaveLength(128);
+    expect(normalizeActivity({ details: long, state: long }).details).toHaveLength(128);
   });
 
   it('drops an overlong art URL instead of cutting it off', () => {
     const url = `https://example.com/${'a'.repeat(600)}.png`;
-    expect(normalizeActivity({ assets: { large_image: url } }, '1').assets).toBeUndefined();
+    expect(normalizeActivity({ assets: { large_image: url } }).assets).toBeUndefined();
     const ok = 'https://example.com/cover.png';
-    expect(normalizeActivity({ assets: { large_image: ok } }, '1').assets?.largeImage).toBe(ok);
+    expect(normalizeActivity({ assets: { large_image: ok } }).assets?.largeImage).toBe(ok);
   });
 });
 
@@ -376,8 +376,8 @@ describe('RichPresenceIpcServer', () => {
     expect(pushes[0]?.clientId).toBe(CLIENT_ID);
     expect(pushes[0]?.pid).toBe(process.pid);
     expect(pushes[0]?.activity.details).toBe('Playing [Big Black]');
-    expect(pushes[0]?.activity.assets?.largeImage)
-      .toBe('https://cdn.discordapp.com/app-assets/1216669957799018608/osu_logo_lazer.png');
+    // Asset keys are dropped, not resolved against a third-party CDN
+    expect(pushes[0]?.activity.assets).toBeUndefined();
     client.destroy();
   });
 

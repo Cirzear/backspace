@@ -323,6 +323,10 @@ Detection combines two sources:
 1. **Process scanning** — a curated process-name dictionary (`games.json`, synced from the repo) plus local install metadata for Steam, Flatpak and GOG games, so any installed title is detectable even when unlisted. The dictionary wins on conflicts; sources fill the gaps. Polled every 15s.
 2. **Rich presence IPC pushes** — games speaking the rich presence IPC protocol (osu!lazer & co.) push rich activities to the desktop's IPC server: details, state, absolute timestamps and art. Applied immediately as an overlay over the scan result; the last push wins.
 
+### Game icons
+
+The activity card shows an icon for the detected game. Icons never come from a third-party art service: the desktop extracts them from the player's own machine — Steam's `appcache/librarycache` (by app id), Flatpak's exported hicolor icons, GOG's `support/icon.png`, an AppImage mount's `.DirIcon` (the pushing process's `/proc/<pid>/exe` leads there), and `.desktop` entries resolved through the hicolor theme directories (`gameIcons.ts`). The icon is warmed in the background when a game is matched, and the renderer picks it up through the `get-game-icon` IPC, uploads it to the user's own instance (`POST /api/game-icons`, uploads.md §15) and caches the instance URL by game name, so every later activity for that game carries the URL without another upload. The protocol's Discord asset keys are dropped at normalization; only http(s) art a game pushes as a full URL passes through.
+
 ### Summary of Detection Interface
 
 | Component | Role |
@@ -333,6 +337,9 @@ Detection combines two sources:
 | `activityDetector.ts:resolveIpcGameName(pid)` | Display name for an unnamed push, from the dictionary via the pushing pid |
 | `activityDetector.ts:getCurrentActivity()` | Returns the effective `Activity \| null` (IPC push ?? scan, synchronous) |
 | `richPresenceIpc.ts:startRichPresenceIpcServer({ onActivity })` | Binds the ten protocol sockets and feeds pushes to `applyIpcActivity` |
+| `gameIcons.ts:warmGameIcon(target)` / `warmGameIconForIpc(name, pid)` | Extract the detected game's icon locally in the background (Steam cache, Flatpak, GOG, AppImage, .desktop) and cache it by game name |
+| `gameIcons.ts:getGameIcon(name)` | The warmed icon for a game name, served to the renderer over the `get-game-icon` IPC |
+| `main.ts` → renderer → `POST /api/game-icons` | The renderer uploads the extracted bytes to the user's own instance and attaches the returned URL to the activity's `assets.largeImage` (cached per game name) |
 | `main.ts` | Starts detection and the IPC server on app ready; forwards changes via IPC `activity-detected`; registers `get-current-activity`; stops both in `before-quit` |
 | `preload.ts` | Exposes `onActivityDetected` (subscription) and `getCurrentActivity` (invoke) to renderer |
 

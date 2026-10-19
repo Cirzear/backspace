@@ -133,6 +133,11 @@ contextBridge.exposeInMainWorld('backspace', {
     return () => { ipcRenderer.removeListener('activity-detected', handler); };
   },
   getCurrentActivity: () => ipcRenderer.invoke('get-current-activity'),
+  // Locally extracted game icon (Steam library cache, .desktop entries,
+  // AppImage/GOG directories), base64; the renderer uploads it to the
+  // user's instance so the activity can carry an instance-hosted icon URL.
+  getGameIcon: (name: string): Promise<{ data: string; mime: string } | null> =>
+    ipcRenderer.invoke('get-game-icon', name),
 
   // Keybind support
   getKeybindPortalStatus: () => ipcRenderer.invoke('keybind-portal-status'),

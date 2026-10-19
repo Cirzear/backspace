@@ -6,6 +6,7 @@ import { app } from 'electron';
 import { findSteamGameForProcess, loadSteamIndex } from './steamGames';
 import { findFlatpakGameForProcess, loadFlatpakIndex } from './flatpakGames';
 import { findGogGameForProcess, loadGogIndex } from './gogGames';
+import { warmGameIcon, warmGameIconForIpc } from './gameIcons';
 import type { IpcActivityPush } from './richPresenceIpc';
 
 // ─── Local Activity type (structural match with @backspace/shared Activity) ─
@@ -72,6 +73,7 @@ let ipcOverride: Activity | null = null;
 let currentActivity: Activity | null = null;
 let intervalId: NodeJS.Timeout | null = null;
 let isPolling = false;
+
 let hasErrored = false;
 let onChangeCallback: ((activity: Activity | null) => void) | null = null;
 
@@ -327,16 +329,43 @@ export function detectActivity(
   entries: GameEntry[],
   sources: SourceDetector[] = sourceDetectors,
 ): MatchedGame | null {
+  return detectActivityWithInfo(infos, entries, sources).matched;
+}
+
+/**
+ * `detectActivity` plus the process that produced the match: the icon
+ * extractor needs the executable (an AppImage's `.DirIcon`, icons next to
+ * the binary) in addition to the matched game's identity.
+ */
+export function detectActivityWithInfo(
+  infos: ProcessInfo[],
+  entries: GameEntry[],
+  sources: SourceDetector[] = sourceDetectors,
+): { matched: MatchedGame | null; info: ProcessInfo | null } {
   const dictionaryMatch = findMatchingGame(infos, entries);
   if (dictionaryMatch) {
-    return { id: dictionaryMatch.id, name: dictionaryMatch.name, type: dictionaryMatch.type ?? 'playing' };
+    const info = matchInfoFor(dictionaryMatch.id, infos, entries);
+    return {
+      matched: { id: dictionaryMatch.id, name: dictionaryMatch.name, type: dictionaryMatch.type ?? 'playing' },
+      info,
+    };
   }
 
   for (const source of sources) {
     for (const info of infos) {
       const match = source(info);
-      if (match) return match;
+      if (match) return { matched: match, info };
     }
+  }
+  return { matched: null, info: null };
+}
+
+/** The process a dictionary match came from: the first info the entry's matchers accept. */
+function matchInfoFor(id: string, infos: ProcessInfo[], entries: GameEntry[]): ProcessInfo | null {
+  const entry = entries.find((e) => e.id === id);
+  if (!entry) return null;
+  for (const info of infos) {
+    if (matchesProcessName(entry, info.name, info.cmdline)) return info;
   }
   return null;
 }
@@ -742,6 +771,9 @@ export function applyIpcActivity(push: IpcActivityPush | null): void {
       timestamps: a.timestamps,
       assets: a.assets,
     };
+    // The icon is resolved from the pushing process's own executable in the
+    // background; the renderer uploads it to the instance on first ask.
+    void warmGameIconForIpc(name, push.pid);
   }
   refreshEffectiveActivity();
 }
@@ -768,7 +800,11 @@ function poll(): void {
       return;
     }
     isPolling = false;
-    applyMatchedGame(detectActivity(infos, gameEntries));
+    const { matched, info } = detectActivityWithInfo(infos, gameEntries);
+    if (matched) {
+      void warmGameIcon({ id: matched.id, name: matched.name, exe: info?.exe ?? null, cmdline: info?.cmdline ?? '' });
+    }
+    applyMatchedGame(matched);
     return;
   }
 
@@ -791,7 +827,11 @@ function pollViaCommand(): void {
     }
 
     const infos = infosFromNames(parseProcessList(stdout));
-    applyMatchedGame(detectActivity(infos, gameEntries));
+    const { matched, info } = detectActivityWithInfo(infos, gameEntries);
+    if (matched) {
+      void warmGameIcon({ id: matched.id, name: matched.name, exe: info?.exe ?? null, cmdline: info?.cmdline ?? '' });
+    }
+    applyMatchedGame(matched);
   });
 }
 

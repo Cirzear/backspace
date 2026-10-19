@@ -50,8 +50,6 @@ const LIMITS = {
   MAX_URL_LENGTH: 512,
 } as const;
 
-const CDN_BASE = 'https://cdn.discordapp.com/app-assets';
-
 // ─── Public types ───────────────────────────────────────────────────────────
 
 export interface IpcAssets {
@@ -182,23 +180,19 @@ export function clampByCodepoints(s: string, max: number): string {
 }
 
 /**
- * Resolve an asset reference: http(s) URLs pass through (clamped), anything
- * else is treated as a protocol asset key and resolved against the public
- * app-assets CDN for the handshake's client_id. The client_id is validated
- * as 1..64 digits at handshake time, so it cannot inject path segments;
- * asset keys are additionally restricted to their documented charset.
+ * Accept an art reference from a pushed payload: http(s) URLs pass through
+ * (length-clamped), anything else — the Discord protocol's asset keys
+ * included — is dropped. Keys only resolve through Discord's CDN, which an
+ * independent instance has no business contacting; game icons come from the
+ * player's own machine instead (`gameIcons.ts`) and are hosted by the user's
+ * own instance.
  */
-export function resolveAssetUrl(value: string, clientId: string): string | undefined {
+export function resolveAssetUrl(value: string): string | undefined {
   const v = value.trim();
   if (!v) return undefined;
-  if (/^https?:\/\//i.test(v)) {
-    // A cut-off URL points somewhere else (or nowhere): drop it instead
-    return v.length <= LIMITS.MAX_URL_LENGTH ? v : undefined;
-  }
-  if (v.startsWith('spotify:') || v.startsWith('twitch:')) return undefined; // External schemas we cannot resolve
-  if (!/^[a-zA-Z0-9_-]+$/.test(v)) return undefined; // Not a legal asset key
-  const url = `${CDN_BASE}/${clientId}/${v}.png`;
-  return url.length <= LIMITS.MAX_URL_LENGTH ? url : undefined;
+  if (!/^https?:\/\//i.test(v)) return undefined; // asset keys and external schemas are not resolvable here
+  // A cut-off URL points somewhere else (or nowhere): drop it instead
+  return v.length <= LIMITS.MAX_URL_LENGTH ? v : undefined;
 }
 
 const TYPE_BY_NUMBER: Record<number, IpcActivityType> = {
@@ -240,15 +234,15 @@ function clampTimestamps(value: unknown): { start?: number; end?: number } | und
  * Normalize a pushed SET_ACTIVITY payload into our clamped local shape.
  * buttons, party and secrets are intentionally never read, let alone relayed.
  */
-export function normalizeActivity(raw: Record<string, unknown>, clientId: string): IpcActivityPayload {
+export function normalizeActivity(raw: Record<string, unknown>): IpcActivityPayload {
   const assetsRaw = (raw.assets && typeof raw.assets === 'object' ? raw.assets : {}) as Record<string, unknown>;
 
   const largeImage = typeof assetsRaw.large_image === 'string'
-    ? resolveAssetUrl(assetsRaw.large_image, clientId)
-    : typeof assetsRaw.largeImage === 'string' ? resolveAssetUrl(assetsRaw.largeImage, clientId) : undefined;
+    ? resolveAssetUrl(assetsRaw.large_image)
+    : typeof assetsRaw.largeImage === 'string' ? resolveAssetUrl(assetsRaw.largeImage) : undefined;
   const smallImage = typeof assetsRaw.small_image === 'string'
-    ? resolveAssetUrl(assetsRaw.small_image, clientId)
-    : typeof assetsRaw.smallImage === 'string' ? resolveAssetUrl(assetsRaw.smallImage, clientId) : undefined;
+    ? resolveAssetUrl(assetsRaw.small_image)
+    : typeof assetsRaw.smallImage === 'string' ? resolveAssetUrl(assetsRaw.smallImage) : undefined;
   const largeText = clampOptionalString(assetsRaw.large_text ?? assetsRaw.largeText, LIMITS.MAX_ASSET_TEXT_LENGTH);
   const smallText = clampOptionalString(assetsRaw.small_text ?? assetsRaw.smallText, LIMITS.MAX_ASSET_TEXT_LENGTH);
 
@@ -415,7 +409,7 @@ function handleSetActivity(conn: Connection, args: Record<string, unknown>, nonc
   // just sent a frame is running, even when the pid it reports is dead (an
   // AppImage wrapper's pid, a pid from another namespace) or bogus. Pushes
   // from a game that exits are dropped by the disconnect grace instead.
-  const activity = normalizeActivity(rawActivity as Record<string, unknown>, conn.clientId);
+  const activity = normalizeActivity(rawActivity as Record<string, unknown>);
   console.log(
     `[RichPresenceIpc] Push from client ${conn.clientId}: pid=${pid ?? 'none'}` +
     ` name=${activity.name ?? 'none'} details=${activity.details ? 'yes' : 'no'}` +

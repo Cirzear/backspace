@@ -16,6 +16,7 @@ import fs from 'fs';
 import os from 'os';
 import { pathToFileURL } from 'url';
 import { startActivityDetection, stopActivityDetection, getCurrentActivity, applyIpcActivity } from './activityDetector';
+import { getGameIcon } from './gameIcons';
 import { startRichPresenceIpcServer, stopRichPresenceIpcServer } from './richPresenceIpc';
 import { KeybindManager } from './keybindManager';
 import { deriveStartMinimizedFromArgs, parseExecPathFromDesktopFile, shouldReapplyAppImage } from './autoLaunch';
@@ -1491,6 +1492,15 @@ if (!gotTheLock) {
     });
 
     ipcMain.handle('get-current-activity', () => getCurrentActivity());
+
+    // The renderer uploads the icon to the user's instance itself (it holds
+    // the session); main only hands over the bytes it extracted locally.
+    ipcMain.handle('get-game-icon', (_event, name: unknown) => {
+      if (typeof name !== 'string' || name.length === 0) return null;
+      const icon = getGameIcon(name);
+      if (!icon) return null;
+      return { data: icon.bytes.toString('base64'), mime: icon.mime };
+    });
 
     // Linux/AppImage path-refresh ONLY. On Windows and macOS the OS is the source
     // of truth for openAtLogin (Task 4) and we must not override user changes made

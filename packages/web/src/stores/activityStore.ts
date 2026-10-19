@@ -1,9 +1,124 @@
 import { create } from 'zustand';
 import type { Activity } from '@backspace/shared';
 import { wsSendAll } from '../hooks/useWebSocket';
+import { api } from '../api/client';
 import { userKey, type PresenceSubject } from '../utils/identity';
 
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
+/** Monotonic push generation: a debounce that fired but is still enriching must not send after a newer push arrived. */
+let pushSeq = 0;
+
+// ─── Game icon enrichment ─────────────────────────────────────────────────
+
+/**
+ * The desktop client extracts game icons from the player's own machine and
+ * hands them to the renderer, which uploads them to the user's own instance
+ * and caches the instance URL by game name. The next activity for the same
+ * game carries the URL without another upload.
+ */
+const GAME_ICON_CACHE_KEY = 'backspace_game_icons';
+const GAME_ICON_TYPES = new Set(['playing', 'listening', 'watching', 'streaming']);
+const GAME_ICON_ENRICH_TIMEOUT_MS = 4000;
+/** A name that failed to resolve is not retried for this long (the desktop warms its cache in the background). */
+const GAME_ICON_RETRY_MS = 60_000;
+const iconMissAges = new Map<string, number>();
+
+function cachedIconUrl(name: string): string | null {
+  try {
+    const raw = localStorage.getItem(GAME_ICON_CACHE_KEY);
+    if (!raw) return null;
+    const map = JSON.parse(raw) as Record<string, unknown>;
+    const url = map[name];
+    return typeof url === 'string' && /^https?:\/\//.test(url) ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberIconUrl(name: string, url: string): void {
+  try {
+    const map = JSON.parse(localStorage.getItem(GAME_ICON_CACHE_KEY) ?? '{}') as Record<string, string>;
+    map[name] = url;
+    localStorage.setItem(GAME_ICON_CACHE_KEY, JSON.stringify(map));
+  } catch {
+    // Storage unavailable: the icon re-uploads next session
+  }
+}
+
+/** Fetch the locally extracted icon, upload it to the instance, return the URL. Null on any failure. */
+async function resolveGameIconUrl(name: string): Promise<string | null> {
+  const getGameIcon = window.backspace?.getGameIcon;
+  if (!getGameIcon) return null;
+  try {
+    const icon = await getGameIcon(name);
+    if (!icon?.data) return null;
+    const { url } = await api.gameIcons.upload({ image: icon.data });
+    rememberIconUrl(name, url);
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+function withTimeout(promise: Promise<string | null>, ms: number): Promise<string | null> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), ms);
+    promise.then((url) => {
+      clearTimeout(timer);
+      resolve(url);
+    }, () => {
+      clearTimeout(timer);
+      resolve(null);
+    });
+  });
+}
+
+/** Attach cached instance URLs to icon-able activities that lack art. Returns the input when nothing changed. */
+function attachCachedIcons(activities: Activity[]): Activity[] {
+  let changed = false;
+  const result = activities.map((activity) => {
+    if (!GAME_ICON_TYPES.has(activity.type) || activity.assets?.largeImage) return activity;
+    const cached = cachedIconUrl(activity.name);
+    if (!cached) return activity;
+    changed = true;
+    return { ...activity, assets: { ...activity.assets, largeImage: cached } };
+  });
+  return changed ? result : activities;
+}
+
+/** Names that would benefit from an icon upload: game activity, no art, no cached URL, no fresh miss, and a desktop bridge to ask. */
+function pendingIconNames(activities: Activity[]): string[] {
+  if (!window.backspace?.getGameIcon) return [];
+  const names: string[] = [];
+  for (const activity of activities) {
+    if (!GAME_ICON_TYPES.has(activity.type) || activity.assets?.largeImage) continue;
+    if (cachedIconUrl(activity.name)) continue;
+    const missedAt = iconMissAges.get(activity.name);
+    if (missedAt !== undefined && Date.now() - missedAt <= GAME_ICON_RETRY_MS) continue;
+    names.push(activity.name);
+  }
+  return names;
+}
+
+/** Upload the icons for `names` and attach the instance URLs they resolve to. */
+async function uploadAndAttachIcons(activities: Activity[], names: string[]): Promise<Activity[]> {
+  const urls = new Map<string, string>();
+  await Promise.all(names.map(async (name) => {
+    const url = await withTimeout(resolveGameIconUrl(name), GAME_ICON_ENRICH_TIMEOUT_MS);
+    if (url) {
+      urls.set(name, url);
+    } else {
+      iconMissAges.set(name, Date.now());
+    }
+  }));
+  if (urls.size === 0) return activities;
+  return activities.map((activity) => {
+    const url = urls.get(activity.name);
+    return url && !activity.assets?.largeImage
+      ? { ...activity, assets: { ...activity.assets, largeImage: url } }
+      : activity;
+  });
+}
 
 /** An activity list delivered for one user by one origin. */
 export interface ActivityEntry {
@@ -148,14 +263,32 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
     if (!get().showActivity) return;
     set({ myActivities: activities });
     if (pushTimer) clearTimeout(pushTimer);
+    const seq = ++pushSeq;
     pushTimer = setTimeout(() => {
-      wsSendAll({ type: 'activity_update', activities });
       pushTimer = null;
+      // Cached icons attach synchronously, so a push that needs no upload
+      // sends exactly as it did before icons existed.
+      const withCached = attachCachedIcons(activities);
+      const pending = pendingIconNames(withCached);
+      if (pending.length === 0) {
+        set({ myActivities: withCached });
+        wsSendAll({ type: 'activity_update', activities: withCached });
+        return;
+      }
+      void uploadAndAttachIcons(withCached, pending).then((enriched) => {
+        // A newer push arrived while this one was uploading: it supersedes
+        // this send, and its own timer will deliver the fresher list.
+        if (seq !== pushSeq) return;
+        set({ myActivities: enriched });
+        wsSendAll({ type: 'activity_update', activities: enriched });
+      });
     }, 5000);
   },
 
   reset: () => {
     if (pushTimer) { clearTimeout(pushTimer); pushTimer = null; }
+    pushSeq++;
+    iconMissAges.clear();
     set({
       userActivities: new Map(),
       activityWriters: new Map(),

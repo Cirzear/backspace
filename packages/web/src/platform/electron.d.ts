@@ -174,6 +174,13 @@ interface BackspaceElectronAPI {
   // Activity detection (game/app process scanning)
   onActivityDetected: (callback: (activity: unknown) => void) => (() => void);
   getCurrentActivity: () => Promise<unknown>;
+  /**
+   * Locally extracted game icon (Steam library cache, .desktop entries,
+   * AppImage/GOG directories) as base64, or null when none was found. The
+   * renderer uploads it to the user's instance and attaches the instance's
+   * URL to the activity it sends.
+   */
+  getGameIcon?: (name: string) => Promise<{ data: string; mime: string } | null>;
 
   // Keybind support
   getKeybindPortalStatus?: () => Promise<KeybindPortalStatus | null>;
