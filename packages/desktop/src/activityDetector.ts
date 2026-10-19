@@ -3,7 +3,7 @@ import https from 'https';
 import path from 'path';
 import fs from 'fs';
 import { app } from 'electron';
-import { findSteamGameForProcess, loadSteamIndex } from './steamGames';
+import { findSteamGameForLaunch, findSteamGameForProcess, loadSteamIndex, type SteamGame } from './steamGames';
 import { findFlatpakGameForProcess, loadFlatpakIndex } from './flatpakGames';
 import { findGogGameForProcess, loadGogIndex } from './gogGames';
 import { warmGameIcon, warmGameIconForIpc } from './gameIcons';
@@ -261,10 +261,20 @@ export interface MatchedGame {
  */
 export type SourceDetector = (info: ProcessInfo) => MatchedGame | null;
 
-const steamSourceDetector: SourceDetector = (info) => {
-  const game = findSteamGameForProcess(info.exe, loadSteamIndex());
-  return game ? { id: `steam-${game.appId}`, name: game.name, type: 'playing' } : null;
-};
+/**
+ * Steam games: first by the launch command of the supervising `reaper`
+ * process (it names the app id, which is the only thing a Proton game's own
+ * processes do not), then by the install directory holding the executable.
+ */
+export function createSteamSourceDetector(loadGames: () => SteamGame[] = () => loadSteamIndex()): SourceDetector {
+  return (info) => {
+    const games = loadGames();
+    const game = findSteamGameForLaunch(info.cmdline, games) ?? findSteamGameForProcess(info.exe, games);
+    return game ? { id: `steam-${game.appId}`, name: game.name, type: 'playing' } : null;
+  };
+}
+
+const steamSourceDetector = createSteamSourceDetector();
 
 const flatpakSourceDetector: SourceDetector = (info) => {
   const game = findFlatpakGameForProcess(info.exe, loadFlatpakIndex());

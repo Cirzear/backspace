@@ -155,6 +155,21 @@ function libraryPathsForRoot(root: string): string[] {
   return resolved;
 }
 
+/**
+ * Steam installs its own plumbing as "apps" next to the games: the Linux
+ * runtimes every Proton game runs inside, the Proton builds themselves, the
+ * redistributables. They are in steamapps/common too, and their processes run
+ * whenever any game (or just Steam) does, so indexing them makes the activity
+ * "Steam Linux Runtime 3.0 (sniper)" instead of the game. The manifest carries
+ * no "tool" flag, so they are told apart by their fixed names.
+ */
+const TOOL_NAMES = /^(steam linux runtime\b|proton\b|steamworks common redistributables\b)/i;
+const TOOL_INSTALL_DIRS = /^(steamlinuxruntime|proton\b|steamworks shared$)/i;
+
+export function isSteamToolApp(name: string, installdir: string): boolean {
+  return TOOL_NAMES.test(name.trim()) || TOOL_INSTALL_DIRS.test(installdir.trim());
+}
+
 function readManifests(lib: string): SteamGame[] {
   const appsDir = path.join(lib, 'steamapps');
   let files: string[];
@@ -175,6 +190,7 @@ function readManifests(lib: string): SteamGame[] {
     }
     const manifest = parseAppManifest(text);
     if (!manifest || !manifest.fullyInstalled) continue;
+    if (isSteamToolApp(manifest.name, manifest.installdir)) continue;
     games.push({
       appId: manifest.appId,
       name: manifest.name,
@@ -235,4 +251,21 @@ export function findSteamGameForProcess(exe: string | null, games: SteamGame[]):
     if (isUnder(exe, game.installDir)) return game;
   }
   return null;
+}
+
+/** `SteamLaunch AppId=<id>` as Steam writes it on the command line of the `reaper` process that supervises a game. */
+const STEAM_LAUNCH = /(?:^|\s)SteamLaunch\s+AppId=(\d+)(?=\s|$)/;
+
+/**
+ * The installed game Steam launched, read from the launch command of its
+ * supervising `reaper` process. Every game Steam starts, native or Proton,
+ * runs under one, and it names the app id outright: the game's own processes
+ * (a wine binary inside the Proton directory) say nothing about it. Null when
+ * the command line is no launch, or names an app that is not in `games`.
+ */
+export function findSteamGameForLaunch(cmdline: string, games: SteamGame[]): SteamGame | null {
+  const match = STEAM_LAUNCH.exec(cmdline);
+  if (!match) return null;
+  const appId = Number(match[1]);
+  return games.find((game) => game.appId === appId) ?? null;
 }

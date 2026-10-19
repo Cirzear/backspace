@@ -10,6 +10,7 @@ import {
   matchesProcessName,
   findMatchingGame,
   detectActivity,
+  createSteamSourceDetector,
   parseGameEntry,
   validateDictionaryObject,
   loadDictionaryFile,
@@ -604,5 +605,34 @@ describe('IPC activity overlay', () => {
     // Overlay clears afterwards — nothing is left
     applyIpcActivity(null);
     expect(getCurrentActivity()).toBeNull();
+  });
+});
+
+describe('Steam source detector', () => {
+  const games = [{ appId: 1245620, name: 'ELDEN RING', installDir: '/lib/steamapps/common/ELDEN RING' }];
+  const steam = createSteamSourceDetector(() => games);
+  const RUNTIME = '/lib/steamapps/common/SteamLinuxRuntime_sniper';
+  const LAUNCH = `/s/ubuntu12_32/reaper SteamLaunch AppId=1245620 -- ${RUNTIME}/_v2-entry-point --verb=waitforexitandrun -- /lib/steamapps/common/Proton 9.0/proton waitforexitandrun /lib/steamapps/common/ELDEN RING/Game/eldenring.exe`;
+
+  it('names a Proton game from its reaper even when runtime processes come first', () => {
+    const infos = [
+      { pid: 1, name: 'bwrap', cmdline: 'bwrap --unshare-pid', exe: `${RUNTIME}/pressure-vessel/bin/bwrap` },
+      { pid: 2, name: 'wine64-preloader', cmdline: 'wine64-preloader eldenring.exe', exe: '/lib/steamapps/common/Proton 9.0/files/bin/wine64-preloader' },
+      { pid: 3, name: 'reaper', cmdline: LAUNCH, exe: '/s/ubuntu12_32/reaper' },
+    ];
+    expect(detectActivity(infos, [], [steam])).toEqual({ id: 'steam-1245620', name: 'ELDEN RING', type: 'playing' });
+  });
+
+  it('shows nothing for Steam alone, with its runtime processes running', () => {
+    const infos = [
+      { pid: 1, name: 'steam', cmdline: '/usr/bin/steam', exe: '/usr/lib/steam/bin_steam.sh' },
+      { pid: 2, name: 'srt-logger', cmdline: 'srt-logger', exe: `${RUNTIME}/pressure-vessel/libexec/srt-logger` },
+    ];
+    expect(detectActivity(infos, [], [steam])).toBeNull();
+  });
+
+  it('still matches a native game by the directory its executable lives in', () => {
+    const infos = [{ pid: 1, name: 'game', cmdline: 'game', exe: '/lib/steamapps/common/ELDEN RING/game' }];
+    expect(detectActivity(infos, [], [steam])?.id).toBe('steam-1245620');
   });
 });

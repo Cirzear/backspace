@@ -9,6 +9,8 @@ import {
   loadSteamIndex,
   resetSteamIndexCache,
   findSteamGameForProcess,
+  findSteamGameForLaunch,
+  isSteamToolApp,
 } from './steamGames';
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
@@ -260,5 +262,63 @@ describe('findSteamGameForProcess', () => {
 
   it('returns null without an exe path', () => {
     expect(findSteamGameForProcess(null, games)).toBeNull();
+  });
+});
+
+// ─── Steam's own tools are not games ────────────────────────────────────────
+
+describe('Steam tool apps', () => {
+  beforeEach(() => resetSteamIndexCache());
+
+  it('are told apart by name or install directory', () => {
+    expect(isSteamToolApp('Steam Linux Runtime 3.0 (sniper)', 'SteamLinuxRuntime_sniper')).toBe(true);
+    expect(isSteamToolApp('Steam Linux Runtime 4.0', 'SteamLinuxRuntime_4')).toBe(true);
+    expect(isSteamToolApp('Proton 9.0 (Beta)', 'Proton 9.0')).toBe(true);
+    expect(isSteamToolApp('Proton Experimental', 'Proton - Experimental')).toBe(true);
+    expect(isSteamToolApp('Steamworks Common Redistributables', 'Steamworks Shared')).toBe(true);
+    expect(isSteamToolApp('ELDEN RING', 'ELDEN RING')).toBe(false);
+    expect(isSteamToolApp('Protonmail Simulator', 'Protonmail Simulator')).toBe(false);
+    expect(isSteamToolApp('Steam Hunters', 'SteamHunters')).toBe(false);
+  });
+
+  it('never reach the index, so their processes are never the activity', () => {
+    const steamHome = makeSteamTree([]);
+    const apps = primaryApps(steamHome);
+    fs.writeFileSync(path.join(apps, 'appmanifest_1628350.acf'),
+      ACF({ appid: '1628350', name: 'Steam Linux Runtime 3.0 (sniper)', installdir: 'SteamLinuxRuntime_sniper' }));
+    fs.writeFileSync(path.join(apps, 'appmanifest_2805730.acf'),
+      ACF({ appid: '2805730', name: 'Proton 9.0 (Beta)', installdir: 'Proton 9.0' }));
+    fs.writeFileSync(path.join(apps, 'appmanifest_1245620.acf'),
+      ACF({ appid: '1245620', name: 'ELDEN RING', installdir: 'ELDEN RING' }));
+
+    const games = loadSteamIndex(getSteamRoots(steamHome));
+    expect(games.map((g) => g.name)).toEqual(['ELDEN RING']);
+    const runtimeExe = path.join(apps, 'common', 'SteamLinuxRuntime_sniper', 'pressure-vessel', 'bin', 'bwrap');
+    expect(findSteamGameForProcess(runtimeExe, games)).toBeNull();
+  });
+});
+
+describe('findSteamGameForLaunch', () => {
+  const games = [
+    { appId: 1245620, name: 'ELDEN RING', installDir: '/lib/steamapps/common/ELDEN RING' },
+    { appId: 70, name: 'Half-Life', installDir: '/lib/steamapps/common/Half-Life' },
+  ];
+
+  it('reads the app id from the reaper launch command, native or Proton', () => {
+    const proton = '/home/u/.local/share/Steam/ubuntu12_32/reaper SteamLaunch AppId=1245620 -- '
+      + '/home/u/.local/share/Steam/steamapps/common/SteamLinuxRuntime_sniper/_v2-entry-point '
+      + '--verb=waitforexitandrun -- /home/u/.local/share/Steam/steamapps/common/Proton 9.0/proton waitforexitandrun '
+      + '/lib/steamapps/common/ELDEN RING/Game/eldenring.exe';
+    expect(findSteamGameForLaunch(proton, games)?.name).toBe('ELDEN RING');
+    expect(findSteamGameForLaunch('/x/reaper SteamLaunch AppId=70 -- /lib/steamapps/common/Half-Life/hl.sh', games)?.name)
+      .toBe('Half-Life');
+  });
+
+  it('is null for anything that is not a launch of an indexed game', () => {
+    expect(findSteamGameForLaunch('/usr/bin/steam', games)).toBeNull();
+    expect(findSteamGameForLaunch('/x/reaper SteamLaunch AppId=999 -- /x', games)).toBeNull();
+    expect(findSteamGameForLaunch('/x/reaper SteamLaunch AppId=7 -- /x', games)).toBeNull(); // 70 is not 7
+    expect(findSteamGameForLaunch('/x/reaper SteamLaunch AppId=70abc -- /x', games)).toBeNull();
+    expect(findSteamGameForLaunch('echo NotSteamLaunch AppId=70', games)).toBeNull();
   });
 });
