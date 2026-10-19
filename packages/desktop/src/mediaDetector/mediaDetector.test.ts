@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { sanitizeTrackUrl } from './trackUrl';
 import { isAppIdleTitle, parsePlayerWindowTitle } from './titleParser';
 import { convertTrackToActivity } from './index';
-import { parseTasklistCsvLine, parseWin32TasklistOutput } from './win32Media';
+import { parseTasklistCsvLine, parseWin32TasklistOutput, decodeWin32Output } from './win32Media';
 import { parseMprisMetadata, getPlayerDisplayName } from './linuxMpris';
 
 describe('Media Detector - Canonical Track URLs', () => {
@@ -45,15 +45,43 @@ describe('Media Detector - Canonical Track URLs', () => {
 describe('Media Detector - Window Title Parser', () => {
   it('detects idle status for players', () => {
     expect(isAppIdleTitle('cloudmusic', '网易云音乐')).toBe(true);
+    expect(isAppIdleTitle('cloudmusic', '桌面歌词')).toBe(true);
     expect(isAppIdleTitle('qqmusic', 'QQ音乐')).toBe(true);
+    expect(isAppIdleTitle('qqmusic', '桌面歌词')).toBe(true);
+    expect(isAppIdleTitle('kugou', '桌面歌词')).toBe(true);
     expect(isAppIdleTitle('spotify', 'Spotify Free')).toBe(true);
     expect(isAppIdleTitle('spotify', 'Spotify Premium')).toBe(true);
     expect(isAppIdleTitle('yandexmusic', 'Яндекс Музыка')).toBe(true);
+    expect(isAppIdleTitle('cloudmusic', 'N/A')).toBe(true);
+    expect(isAppIdleTitle('cloudmusic', '暂缺')).toBe(true);
+    expect(isAppIdleTitle('qqmusic', 'QQ音乐，听我想听的歌')).toBe(true);
   });
 
-  it('parses NetEase Cloud Music title and artist', () => {
+  it('supports dash variants (em-dash, en-dash, fullwidth dash)', () => {
+    expect(parsePlayerWindowTitle('cloudmusic', '告白气球 – 周杰伦')).toEqual({
+      title: '告白气球',
+      artist: '周杰伦',
+    });
+    expect(parsePlayerWindowTitle('cloudmusic', '青花瓷 — 周杰伦')).toEqual({
+      title: '青花瓷',
+      artist: '周杰伦',
+    });
+    expect(parsePlayerWindowTitle('cloudmusic', '稻香 － 周杰伦')).toEqual({
+      title: '稻香',
+      artist: '周杰伦',
+    });
+    expect(parsePlayerWindowTitle('spotify', 'Taylor Swift — Blank Space')).toEqual({
+      artist: 'Taylor Swift',
+      title: 'Blank Space',
+    });
+  });
+
+  it('parses NetEase Cloud Music title and artist (and strips player prefix if present)', () => {
     const res = parsePlayerWindowTitle('cloudmusic', '海阔天空 - Beyond');
     expect(res).toEqual({ title: '海阔天空', artist: 'Beyond' });
+
+    const prefixed = parsePlayerWindowTitle('cloudmusic', '网易云音乐 - 晴天 - 周杰伦');
+    expect(prefixed).toEqual({ title: '晴天', artist: '周杰伦' });
   });
 
   it('parses QQ Music title and artist', () => {
@@ -91,9 +119,12 @@ describe('Media Detector - Win32 Tasklist Parser', () => {
     });
   });
 
-  it('extracts track from tasklist output', () => {
+  it('extracts track from tasklist output and ignores child processes with N/A or 暂缺', () => {
     const stdout = [
       '"explorer.exe","100","Console","1","10 K","Running","User","0:00:01","Desktop"',
+      '"cloudmusic.exe","101","Console","1","20 K","Running","User","0:00:01","N/A"',
+      '"cloudmusic.exe","102","Console","1","15 K","Running","User","0:00:01","暂缺"',
+      '"cloudmusic.exe","103","Console","1","10 K","Running","User","0:00:01","桌面歌词"',
       '"cloudmusic.exe","200","Console","1","50 K","Running","User","0:00:10","海阔天空 - Beyond"',
     ].join('\n');
 
@@ -102,8 +133,22 @@ describe('Media Detector - Win32 Tasklist Parser', () => {
       title: '海阔天空',
       artist: 'Beyond',
       isPlaying: true,
-      player: '网易云音乐',
+      player: 'NetEase Cloud Music',
     });
+  });
+
+  it('correctly decodes GBK/CP936 bytes to prevent Chinese mojibake', () => {
+    // "海阔天空" in GBK hex: ba a3 c0 ab cc ec bf d5
+    const gbkBytes = Buffer.concat([
+      Buffer.from('"cloudmusic.exe","123","Console","1","50 K","Running","User","0:01:23","'),
+      Buffer.from('baa3c0abccecbfd5', 'hex'),
+      Buffer.from(' - Beyond"'),
+    ]);
+    const decoded = decodeWin32Output(gbkBytes);
+    expect(decoded).toContain('海阔天空 - Beyond');
+    const parsed = parseWin32TasklistOutput(decoded);
+    expect(parsed?.title).toBe('海阔天空');
+    expect(parsed?.artist).toBe('Beyond');
   });
 });
 

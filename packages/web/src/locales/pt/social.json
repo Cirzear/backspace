@@ -89,6 +89,15 @@
       "watching": "Assistindo",
       "custom": "Status personalizado"
     },
+    "players": {
+      "cloudmusic": "NetEase Cloud Music",
+      "qqmusic": "QQ Music",
+      "kugou": "KuGou",
+      "kuwo": "Kuwo",
+      "spotify": "Spotify",
+      "applemusic": "Apple Music",
+      "yandexmusic": "Yandex Music"
+    },
     "openTrack": "Abrir faixa"
   },
   "instanceNotConnected": "Não conectado a {{host}}. Conecte-se novamente e tente de novo."

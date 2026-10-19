@@ -91,6 +91,15 @@
       "watching": "Смотрит",
       "custom": "Пользовательский статус"
     },
+    "players": {
+      "cloudmusic": "NetEase Cloud Music",
+      "qqmusic": "QQ Music",
+      "kugou": "KuGou",
+      "kuwo": "Kuwo",
+      "spotify": "Spotify",
+      "applemusic": "Apple Music",
+      "yandexmusic": "Яндекс Музыка"
+    },
     "openTrack": "Открыть трек"
   },
   "instanceNotConnected": "Нет подключения к {{host}}. Подключитесь снова и повторите попытку."

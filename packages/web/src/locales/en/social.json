@@ -87,6 +87,15 @@
       "watching": "Watching",
       "custom": "Custom Status"
     },
+    "players": {
+      "cloudmusic": "NetEase Cloud Music",
+      "qqmusic": "QQ Music",
+      "kugou": "KuGou",
+      "kuwo": "Kuwo",
+      "spotify": "Spotify",
+      "applemusic": "Apple Music",
+      "yandexmusic": "Yandex Music"
+    },
     "openTrack": "Open Track"
   },
   "instanceNotConnected": "Not connected to {{host}}. Connect to it again and retry."

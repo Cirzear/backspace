@@ -358,12 +358,6 @@
         "description": "Iniciar oculto na bandeja do sistema em vez de mostrar a janela"
       }
     },
-    "activity": {
-      "preemption": {
-        "label": "Preempção de status de atividade",
-        "description": "Exibe o aplicativo ou jogo iniciado mais recentemente. Quando desativado, mantém o primeiro aplicativo ou jogo detectado como status até que seja fechado."
-      }
-    },
     "updates": {
       "appName": "Backspace Desktop",
       "versionLabel": "Versão {{version}}",

@@ -45,7 +45,7 @@ describe('ActivityCard', () => {
     expect(el).toHaveAttribute('title', 'on call 📟');
   });
 
-  it('renders music status with song title and artist', () => {
+  it('renders music status with song title and artist and localizes player name', async () => {
     const musicActivity: Activity = {
       type: 'listening',
       name: '海阔天空',
@@ -53,8 +53,12 @@ describe('ActivityCard', () => {
       assets: { smallText: '网易云音乐' },
     };
 
-    render(<ActivityCard activities={[musicActivity]} />);
+    const { rerender } = render(<ActivityCard activities={[musicActivity]} />);
     expect(screen.getByText('海阔天空 · Beyond')).toBeInTheDocument();
+    expect(screen.getByText('NetEase Cloud Music')).toBeInTheDocument();
+
+    await setLanguage('zh');
+    rerender(<ActivityCard activities={[musicActivity]} />);
     expect(screen.getByText('网易云音乐')).toBeInTheDocument();
   });
 

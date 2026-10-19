@@ -23,6 +23,7 @@ import {
   startActivityDetection,
   stopActivityDetection,
   getCurrentActivity,
+  getAllCurrentActivities,
   getActivitySettings,
   setActivitySettings,
 } from './activityDetector';
@@ -975,32 +976,48 @@ if (!gotTheLock) {
     desktopUpdater.initAutoUpdater();
 
     // ─── Activity & Media Detection ────────────────────────────────────────
-    let latestProcessActivity = getCurrentActivity();
+    let latestProcessActivities: any[] = getAllCurrentActivities();
     let latestMediaActivity = getCurrentMediaActivity();
 
     const broadcastActivities = () => {
-      const activities = [];
-      if (latestProcessActivity) activities.push(latestProcessActivity);
-      if (latestMediaActivity) activities.push(latestMediaActivity);
+      const activities: any[] = [];
+      for (const proc of latestProcessActivities) {
+        if (latestMediaActivity && proc.type === 'listening') continue;
+        activities.push(proc);
+      }
+      if (latestMediaActivity) {
+        activities.push(latestMediaActivity);
+      }
 
       mainWindow?.webContents.send('activities-detected', activities);
-      mainWindow?.webContents.send('activity-detected', latestProcessActivity || latestMediaActivity || null);
+      mainWindow?.webContents.send('activity-detected', activities[0] || null);
     };
 
-    startActivityDetection((activity) => {
-      latestProcessActivity = activity;
-      broadcastActivities();
-    });
+    startActivityDetection(
+      (_activity) => {
+        // legacy single activity callback maintained
+      },
+      (activities) => {
+        latestProcessActivities = activities;
+        broadcastActivities();
+      },
+    );
 
     startMediaDetection((media) => {
       latestMediaActivity = media;
       broadcastActivities();
     });
 
-    ipcMain.handle('get-current-activity', () => latestProcessActivity || latestMediaActivity || null);
+    ipcMain.handle('get-current-activity', () => {
+      if (latestProcessActivities.length > 0) return latestProcessActivities[0];
+      return latestMediaActivity || null;
+    });
     ipcMain.handle('get-current-activities', () => {
-      const activities = [];
-      if (latestProcessActivity) activities.push(latestProcessActivity);
+      const activities: any[] = [];
+      for (const proc of latestProcessActivities) {
+        if (latestMediaActivity && proc.type === 'listening') continue;
+        activities.push(proc);
+      }
       if (latestMediaActivity) activities.push(latestMediaActivity);
       return activities;
     });

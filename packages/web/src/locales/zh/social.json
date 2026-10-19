@@ -85,6 +85,15 @@
       "watching": "正在观看",
       "custom": "自定义状态"
     },
+    "players": {
+      "cloudmusic": "网易云音乐",
+      "qqmusic": "QQ音乐",
+      "kugou": "酷狗音乐",
+      "kuwo": "酷我音乐",
+      "spotify": "Spotify",
+      "applemusic": "Apple Music",
+      "yandexmusic": "Yandex Music"
+    },
     "openTrack": "打开歌曲"
   },
   "instanceNotConnected": "未连接到 {{host}}。请重新连接后再试。"

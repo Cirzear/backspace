@@ -159,5 +159,12 @@
   "{{count}} stickers selected",
   "{{quantity}} unread direct messages",
   "Choose quality, then approve Android’s screen capture request. Microphone and call audio continue through the native service while you share in the background.",
-  "Sticker"
+  "Sticker",
+  "NetEase Cloud Music",
+  "QQ Music",
+  "KuGou",
+  "Kuwo",
+  "Spotify",
+  "Apple Music",
+  "Yandex Music"
 ]

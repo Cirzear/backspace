@@ -9,12 +9,12 @@ interface PlayerDefinition {
 }
 
 const WIN32_PLAYERS: Record<string, PlayerDefinition> = {
-  'cloudmusic.exe': { key: 'cloudmusic', name: '网易云音乐' },
-  'qqmusic.exe': { key: 'qqmusic', name: 'QQ音乐' },
+  'cloudmusic.exe': { key: 'cloudmusic', name: 'NetEase Cloud Music' },
+  'qqmusic.exe': { key: 'qqmusic', name: 'QQ Music' },
   'spotify.exe': { key: 'spotify', name: 'Spotify' },
   'yandexmusic.exe': { key: 'yandexmusic', name: 'Yandex Music' },
-  'kugou.exe': { key: 'kugou', name: '酷狗音乐' },
-  'kwmusic.exe': { key: 'kwmusic', name: '酷我音乐' },
+  'kugou.exe': { key: 'kugou', name: 'KuGou' },
+  'kwmusic.exe': { key: 'kwmusic', name: 'Kuwo' },
   'foobar2000.exe': { key: 'foobar2000', name: 'foobar2000' },
   'aimp.exe': { key: 'aimp', name: 'AIMP' },
   'musicbee.exe': { key: 'musicbee', name: 'MusicBee' },
@@ -69,15 +69,33 @@ export function parseWin32TasklistOutput(stdout: string): MediaTrackInfo | null 
   return null;
 }
 
+/**
+ * Decodes buffer from Windows CLI output (tasklist, etc.).
+ * Windows consoles default to OEM code pages (e.g. CP936/GBK on Simplified Chinese).
+ * Tries UTF-8 first, then falls back to GB18030 to prevent mojibake.
+ */
+export function decodeWin32Output(buf: Buffer): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buf);
+  } catch {
+    try {
+      return new TextDecoder('gb18030').decode(buf);
+    } catch {
+      return buf.toString('utf8');
+    }
+  }
+}
+
 function pollWin32(): void {
   if (isPolling) return;
   isPolling = true;
 
-  execFile('tasklist', ['/v', '/fo', 'csv', '/nh'], { maxBuffer: 2 * 1024 * 1024 }, (err, stdout) => {
+  execFile('tasklist', ['/v', '/fo', 'csv', '/nh'], { maxBuffer: 2 * 1024 * 1024, encoding: 'buffer' }, (err, stdout) => {
     isPolling = false;
     if (err || !stdout) return;
 
-    const detected = parseWin32TasklistOutput(stdout);
+    const rawString = typeof stdout === 'string' ? stdout : decodeWin32Output(stdout);
+    const detected = parseWin32TasklistOutput(rawString);
 
     if (detected) {
       if (

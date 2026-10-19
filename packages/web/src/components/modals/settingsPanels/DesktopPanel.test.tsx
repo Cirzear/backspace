@@ -64,24 +64,3 @@ describe('DesktopPanel auto-launch capability', () => {
     expect(host.getAutoLaunchSettings).toHaveBeenCalledOnce();
   });
 });
-
-describe('DesktopPanel activity preemption setting', () => {
-  it('shows activity preemption toggle when getActivitySettings is supported', async () => {
-    const getActivitySettings = vi.fn().mockResolvedValue({ enablePreemption: false });
-    const setActivitySettings = vi.fn().mockResolvedValue({ enablePreemption: true });
-    Object.defineProperty(window, 'backspace', {
-      configurable: true,
-      writable: true,
-      value: {
-        isSandboxed: vi.fn().mockResolvedValue(false),
-        getAutoLaunchSettings: vi.fn().mockResolvedValue({ openAtLogin: false, startMinimized: false }),
-        getActivitySettings,
-        setActivitySettings,
-      },
-    });
-
-    render(<DesktopPanel />);
-    expect(await screen.findByText('Activity status preemption')).toBeInTheDocument();
-    expect(getActivitySettings).toHaveBeenCalledOnce();
-  });
-});

@@ -3,6 +3,8 @@ import { getPrimaryActivity } from '@backspace/shared/src/activities.js';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import { replaceEmojiShortcodes, useEmojiShortcodeNames } from '../../utils/emojiShortcodes';
+import { AppIcon } from './AppIcon';
+import { formatPlayerName } from './ProfileActivities';
 
 interface ActivityCardProps {
   activities: Activity[];
@@ -66,14 +68,15 @@ export function ActivityCard({ activities, fallbackCustomStatus }: ActivityCardP
     const musicLine = `${music.name}${music.details ? ` · ${music.details}` : ''}`;
     return (
       <>
-        <div className="text-[11px] leading-[1.3] text-txt-secondary truncate" title={processActivity.name}>
-          {processActivity.name}
+        <div className="text-[11px] leading-[1.3] text-txt-secondary truncate flex items-center gap-1.5" title={processActivity.name}>
+          <AppIcon name={processActivity.name} type={processActivity.type} size={11} className="flex-shrink-0" />
+          <span className="truncate">{processActivity.name}</span>
         </div>
         <div
           className="text-[10px] leading-[1.3] text-accent-sky truncate flex items-center gap-1"
           title={musicLine}
         >
-          <span className="text-[9px]">🎵</span>
+          <AppIcon name={music.assets?.smallText || music.name} type="listening" size={10} fallbackEmoji="🎵" className="flex-shrink-0" />
           <span className="truncate">{musicLine}</span>
         </div>
       </>
@@ -85,8 +88,8 @@ export function ActivityCard({ activities, fallbackCustomStatus }: ActivityCardP
     const musicLine = `${music.name}${music.details ? ` · ${music.details}` : ''}`;
     return (
       <>
-        <div className="text-[11px] leading-[1.3] text-txt-secondary truncate flex items-center gap-1" title={musicLine}>
-          <span className="text-accent-sky text-[10px]">🎵</span>
+        <div className="text-[11px] leading-[1.3] text-txt-secondary truncate flex items-center gap-1.5" title={musicLine}>
+          <AppIcon name={music.assets?.smallText || music.name} type="listening" size={11} fallbackEmoji="🎵" className="flex-shrink-0" />
           <span className="truncate">{musicLine}</span>
         </div>
         {music.timestamps?.start ? (
@@ -95,7 +98,7 @@ export function ActivityCard({ activities, fallbackCustomStatus }: ActivityCardP
           </div>
         ) : music.assets?.smallText ? (
           <div className="text-[10px] leading-[1.3] text-txt-tertiary truncate">
-            {music.assets.smallText}
+            {formatPlayerName(music.assets.smallText, t)}
           </div>
         ) : null}
       </>
@@ -105,9 +108,10 @@ export function ActivityCard({ activities, fallbackCustomStatus }: ActivityCardP
   // Process only (Playing / Streaming / Watching)
   return (
     <>
-      <div className="text-[11px] leading-[1.3] text-txt-secondary truncate" title={processActivity!.name}>
-        {processActivity!.name}
-      </div>
+        <div className="text-[11px] leading-[1.3] text-txt-secondary truncate flex items-center gap-1.5" title={processActivity!.name}>
+          <AppIcon name={processActivity!.name} type={processActivity!.type} size={11} className="flex-shrink-0" />
+          <span className="truncate" title={processActivity!.name}>{processActivity!.name}</span>
+        </div>
       {processActivity!.timestamps?.start && (
         <div className="text-[10px] leading-[1.3] text-txt-tertiary">
           {formatElapsed(processActivity!.timestamps.start, t)}

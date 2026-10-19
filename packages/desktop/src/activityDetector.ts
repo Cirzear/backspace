@@ -8,6 +8,7 @@ import {
   loadActivitySettings,
   saveActivitySettings,
 } from './activitySettings';
+import { decodeWin32Output } from './mediaDetector/win32Media';
 
 // ─── Local Activity type (structural match with @backspace/shared Activity) ─
 
@@ -16,7 +17,7 @@ interface ActivityTimestamps {
   end?: number;
 }
 
-interface Activity {
+export interface Activity {
   type: string;
   name: string;
   details?: string;
@@ -60,6 +61,7 @@ let intervalId: NodeJS.Timeout | null = null;
 let isPolling = false;
 let hasErrored = false;
 let onChangeCallback: ((activity: Activity | null) => void) | null = null;
+let onActivitiesChangeCallback: ((activities: Activity[]) => void) | null = null;
 
 // ─── Dictionary loading ────────────────────────────────────────────────────
 
@@ -488,7 +490,18 @@ export function resolveActiveActivity(
   return list[0] ?? null;
 }
 
+export function getAllCurrentActivities(): Activity[] {
+  return Array.from(trackedApps.values()).map((tracked) => ({
+    type: tracked.entry.type ?? 'playing',
+    name: tracked.entry.name,
+    timestamps: { start: tracked.firstSeenAt },
+  }));
+}
+
 function updateCurrentActivity(): void {
+  const all = getAllCurrentActivities();
+  onActivitiesChangeCallback?.(all);
+
   const matched = resolveActiveActivity(trackedApps, currentSettings.enablePreemption, currentGameId);
 
   if (matched) {
@@ -516,7 +529,7 @@ function poll(): void {
 
   const { executable, args } = getProcessCommand();
 
-  execFile(executable, args, { maxBuffer: 1024 * 1024 }, (error, stdout) => {
+  execFile(executable, args, { maxBuffer: 1024 * 1024, encoding: 'buffer' }, (error, stdout) => {
     isPolling = false;
 
     if (error) {
@@ -528,7 +541,8 @@ function poll(): void {
       return;
     }
 
-    const runningProcesses = parseProcessList(stdout);
+    const rawString = typeof stdout === 'string' ? stdout : decodeWin32Output(stdout);
+    const runningProcesses = parseProcessList(rawString);
     const now = Date.now();
     const currentlyRunning = new Set<string>();
 
@@ -564,6 +578,7 @@ function poll(): void {
 
 export function startActivityDetection(
   onActivityChange: (activity: Activity | null) => void,
+  onActivitiesChange?: (activities: Activity[]) => void,
 ): void {
   if (intervalId) return; // Already running
 
@@ -582,6 +597,7 @@ export function startActivityDetection(
   }
 
   onChangeCallback = onActivityChange;
+  onActivitiesChangeCallback = onActivitiesChange ?? null;
   hasErrored = false;
 
   // Run first poll immediately
@@ -602,6 +618,7 @@ export function stopActivityDetection(): void {
     intervalId = null;
   }
   onChangeCallback = null;
+  onActivitiesChangeCallback = null;
   trackedApps.clear();
 }
 

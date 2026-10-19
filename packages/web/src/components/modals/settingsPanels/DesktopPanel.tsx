@@ -75,53 +75,6 @@ function AutoLaunchSettings() {
   );
 }
 
-function ActivityDetectionSettings() {
-  const { t } = useTranslation('settings');
-  const [preemption, setPreemption] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (!window.backspace?.getActivitySettings) {
-      setLoading(false);
-      return;
-    }
-    window.backspace
-      .getActivitySettings()
-      .then((settings) => {
-        setPreemption(settings.enablePreemption);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  }, []);
-
-  const handlePreemptionChange = async (enabled: boolean) => {
-    if (busy || !window.backspace?.setActivitySettings) return;
-    setBusy(true);
-    try {
-      const result = await window.backspace.setActivitySettings({ enablePreemption: enabled });
-      setPreemption(result.enablePreemption);
-    } catch (err) {
-      console.error('[activityDetection] setActivitySettings failed:', err);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (loading || !window.backspace?.getActivitySettings) return null;
-
-  return (
-    <div className="flex items-center justify-between py-1">
-      <div className="flex-1 mr-4">
-        <div className="text-sm text-txt-primary">{t('desktop.activity.preemption.label')}</div>
-        <div className="text-xs text-txt-tertiary mt-0.5">
-          {t('desktop.activity.preemption.description')}
-        </div>
-      </div>
-      <Toggle enabled={preemption} onChange={handlePreemptionChange} disabled={busy} />
-    </div>
-  );
-}
 
 /**
  * Formats a byte-per-second rate for the download line. Deliberately coarse:
@@ -294,7 +247,6 @@ export function DesktopPanel() {
 
       <div className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3.5 space-y-3">
         {sandboxed === false && <AutoLaunchSettings />}
-        <ActivityDetectionSettings />
         <UpdateSettings />
 
         <div className="border-t border-white/[0.04]" />

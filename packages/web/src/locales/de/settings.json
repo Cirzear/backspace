@@ -357,12 +357,6 @@
         "description": "Versteckt im Infobereich starten, statt das Fenster zu zeigen"
       }
     },
-    "activity": {
-      "preemption": {
-        "label": "Aktivitätsstatus-Priorisierung",
-        "description": "Zeigt die zuletzt gestartete App oder das zuletzt gestartete Spiel an. Wenn deaktiviert, bleibt die zuerst erkannte App oder das zuerst erkannte Spiel als Status erhalten, bis sie beendet wird."
-      }
-    },
     "updates": {
       "appName": "Backspace Desktop",
       "versionLabel": "Version {{version}}",

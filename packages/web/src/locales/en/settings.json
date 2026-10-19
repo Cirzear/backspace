@@ -357,12 +357,6 @@
         "description": "Start hidden in the system tray instead of showing the window"
       }
     },
-    "activity": {
-      "preemption": {
-        "label": "Activity status preemption",
-        "description": "Show the most recently launched app or game. When turned off, keeps the first detected app or game as your status until it closes."
-      }
-    },
     "updates": {
       "appName": "Backspace Desktop",
       "versionLabel": "Version {{version}}",

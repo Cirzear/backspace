@@ -3,6 +3,7 @@ import type { Activity } from '@backspace/shared';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { replaceEmojiShortcodes } from '../../utils/emojiShortcodes';
+import { AppIcon } from './AppIcon';
 
 interface ProfileActivitiesProps {
   activities: Activity[];
@@ -14,9 +15,36 @@ function formatElapsed(startMs: number, t: TFunction<any, any>): string {
   const minutes = Math.floor(elapsed / 60000);
   const hours = Math.floor(minutes / 60);
   const duration = hours > 0
-    ? t('time.hoursMinutesShort', { hours, minutes: minutes % 60 })
-    : t('time.minutesShort', { minutes });
-  return t('time.elapsed', { duration });
+    ? t('common:time.hoursMinutesShort', { hours, minutes: minutes % 60 })
+    : t('common:time.minutesShort', { minutes });
+  return t('common:time.elapsed', { duration });
+}
+
+export function formatPlayerName(player: string | undefined, t: TFunction<any, any>): string {
+  if (!player) return '';
+  const key = player.toLowerCase().replace(/[\s\-_.]+/g, '');
+  if (key === 'cloudmusic' || key === '网易云音乐' || key === 'neteasecloudmusic') {
+    return t('social:activity.players.cloudmusic', { defaultValue: 'NetEase Cloud Music' });
+  }
+  if (key === 'qqmusic' || key === 'qq音乐') {
+    return t('social:activity.players.qqmusic', { defaultValue: 'QQ Music' });
+  }
+  if (key === 'kugou' || key === '酷狗音乐' || key === 'kugoumusic') {
+    return t('social:activity.players.kugou', { defaultValue: 'KuGou' });
+  }
+  if (key === 'kuwo' || key === 'kwmusic' || key === '酷我音乐' || key === 'kuwomusic') {
+    return t('social:activity.players.kuwo', { defaultValue: 'Kuwo' });
+  }
+  if (key === 'spotify') {
+    return t('social:activity.players.spotify', { defaultValue: 'Spotify' });
+  }
+  if (key === 'applemusic' || key === 'apple') {
+    return t('social:activity.players.applemusic', { defaultValue: 'Apple Music' });
+  }
+  if (key === 'yandexmusic' || key === 'яндексмузыка') {
+    return t('social:activity.players.yandexmusic', { defaultValue: 'Yandex Music' });
+  }
+  return player;
 }
 
 function formatSeconds(totalSeconds: number): string {
@@ -55,19 +83,20 @@ function MusicProgress({ start, end }: { start: number; end: number }) {
 
 function MusicCard({ activity }: { activity: Activity }) {
   const { t } = useTranslation(['social', 'common']);
-  const player = activity.assets?.smallText;
+  const player = formatPlayerName(activity.assets?.smallText, t);
   const hasCover = !!activity.assets?.largeImage && activity.assets.largeImage.startsWith('https://');
 
   return (
     <div className="rounded-lg p-3 bg-accent-sky/[0.08] border border-accent-sky/20 mb-2.5">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-accent-sky">
-          <span>🎵</span>
+          <AppIcon name={activity.assets?.smallText || activity.name} type="listening" size={13} fallbackEmoji="🎵" />
           <span>{t('social:activity.types.listening', { defaultValue: 'Listening to Music' })}</span>
         </div>
         {player && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent-sky/20 text-accent-sky font-medium">
-            {player}
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent-sky/20 text-accent-sky font-medium flex items-center gap-1">
+            <AppIcon name={activity.assets?.smallText} size={12} />
+            <span>{player}</span>
           </span>
         )}
       </div>
@@ -80,8 +109,8 @@ function MusicCard({ activity }: { activity: Activity }) {
             className="w-12 h-12 rounded object-cover flex-shrink-0 shadow-sm"
           />
         ) : (
-          <div className="w-12 h-12 rounded bg-accent-sky/20 flex items-center justify-center text-accent-sky flex-shrink-0 text-xl shadow-sm">
-            🎵
+          <div className="w-12 h-12 rounded bg-accent-sky/20 flex items-center justify-center text-accent-sky flex-shrink-0 shadow-sm">
+            <AppIcon name={activity.assets?.smallText || activity.name} type="listening" size={24} fallbackEmoji="🎵" />
           </div>
         )}
         <div className="min-w-0 flex-1">
@@ -138,39 +167,62 @@ function ProcessCard({
   icon: string;
 }) {
   const { t } = useTranslation(['social', 'common']);
+  const hasCover = !!activity.assets?.largeImage && activity.assets.largeImage.startsWith('https://');
 
   return (
     <div className={`rounded-lg p-3 ${accentClass} mb-2.5`}>
-      <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider mb-1.5">
-        <span>{icon}</span>
+      <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider mb-2">
+        <AppIcon name={activity.name} type={activity.type} size={13} fallbackEmoji={icon} />
         <span>{headerText}</span>
       </div>
-      <div className="text-[13px] font-semibold text-txt-primary truncate" title={activity.name}>
-        {activity.name}
+      <div className="flex gap-2.5 items-center">
+        {hasCover ? (
+          <img
+            src={activity.assets!.largeImage}
+            alt=""
+            className="w-10 h-10 rounded object-cover flex-shrink-0 shadow-sm"
+          />
+        ) : (
+          <div className="w-9 h-9 rounded bg-white/10 flex items-center justify-center flex-shrink-0 shadow-sm">
+            <AppIcon name={activity.name} type={activity.type} size={20} fallbackEmoji={icon} />
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] font-semibold text-txt-primary truncate" title={activity.name}>
+            {activity.name}
+          </div>
+          {activity.details && (
+            <div className="text-[12px] text-txt-secondary truncate mt-0.5" title={activity.details}>
+              {activity.details}
+            </div>
+          )}
+          {activity.timestamps?.start && (
+            <div className="text-[10px] text-txt-tertiary mt-1">
+              {formatElapsed(activity.timestamps.start, t)}
+            </div>
+          )}
+        </div>
       </div>
-      {activity.details && (
-        <div className="text-[12px] text-txt-secondary truncate mt-0.5" title={activity.details}>
-          {activity.details}
-        </div>
-      )}
-      {activity.timestamps?.start && (
-        <div className="text-[10px] text-txt-tertiary mt-1.5">
-          {formatElapsed(activity.timestamps.start, t)}
-        </div>
-      )}
     </div>
   );
 }
+
+const ACTIVITY_PRIORITY: Record<string, number> = {
+  streaming: 5,
+  playing: 4,
+  watching: 3,
+  listening: 2,
+  custom: 1,
+};
 
 export function ProfileActivities({ activities, skipCustom }: ProfileActivitiesProps) {
   const { t } = useTranslation(['social', 'common']);
   if (!activities || activities.length === 0) return null;
 
-  const game = activities.find((a) => a.type === 'playing');
-  const stream = activities.find((a) => a.type === 'streaming');
-  const watching = activities.find((a) => a.type === 'watching');
-  const music = activities.find((a) => a.type === 'listening');
   const custom = !skipCustom ? activities.find((a) => a.type === 'custom') : null;
+  const nonCustom = activities
+    .filter((a) => a.type !== 'custom')
+    .sort((a, b) => (ACTIVITY_PRIORITY[b.type] ?? 0) - (ACTIVITY_PRIORITY[a.type] ?? 0));
 
   return (
     <div className="mt-3">
@@ -180,34 +232,46 @@ export function ProfileActivities({ activities, skipCustom }: ProfileActivitiesP
         </div>
       )}
 
-      {stream && (
-        <ProcessCard
-          activity={stream}
-          accentClass="bg-accent-rose/[0.08] border border-accent-rose/20 text-accent-rose"
-          headerText={t('social:activity.types.streaming', { defaultValue: 'Streaming' })}
-          icon="🔴"
-        />
-      )}
-
-      {game && (
-        <ProcessCard
-          activity={game}
-          accentClass="bg-accent-mint/[0.08] border border-accent-mint/20 text-accent-mint"
-          headerText={t('social:activity.types.playing', { defaultValue: 'Playing a Game' })}
-          icon="🎮"
-        />
-      )}
-
-      {watching && (
-        <ProcessCard
-          activity={watching}
-          accentClass="bg-accent-lavender/[0.08] border border-accent-lavender/20 text-accent-lavender"
-          headerText={t('social:activity.types.watching', { defaultValue: 'Watching' })}
-          icon="📺"
-        />
-      )}
-
-      {music && <MusicCard activity={music} />}
+      {nonCustom.map((activity, index) => {
+        const key = `${activity.type}-${activity.name}-${index}`;
+        if (activity.type === 'listening') {
+          return <MusicCard key={key} activity={activity} />;
+        }
+        if (activity.type === 'streaming') {
+          return (
+            <ProcessCard
+              key={key}
+              activity={activity}
+              accentClass="bg-accent-rose/[0.08] border border-accent-rose/20 text-accent-rose"
+              headerText={t('social:activity.types.streaming', { defaultValue: 'Streaming' })}
+              icon="🔴"
+            />
+          );
+        }
+        if (activity.type === 'playing') {
+          return (
+            <ProcessCard
+              key={key}
+              activity={activity}
+              accentClass="bg-accent-mint/[0.08] border border-accent-mint/20 text-accent-mint"
+              headerText={t('social:activity.types.playing', { defaultValue: 'Playing a Game' })}
+              icon="🎮"
+            />
+          );
+        }
+        if (activity.type === 'watching') {
+          return (
+            <ProcessCard
+              key={key}
+              activity={activity}
+              accentClass="bg-accent-lavender/[0.08] border border-accent-lavender/20 text-accent-lavender"
+              headerText={t('social:activity.types.watching', { defaultValue: 'Watching' })}
+              icon="📺"
+            />
+          );
+        }
+        return null;
+      })}
     </div>
   );
 }

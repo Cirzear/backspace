@@ -48,7 +48,7 @@ describe('ProfileActivities', () => {
     expect(screen.getByText('Live on Twitch')).toBeInTheDocument();
   });
 
-  it('renders rich Music card with player badge, artist, and track link', () => {
+  it('renders rich Music card with player badge, artist, and track link, and localizes player name', async () => {
     const now = Date.now();
     const music: Activity = {
       type: 'listening',
@@ -66,9 +66,9 @@ describe('ProfileActivities', () => {
       url: 'https://music.163.com/#/song?id=186016',
     };
 
-    render(<ProfileActivities activities={[music]} />);
+    const { rerender } = render(<ProfileActivities activities={[music]} />);
     expect(screen.getByText('Listening to Music')).toBeInTheDocument();
-    expect(screen.getByText('网易云音乐')).toBeInTheDocument();
+    expect(screen.getByText('NetEase Cloud Music')).toBeInTheDocument();
     expect(screen.getByText('海阔天空')).toBeInTheDocument();
     expect(screen.getByText('Beyond')).toBeInTheDocument();
     expect(screen.getByText('光辉岁月精选')).toBeInTheDocument();
@@ -77,10 +77,26 @@ describe('ProfileActivities', () => {
       'href',
       'https://music.163.com/#/song?id=186016',
     );
+
+    await setLanguage('zh');
+    rerender(<ProfileActivities activities={[music]} />);
+    expect(screen.getByText('正在收听')).toBeInTheDocument();
+    expect(screen.getByText('网易云音乐')).toBeInTheDocument();
+    await setLanguage('en');
   });
 
-  it('renders both Game and Music card concurrently', () => {
-    const game: Activity = {
+  it('renders all concurrent activities: streaming, multiple games, and music', () => {
+    const stream: Activity = {
+      type: 'streaming',
+      name: 'OBS Studio',
+      details: 'Live stream',
+    };
+    const game1: Activity = {
+      type: 'playing',
+      name: 'Counter-Strike 2',
+      timestamps: { start: Date.now() - 3600 * 1000 },
+    };
+    const game2: Activity = {
       type: 'playing',
       name: 'Elden Ring',
     };
@@ -91,13 +107,14 @@ describe('ProfileActivities', () => {
       assets: { smallText: 'Spotify' },
     };
 
-    render(<ProfileActivities activities={[game, music]} />);
+    render(<ProfileActivities activities={[stream, game1, game2, music]} />);
+    expect(screen.getByText('Streaming')).toBeInTheDocument();
+    expect(screen.getByText('OBS Studio')).toBeInTheDocument();
+    expect(screen.getByText('Counter-Strike 2')).toBeInTheDocument();
+    expect(screen.getByText('1h 0m elapsed')).toBeInTheDocument();
     expect(screen.getByText('Elden Ring')).toBeInTheDocument();
-    expect(screen.getByText('Playing a Game')).toBeInTheDocument();
     expect(screen.getByText('Starboy')).toBeInTheDocument();
-    expect(screen.getByText('The Weeknd')).toBeInTheDocument();
     expect(screen.getByText('Spotify')).toBeInTheDocument();
-    expect(screen.getByText('Listening to Music')).toBeInTheDocument();
   });
 
   it('respects skipCustom prop', () => {
