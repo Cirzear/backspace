@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import {
   pickProcName,
-  deriveWindowsExe,
+  deriveWindowsExes,
   readProcessInfos,
   readProcessInfoByPid,
   parseProcessList,
@@ -651,19 +651,19 @@ describe('Wine processes', () => {
     ]);
     const info = readProcessInfos(root)[0]!;
     expect(info.name).toBe('wine64-preloader');
-    expect(info.winExe).toBe('StarRail.exe');
+    expect(info.winExes).toContain('StarRail.exe');
     expect(findMatchingGame([info], dict)?.id).toBe('honkai-sr');
   });
 
   it('reads a program name with spaces and arguments out of one command line token', () => {
-    expect(deriveWindowsExe(PRELOADER, ['C:\\Program Files\\Stardew Valley\\Stardew Valley.exe -console'], null))
-      .toBe('Stardew Valley.exe');
+    expect(deriveWindowsExes(PRELOADER, ['C:\\Program Files\\Stardew Valley\\Stardew Valley.exe -console'], null))
+      .toContain('Stardew Valley.exe');
   });
 
   it('falls back to the kernel-truncated comm, which still matches a longer dictionary name', () => {
     const root = makeFakeProc([{ pid: 6, exe: PRELOADER, comm: 'Stardew Valley.' }]);
     const info = readProcessInfos(root)[0]!;
-    expect(info.winExe).toBe('Stardew Valley.');
+    expect(info.winExes).toEqual(['Stardew Valley.']);
     expect(findMatchingGame([info], dict)?.id).toBe('stardew');
   });
 
@@ -675,18 +675,18 @@ describe('Wine processes', () => {
   });
 
   it('finds the program on the `wine game.exe` launcher process too', () => {
-    expect(deriveWindowsExe('/usr/bin/wine', ['wine', '/games/StarRail.exe'], 'wine')).toBe('StarRail.exe');
+    expect(deriveWindowsExes('/usr/bin/wine', ['wine', '/games/StarRail.exe'], 'wine')).toEqual(['StarRail.exe']);
   });
 
   it('does not take a native program for a Wine one because an argument ends in .exe', () => {
-    expect(deriveWindowsExe('/usr/bin/vim', ['vim', 'StarRail.exe'], 'vim')).toBeUndefined();
+    expect(deriveWindowsExes('/usr/bin/vim', ['vim', 'StarRail.exe'], 'vim')).toBeUndefined();
     const root = makeFakeProc([{ pid: 9, exe: '/usr/bin/vim', cmdline: ['vim', 'StarRail.exe'], comm: 'vim' }]);
     expect(findMatchingGame(readProcessInfos(root), dict)).toBeNull();
   });
 
   it('ignores wineserver and the loader of an unrelated program', () => {
-    expect(deriveWindowsExe('/opt/wine/bin/wineserver', ['wineserver', '-p'], 'wineserver')).toBeUndefined();
-    expect(deriveWindowsExe(PRELOADER, ['C:\\windows\\system32\\services.exe'], 'services.exe')).toBe('services.exe');
+    expect(deriveWindowsExes('/opt/wine/bin/wineserver', ['wineserver', '-p'], 'wineserver')).toBeUndefined();
+    expect(deriveWindowsExes(PRELOADER, ['C:\\windows\\system32\\services.exe'], 'services.exe')).toBeUndefined();
     const root = makeFakeProc([{ pid: 10, exe: PRELOADER, cmdline: ['C:\\windows\\system32\\services.exe'], comm: 'services.exe' }]);
     expect(findMatchingGame(readProcessInfos(root), dict)).toBeNull();
   });
@@ -705,5 +705,62 @@ describe('the shipped dictionary under Wine', () => {
     const root = makeFakeProc([{ pid: 3, exe: PRELOADER, cmdline: [`Z:\\games\\${exe}`], comm: exe.slice(0, 15) }]);
     const match = findMatchingGame(readProcessInfos(root), seed?.entries ?? []);
     expect(match?.name).toBe(name);
+  });
+});
+
+describe('Wine processes as they really look', () => {
+  const dict = [
+    { id: 'zzz', name: 'Zenless Zone Zero', processes: ['ZenlessZoneZero.exe'] },
+    { id: 'stardew', name: 'Stardew Valley', processes: ['Stardew Valley.exe', 'StardewValley'] },
+    { id: 'steam', name: 'Steam', processes: ['steam.exe'] },
+  ];
+  const LOADER = '/mnt/hd_G/Games/ZZZ/runners/spritz-wine/bin/wine64-preloader';
+
+  it("finds Zenless Zone Zero from Proton's steam.exe shim, which names the game as its argument", () => {
+    const root = makeFakeProc([
+      { pid: 1, exe: LOADER, cmdline: ['steam.exe', 'ZenlessZoneZero.exe', '-window-mode', 'exclusive'], comm: 'steam.exe' },
+    ]);
+    const info = readProcessInfos(root)[0]!;
+    expect(info.winExes).toEqual(['ZenlessZoneZero.exe']);
+    expect(findMatchingGame([info], dict)?.id).toBe('zzz');
+  });
+
+  it('finds the game itself from a bare program name, and its comm', () => {
+    const root = makeFakeProc([
+      { pid: 2, exe: LOADER, cmdline: ['ZenlessZoneZero.exe', '-window-mode', 'exclusive'], comm: 'ZenlessZoneZero' },
+    ]);
+    const info = readProcessInfos(root)[0]!;
+    expect(info.winExes).toEqual(['ZenlessZoneZero.exe', 'ZenlessZoneZero']);
+    expect(findMatchingGame([info], dict)?.id).toBe('zzz');
+  });
+
+  it('finds Stardew Valley whether its Windows path arrives as one argv token or several', () => {
+    for (const cmdline of [
+      ['C:\\GOG Games\\Stardew Valley\\Stardew Valley.exe'],
+      ['C:\\GOG', 'Games\\Stardew', 'Valley\\Stardew', 'Valley.exe'],
+    ]) {
+      const root = makeFakeProc([{ pid: 3, exe: LOADER, cmdline, comm: 'Stardew Valley.' }]);
+      const info = readProcessInfos(root)[0]!;
+      expect(findMatchingGame([info], dict)?.id).toBe('stardew');
+    }
+  });
+
+  it("finds Stardew Valley on the `start.exe /wait` wrapper that outlives the launch, and nothing else a prefix runs", () => {
+    const wrapper = ['C:\\windows\\system32\\start.exe', '/wait', '/d', 'C:\\GOG Games\\Stardew Valley', 'C:\\GOG Games\\Stardew Valley\\Stardew Valley.exe'];
+    expect(deriveWindowsExes(LOADER, wrapper, 'start.exe')).toContain('Stardew Valley.exe');
+    for (const [args, comm] of [
+      [['C:\\windows\\system32\\services.exe'], 'services.exe'],
+      [['C:\\windows\\system32\\svchost.exe', '-k', 'netsvcs'], 'svchost.exe'],
+      [['C:\\windows\\system32\\explorer.exe', '/desktop'], 'explorer.exe'],
+      [['G:\\UnityCrashHandler64.exe', '--attach', '276'], 'UnityCrashHandl'],
+      [['C:\\Program Files (x86)\\Microsoft\\EdgeUpdate\\MicrosoftEdgeUpdate.exe', '/c'], 'MicrosoftEdgeUp'],
+    ] as Array<[string[], string]>) {
+      expect(deriveWindowsExes(LOADER, args, comm)).toBeUndefined();
+    }
+  });
+
+  it('keeps the shim as the program only when it names nothing else', () => {
+    expect(deriveWindowsExes(LOADER, ['steam.exe'], 'steam.exe')).toEqual(['steam.exe']);
+    expect(deriveWindowsExes(LOADER, ['steam.exe', 'Game.exe'], 'steam.exe')).toEqual(['Game.exe']);
   });
 });

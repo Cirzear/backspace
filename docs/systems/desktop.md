@@ -1012,7 +1012,7 @@ Direction legend: **fire** = `ipcRenderer.send` (no response), **invoke** = `ipc
 Detects running games/applications by polling the OS process list every 15 seconds and matching process names (and, on Linux, command lines) against a game dictionary.
 
 On Linux the poll walks `/proc` directly — no subprocess, no lossy `ps` parsing:
-- `/proc/<pid>/exe` symlink → full executable name with case preserved (native programs and AppImage mounts). For a Wine/Proton process this is the Wine *loader* (`wine64-preloader`), never the game, so a Wine process also gets `winExe`, the Windows program it runs (`deriveWindowsExe`): the first `<name>.exe` in its command line (a Windows path such as `Z:\games\StarRail.exe`) or, failing that, its kernel-truncated `comm`. A process counts as Wine when its loader is `wine*` (not `wineserver`) or its command line starts with a Windows path; a native program with `foo.exe` among its arguments does not. Bottles, Heroic, Lutris, Sleepy Launcher and plain `wine` all run games this way, so every `.exe` name in the dictionary matches under any of them
+- `/proc/<pid>/exe` symlink → full executable name with case preserved (native programs and AppImage mounts). For a Wine/Proton process this is the Wine *loader* (`wine64-preloader`), never the game, so a Wine process also gets `winExes`, the Windows programs it may run (`deriveWindowsExes`): every `<name>.exe` in its command line read as one string (a Windows path with spaces may arrive as one argv token or several; Proton's `steam.exe Game.exe` shim yields `Game.exe`) and its kernel-truncated `comm`. Wine plumbing every prefix runs (`start.exe`, `explorer.exe`, `services.exe`, `svchost.exe`, crash handlers, ...) is never a candidate. A process counts as Wine when its loader is `wine*` (not `wineserver`) or its command line starts with a Windows path; a native program with `foo.exe` among its arguments does not. Bottles, Heroic, Lutris, Sleepy Launcher and plain `wine` all run games this way, so every `.exe` name in the dictionary matches under any of them
 - `/proc/<pid>/cmdline` → NUL-separated argv, joined with spaces and matched against `cmdlinePatterns`
 - `/proc/<pid>/comm` → last-resort name, kernel-truncated to 15 characters
 
@@ -1092,7 +1092,7 @@ Max buffer for command output: 1MB. Command-based names are lowercased into a `S
 
 A running process matches a dictionary entry when any of these hold:
 
-1. **Name match (case-insensitive):** the process name, or for a Wine process its `winExe`, equals one of `entry.processes`
+1. **Name match (case-insensitive):** the process name, or for a Wine process any of its `winExes`, equals one of `entry.processes`
 2. **comm truncation:** the dictionary name is longer than 15 characters, the process name is exactly 15 characters, and the dictionary name starts with it — because the kernel stores `comm` in a 16-byte buffer (`minecraft-launcher` → `minecraft-launc`)
 3. **Command-line pattern:** any of `entry.cmdlinePatterns` appears (case-insensitive) in the space-joined argv
 
