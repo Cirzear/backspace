@@ -90,13 +90,12 @@ function MusicCard({ activity }: { activity: Activity }) {
     <div className="rounded-lg p-3 bg-accent-sky/[0.08] border border-accent-sky/20 mb-2.5">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-accent-sky">
-          <AppIcon name={activity.assets?.smallText || activity.name} type="listening" size={13} fallbackEmoji="🎵" />
+          <span>🎵</span>
           <span>{t('social:activity.types.listening', { defaultValue: 'Listening to Music' })}</span>
         </div>
         {player && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent-sky/20 text-accent-sky font-medium flex items-center gap-1">
-            <AppIcon name={activity.assets?.smallText} size={12} />
-            <span>{player}</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent-sky/20 text-accent-sky font-medium">
+            {player}
           </span>
         )}
       </div>
@@ -172,7 +171,7 @@ function ProcessCard({
   return (
     <div className={`rounded-lg p-3 ${accentClass} mb-2.5`}>
       <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider mb-2">
-        <AppIcon name={activity.name} type={activity.type} size={13} fallbackEmoji={icon} />
+        <span>{icon}</span>
         <span>{headerText}</span>
       </div>
       <div className="flex gap-2.5 items-center">

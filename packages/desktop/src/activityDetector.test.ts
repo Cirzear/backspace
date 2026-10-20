@@ -4,6 +4,7 @@ import path from 'path';
 import os from 'os';
 import {
   resolveActiveActivity,
+  isObsStreaming,
   type TrackedApp,
 } from './activityDetector';
 import {
@@ -138,3 +139,67 @@ describe('activitySettings persistence', () => {
     expect(loadActivitySettings().enablePreemption).toBe(false);
   });
 });
+
+describe('isObsStreaming', () => {
+  let obsLogDir: string;
+
+  beforeEach(() => {
+    vi.spyOn(os, 'homedir').mockReturnValue(tempDir);
+    process.env.APPDATA = tempDir;
+    process.env.XDG_CONFIG_HOME = tempDir;
+
+    // Platform-specific obs log dir
+    if (process.platform === 'win32') {
+      obsLogDir = path.join(tempDir, 'obs-studio', 'logs');
+    } else if (process.platform === 'darwin') {
+      obsLogDir = path.join(tempDir, 'Library', 'Application Support', 'obs-studio', 'logs');
+    } else {
+      obsLogDir = path.join(tempDir, 'obs-studio', 'logs');
+    }
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns false when OBS logs directory does not exist', () => {
+    expect(isObsStreaming()).toBe(false);
+  });
+
+  it('returns false when OBS is open but idle (no stream started)', () => {
+    fs.mkdirSync(obsLogDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(obsLogDir, '2026-10-19 22-00-00.txt'),
+      '12:00:00.000: CPU Name: Apple M1\n12:00:00.001: Loaded scenes and sources.\n',
+    );
+    expect(isObsStreaming()).toBe(false);
+  });
+
+  it('returns true when streaming has started', () => {
+    fs.mkdirSync(obsLogDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(obsLogDir, '2026-10-19 22-00-00.txt'),
+      '12:00:00.000: CPU Name: Apple M1\n12:01:00.000: ==== Streaming Start ===============================================\n',
+    );
+    expect(isObsStreaming()).toBe(true);
+  });
+
+  it('returns false when streaming was started and then stopped', () => {
+    fs.mkdirSync(obsLogDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(obsLogDir, '2026-10-19 22-00-00.txt'),
+      '12:00:00.000: CPU Name: Apple M1\n12:01:00.000: ==== Streaming Start ===============================================\n12:30:00.000: ==== Streaming Stop ================================================\n',
+    );
+    expect(isObsStreaming()).toBe(false);
+  });
+
+  it('returns true when streaming was stopped and then started again in same session', () => {
+    fs.mkdirSync(obsLogDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(obsLogDir, '2026-10-19 22-00-00.txt'),
+      '12:01:00.000: ==== Streaming Start ===============================================\n12:30:00.000: ==== Streaming Stop ================================================\n12:35:00.000: ==== Streaming Start ===============================================\n',
+    );
+    expect(isObsStreaming()).toBe(true);
+  });
+});
+
