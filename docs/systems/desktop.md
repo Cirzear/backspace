@@ -981,6 +981,7 @@ Detection: `typeof window.backspace !== 'undefined'` (see `platform.ts:isElectro
 | `setAutoLaunchSettings(s)` | invoke | R->M | |
 | `onActivityDetected(cb)` | listen | M->R | Returns cleanup function `() => void` |
 | `getCurrentActivity()` | invoke | R->M | Returns `Promise<Activity \| null>` (the first activity) |
+| `getUnknownWinePrograms()` | invoke | R->M | Running Wine programs of the last scan that no detected game owns (not its process, not its folder), up to 20. Optional in `electron.d.ts` |
 | `listRunningPrograms()` | invoke | R->M | `Promise<{ label, process }[]>`: the player's own non-system programs. Optional in `electron.d.ts` |
 | `setManualGameBinding(b)` | invoke | R->M | `{ name, process } \| null`: tie the player's game to a program (validated by `parseManualBinding`, held in memory). Optional likewise |
 | `onActivitiesDetected(cb)` | listen | M->R | List channel; returns cleanup function. Optional in `electron.d.ts`: older desktops lack it |
@@ -1103,15 +1104,16 @@ A running process matches a dictionary entry when any of these hold:
 
 Every running game is reported, up to five (`detectActivitiesWithInfo`, `MAX_DETECTED_GAMES`): dictionary matches in dictionary order — which is also the order shown, the first being the primary activity — then the games the source detectors resolve. A game found twice (several processes, or a store plus the dictionary) is listed once under the dictionary's name: a source match is skipped when its process was already claimed or its name equals (ignoring case and punctuation) one already listed. A launcher (`isLauncherGame`: "launcher" in the name or id, `playing` type) is hidden as soon as a real game runs and shown alone otherwise. Other types (watching, listening, streaming) never hide anything and are never hidden.
 
-### Local Game Sources (Steam, Flatpak, GOG)
+### Local Game Sources (Steam, Flatpak, GOG, Heroic, Bottles, Lutris)
 
-The dictionary only knows curated titles. Three source detectors extend detection to **any installed game** of their provider, consulted after the dictionary and in registration order:
+The dictionary only knows curated titles. Four source detectors extend detection to **any installed game** of their provider, consulted after the dictionary and in registration order:
 
 | Source | Data read | Match | Module |
 |--------|-----------|-------|--------|
 | Steam | `libraryfolders.vdf` (every library, any disk) + `appmanifest_*.acf` (name, installdir, StateFlags bit 4 = fully installed) | The launch command of Steam's supervising `reaper` process (`reaper SteamLaunch AppId=<id> -- …`), which names the app id for every game Steam starts, native or Proton; else the running exe path under `<lib>/steamapps/common/<installdir>/` (native games: a Proton game's own process is a Wine binary inside the Proton directory, so its exe path says nothing about the game). Steam's own tool apps (`Steam Linux Runtime *`, `Proton *`, `Steamworks Common Redistributables`; told apart by name or install directory, the manifest has no flag) are never indexed — their processes run whenever Steam does and used to become the activity. `compatdata` prefixes rejected | `steamGames.ts` |
 | Flatpak | exported `.desktop` (`Game` category required) + `…/flatpak/app/<id>/<arch>/<branch>/active/files/` | running exe path under the app's `active/files` dir; launcher apps (Steam, Lutris, Bottles, Heroic, itch, Prism) excluded so they don't shadow their games | `flatpakGames.ts` |
 | GOG | `~/GOG Games/<dir>/` + `goggame-*.info` (display name, dir-name fallback) | exe path under the game dir (case-insensitive — info and filesystem disagree on case), with a command-line fallback for `start.sh` wrappers | `gogGames.ts` |
+| Heroic, Bottles, Lutris | Heroic: Epic `legendaryConfig/legendary/installed.json`, GOG `gog_store/installed.json` (+ `library.json` titles, the install's `goggame-*.info` play task), Amazon `nile_config/nile/installed.json` (+ library cache), sideloaded `sideload_apps/library.json`, in `~/.config/heroic` and the Flatpak config dir. Bottles: `External_Programs` of every `bottle.yml` (native and Flatpak data dir), its `icons/` image. Lutris: `~/.config/lutris/games/<slug>-<id>.yml` (`game.exe` / `working_dir`; the name is the config's `name:`, else the slug in title case), `lutris_<slug>.png` from the hicolor icon dirs | A Wine process by the Windows program it runs (`winExes`) and, where the launcher names the game's folder, by running from it (`cwd`) or naming it on its command line; Bottles names no host folder, so a program name alone matches. A native process by living under the folder | `launcherGames.ts` (`parseSimpleYaml` reads the few block mappings needed; every file is read defensively, an unknown layout yields no games) |
 
 Properties common to all sources:
 

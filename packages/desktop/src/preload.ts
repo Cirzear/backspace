@@ -142,6 +142,7 @@ contextBridge.exposeInMainWorld('backspace', {
   listKnownGames: (): Promise<string[]> => ipcRenderer.invoke('list-known-games'),
   // Programs the player can tie their game to, and the tie itself
   listRunningPrograms: (): Promise<Array<{ label: string; process: string }>> => ipcRenderer.invoke('list-running-programs'),
+  getUnknownWinePrograms: (): Promise<Array<{ label: string; process: string }>> => ipcRenderer.invoke('get-unknown-wine-programs'),
   setManualGameBinding: (binding: { name: string; process: string } | null): Promise<void> => ipcRenderer.invoke('set-manual-game-binding', binding),
   // Locally extracted game icon (Steam library cache, .desktop entries,
   // AppImage/GOG directories), base64; the renderer uploads it to the

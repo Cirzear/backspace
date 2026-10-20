@@ -15,7 +15,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { pathToFileURL } from 'url';
-import { startActivityDetection, stopActivityDetection, getCurrentActivity, getCurrentActivities, applyIpcActivity, listKnownGameNames, listRunningPrograms, setManualBinding } from './activityDetector';
+import { startActivityDetection, stopActivityDetection, getCurrentActivity, getCurrentActivities, applyIpcActivity, listKnownGameNames, listRunningPrograms, getUnknownWinePrograms, setManualBinding } from './activityDetector';
 import { resolveGameIcon } from './gameIcons';
 import { startRichPresenceIpcServer, stopRichPresenceIpcServer } from './richPresenceIpc';
 import { KeybindManager } from './keybindManager';
@@ -1500,6 +1500,7 @@ if (!gotTheLock) {
     ipcMain.handle('get-current-activities', () => getCurrentActivities());
     ipcMain.handle('list-known-games', () => listKnownGameNames());
     ipcMain.handle('list-running-programs', () => listRunningPrograms());
+    ipcMain.handle('get-unknown-wine-programs', () => getUnknownWinePrograms());
     ipcMain.handle('set-manual-game-binding', (_event, binding: unknown) => { setManualBinding(binding); });
 
     // The renderer uploads the icon to the user's instance itself (it holds

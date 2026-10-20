@@ -288,7 +288,10 @@
         "programHint": "请先启动游戏，再从列表中选择它的程序。",
         "showingRunning": "正在显示：{{name}}（运行中：{{program}}）",
         "showingWaiting": "等待 {{program}} 启动后显示 {{name}}",
-        "clearRename": "清除"
+        "clearRename": "清除",
+        "unknownLabel": "未识别的 Wine 程序",
+        "unknownDescription": "这些程序正在运行，但不属于任何已知游戏。如果其中有你的游戏，可将其显示为你正在玩的游戏。",
+        "unknownUse": "设为游戏"
       }
     }
   },

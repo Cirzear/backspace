@@ -290,7 +290,10 @@
         "programHint": "Inicie o jogo primeiro e depois escolha o programa dele na lista.",
         "showingRunning": "Exibindo: {{name}} (em execução: {{program}})",
         "showingWaiting": "Aguardando {{program}} iniciar para exibir {{name}}",
-        "clearRename": "Limpar"
+        "clearRename": "Limpar",
+        "unknownLabel": "Programas Wine não reconhecidos",
+        "unknownDescription": "Estes estão em execução, mas não correspondem a nenhum jogo conhecido. Se um deles for o seu jogo, exiba-o como o jogo que você está jogando.",
+        "unknownUse": "Usar como jogo"
       }
     }
   },

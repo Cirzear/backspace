@@ -181,6 +181,8 @@ interface BackspaceElectronAPI {
   listKnownGames?: () => Promise<string[]>;
   /** Programs the player can tie their game to. Absent in desktop builds that predate the binding. */
   listRunningPrograms?: () => Promise<Array<{ label: string; process: string }>>;
+  /** Running Wine programs no detected game owns. Absent in desktop builds that predate it. */
+  getUnknownWinePrograms?: () => Promise<Array<{ label: string; process: string }>>;
   setManualGameBinding?: (binding: { name: string; process: string } | null) => Promise<void>;
   /**
    * Locally extracted game icon (Steam library cache, .desktop entries,

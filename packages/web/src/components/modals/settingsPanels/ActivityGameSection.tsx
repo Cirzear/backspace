@@ -29,12 +29,28 @@ export function ActivityGameSection() {
   const canBind = typeof window.backspace?.listRunningPrograms === 'function';
   const [programs, setPrograms] = useState<Array<{ label: string; process: string }>>([]);
   const [program, setProgram] = useState(manualProcess ?? '');
+  const [unknown, setUnknown] = useState<Array<{ label: string; process: string }>>([]);
   const [renameDrafts, setRenameDrafts] = useState<Record<string, string>>({});
 
   useEffect(() => {
     setDraft(manualGame ?? '');
     setProgram(manualProcess ?? '');
   }, [manualGame, manualProcess]);
+
+  // Wine programs the detector could not name: offered with one click while this section is open
+  useEffect(() => {
+    const ask = window.backspace?.getUnknownWinePrograms;
+    if (typeof ask !== 'function') return;
+    let cancelled = false;
+    const load = () => {
+      window.backspace?.getUnknownWinePrograms?.()
+        .then((list) => { if (!cancelled && Array.isArray(list)) setUnknown(list); })
+        .catch(() => {});
+    };
+    load();
+    const id = setInterval(load, 5000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
 
   const refreshPrograms = useCallback(() => {
     window.backspace?.listRunningPrograms?.()
@@ -137,6 +153,23 @@ export function ActivityGameSection() {
           </div>
         )}
       </div>
+
+      {canBind && unknown.filter((p) => p.process !== manualProcess).length > 0 && (
+        <div>
+          <div className="text-sm text-txt-primary">{t('privacy.activity.game.unknownLabel')}</div>
+          <div className="text-xs text-txt-tertiary mt-0.5">{t('privacy.activity.game.unknownDescription')}</div>
+          <ul className="mt-2 space-y-1.5">
+            {unknown.filter((p) => p.process !== manualProcess).map((p) => (
+              <li key={p.process} className="flex items-center justify-between gap-3">
+                <span className="text-xs text-txt-secondary truncate" title={p.process}>{p.label}</span>
+                <button type="button" className={PRIMARY_BUTTON} onClick={() => setManualGame(p.label, p.process)}>
+                  {t('privacy.activity.game.unknownUse')}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {detectedGames.length > 0 && (manualGame === null || manualProcess !== null) && (
         <div>

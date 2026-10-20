@@ -57,6 +57,24 @@ describe('ActivityGameSection on the desktop', () => {
   });
 });
 
+describe('unrecognized Wine programs', () => {
+  it('offers each one and ties the game to it with one click', async () => {
+    installDesktop();
+    (window.backspace as unknown as Record<string, unknown>).getUnknownWinePrograms = () => Promise.resolve([{ label: 'Mystery', process: 'Mystery.exe' }]);
+    render(<ActivityGameSection />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Use as game' }));
+    expect(setBinding).toHaveBeenCalledWith({ name: 'Mystery', process: 'Mystery.exe' });
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Use as game' })).not.toBeInTheDocument());
+  });
+
+  it('shows nothing when the desktop does not report any', async () => {
+    installDesktop();
+    render(<ActivityGameSection />);
+    await screen.findByLabelText('Program');
+    expect(screen.queryByText('Unrecognized Wine programs')).not.toBeInTheDocument();
+  });
+});
+
 describe('renaming a detected game', () => {
   it('has no suggestion menu, and Clear brings the detected name back', () => {
     useActivityStore.setState({ detectedActivities: [{ type: 'playing', name: 'Stardew Valley' }] });

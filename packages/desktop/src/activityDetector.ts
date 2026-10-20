@@ -6,6 +6,7 @@ import { app } from 'electron';
 import { findSteamGameForLaunch, findSteamGameForProcess, loadSteamIndex, type SteamGame } from './steamGames';
 import { findFlatpakGameForProcess, loadFlatpakIndex } from './flatpakGames';
 import { findGogGameForProcess, loadGogIndex } from './gogGames';
+import { findLauncherGameForProcess, loadLauncherIndex } from './launcherGames';
 import { warmGameIcon, warmGameIconForIpc } from './gameIcons';
 import type { IpcActivityPush } from './richPresenceIpc';
 
@@ -386,7 +387,13 @@ const gogSourceDetector: SourceDetector = (info) => {
   return game ? { id: `gog-${game.id}`, name: game.name, type: 'playing' } : null;
 };
 
-const sourceDetectors: SourceDetector[] = [steamSourceDetector, flatpakSourceDetector, gogSourceDetector];
+/** Heroic, Bottles and Lutris: games that run under Wine are named by the launcher that installed them. */
+const launcherSourceDetector: SourceDetector = (info) => {
+  const game = findLauncherGameForProcess(info, loadLauncherIndex());
+  return game ? { id: game.id, name: game.name, type: 'playing' } : null;
+};
+
+const sourceDetectors: SourceDetector[] = [steamSourceDetector, flatpakSourceDetector, gogSourceDetector, launcherSourceDetector];
 
 /**
  * Whether a running process matches a dictionary entry:
@@ -501,6 +508,39 @@ export function parseManualBinding(value: unknown): ManualBinding | null {
 export function setManualBinding(value: unknown): void {
   manualBinding = parseManualBinding(value);
   if (intervalId) poll();
+}
+
+/**
+ * Wine programs that are running but belong to no detected game: what the
+ * player may be asked about ("a program was found that I do not know").
+ * Processes of a detected game (same process, or the same working directory:
+ * its helpers and crash reporters) are not unknown.
+ */
+export function findUnknownWinePrograms(infos: ProcessInfo[], games: DetectedGame[]): RunningProgram[] {
+  const claimedPids = new Set<number>();
+  const claimedDirs: string[] = [];
+  for (const { info } of games) {
+    if (!info) continue;
+    if (info.pid > 0) claimedPids.add(info.pid);
+    if (info.cwd) claimedDirs.push(info.cwd);
+  }
+  const seen = new Map<string, RunningProgram>();
+  for (const info of infos) {
+    const program = info.winExes?.[0];
+    if (!program || !/\.exe$/i.test(program)) continue;
+    if (claimedPids.has(info.pid)) continue;
+    if (info.cwd && claimedDirs.some((dir) => info.cwd === dir || info.cwd!.startsWith(dir + '/') || dir.startsWith(info.cwd + '/'))) continue;
+    const key = program.toLowerCase();
+    if (!seen.has(key)) seen.set(key, { label: program.replace(/\.exe$/i, ''), process: program });
+  }
+  return [...seen.values()].sort((a, b) => a.label.localeCompare(b.label)).slice(0, 20);
+}
+
+let unknownWinePrograms: RunningProgram[] = [];
+
+/** The unknown Wine programs of the last scan (the settings hint polls this). */
+export function getUnknownWinePrograms(): RunningProgram[] {
+  return unknownWinePrograms;
 }
 
 export interface RunningProgram {
@@ -930,7 +970,8 @@ async function syncDictionary(): Promise<void> {
  * Apply a matched game (or its absence) to the scan layer of the detection
  * state, then refresh the effective activity.
  */
-function applyDetectedGames(games: DetectedGame[]): void {
+function applyDetectedGames(games: DetectedGame[], infos: ProcessInfo[] = []): void {
+  unknownWinePrograms = findUnknownWinePrograms(infos, games);
   for (const { matched, info } of games) {
     void warmGameIcon({
       id: matched.id,
@@ -1107,7 +1148,7 @@ function poll(): void {
       return;
     }
     isPolling = false;
-    applyDetectedGames(detectActivitiesWithInfo(infos, gameEntries, undefined, undefined, manualBinding));
+    applyDetectedGames(detectActivitiesWithInfo(infos, gameEntries, undefined, undefined, manualBinding), infos);
     return;
   }
 
@@ -1130,7 +1171,7 @@ function pollViaCommand(): void {
     }
 
     const infos = infosFromNames(parseProcessList(stdout));
-    applyDetectedGames(detectActivitiesWithInfo(infos, gameEntries, undefined, undefined, manualBinding));
+    applyDetectedGames(detectActivitiesWithInfo(infos, gameEntries, undefined, undefined, manualBinding), infos);
   });
 }
 
@@ -1206,7 +1247,7 @@ export function listKnownGameNames(): string[] {
   for (const entry of gameEntries) {
     if ((entry.type ?? 'playing') === 'playing') add(entry.name);
   }
-  for (const loader of [loadSteamIndex, loadFlatpakIndex, loadGogIndex]) {
+  for (const loader of [loadSteamIndex, loadFlatpakIndex, loadGogIndex, loadLauncherIndex]) {
     try {
       for (const game of loader()) add(game.name);
     } catch {

@@ -289,7 +289,10 @@
         "programHint": "Start the game first, then pick its program from the list.",
         "showingRunning": "Showing: {{name}} (running: {{program}})",
         "showingWaiting": "Waiting for {{program}} to start, then showing {{name}}",
-        "clearRename": "Clear"
+        "clearRename": "Clear",
+        "unknownLabel": "Unrecognized Wine programs",
+        "unknownDescription": "These are running but match no known game. If one is your game, show it as the game you're playing.",
+        "unknownUse": "Use as game"
       }
     }
   },

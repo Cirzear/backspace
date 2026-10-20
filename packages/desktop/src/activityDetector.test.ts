@@ -35,6 +35,7 @@ import {
   parseManualBinding,
   setManualBinding,
   listRunningPrograms,
+  findUnknownWinePrograms,
 } from './activityDetector';
 import type { IpcActivityPush, IpcActivityPayload } from './richPresenceIpc';
 
@@ -985,5 +986,26 @@ describe('listRunningPrograms', () => {
     const root = makeFakeProc([{ pid: 2, exe: '/home/u/g/Game', cmdline: ['Game'], comm: 'Game' }]);
     expect(listRunningPrograms(root, process.getuid!() + 1)).toEqual([]);
     expect(listRunningPrograms(root, process.getuid!())).toHaveLength(1);
+  });
+});
+
+describe('unknown Wine programs', () => {
+  const wine = (pid: number, exe: string, cwd?: string): ProcessInfo => ({ pid, name: 'wine64-preloader', cmdline: exe, exe: '/r/wine64-preloader', winExes: [exe], cwd });
+  const game = (info: ProcessInfo) => ({ matched: { id: 'g', name: 'G', type: 'playing' }, info });
+
+  it('lists a Wine program no game claims', () => {
+    expect(findUnknownWinePrograms([wine(1, 'Mystery.exe', '/g/m')], [])).toEqual([{ label: 'Mystery', process: 'Mystery.exe' }]);
+  });
+
+  it('leaves out a detected game\'s own process and the helpers in its folder', () => {
+    const main = wine(1, 'Game.exe', '/g/game');
+    const helper = wine(2, 'Helper.exe', '/g/game/bin');
+    const other = wine(3, 'Else.exe', '/g/else');
+    expect(findUnknownWinePrograms([main, helper, other], [game(main)]).map((p) => p.process)).toEqual(['Else.exe']);
+  });
+
+  it('ignores programs without a Windows name and lists each once', () => {
+    const native: ProcessInfo = { pid: 4, name: 'bash', cmdline: 'bash', exe: '/usr/bin/bash' };
+    expect(findUnknownWinePrograms([native, wine(5, 'A.exe'), wine(6, 'a.EXE')], [])).toHaveLength(1);
   });
 });

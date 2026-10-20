@@ -5,6 +5,7 @@ import { findSteamGameForProcess, getSteamRoots, loadSteamIndex } from './steamG
 import { findFlatpakGameForProcess, loadFlatpakIndex, getFlatpakInstallDirs } from './flatpakGames';
 import { findGogGameForProcess, loadGogIndex } from './gogGames';
 import { extractPeIcon } from './peIcon';
+import { findLauncherGameForProcess, loadLauncherIndex } from './launcherGames';
 
 /**
  * Local game icon extraction.
@@ -332,7 +333,7 @@ async function genericIcon(target: GameIconTarget, home: string): Promise<GameIc
   return null;
 }
 
-const STORE_ID = /^(steam|flatpak|gog)-/;
+const STORE_ID = /^(steam|flatpak|gog|heroic|bottles|lutris)-/;
 
 /**
  * The store id (`steam-<appid>`, `flatpak-<id>`, `gog-<id>`) of an installed
@@ -355,6 +356,12 @@ function installedGameId(target: GameIconTarget, home: string): string | null {
     const byGog = findGogGameForProcess(target.exe, target.cmdline, gog);
     if (byGog) return `gog-${byGog.id}`;
   }
+  const launcher = loadLauncherIndex(home, true);
+  const byLauncher = findLauncherGameForProcess(
+    { exe: target.exe, cmdline: target.cmdline, winExes: target.winExes, cwd: target.cwd ?? undefined },
+    launcher,
+  );
+  if (byLauncher) return byLauncher.id;
 
   const name = target.name.trim().toLowerCase();
   if (name === '') return null;
@@ -365,6 +372,8 @@ function installedGameId(target: GameIconTarget, home: string): string | null {
   if (byFlatpakName) return `flatpak-${byFlatpakName.appId}`;
   const byGogName = gog.find((game) => sameName(game.name));
   if (byGogName) return `gog-${byGogName.id}`;
+  const byLauncherName = launcher.find((game) => sameName(game.name));
+  if (byLauncherName) return byLauncherName.id;
   return null;
 }
 
@@ -437,6 +446,13 @@ export async function findGameIcon(
     const gameId = id.slice('gog-'.length);
     if (gameId) {
       const icon = await gogIcon(gameId, home);
+      if (icon) return icon;
+    }
+  }
+  if (id.startsWith('lutris-') || id.startsWith('bottles-')) {
+    const game = loadLauncherIndex(home).find((candidate) => candidate.id === id);
+    if (game?.iconPath) {
+      const icon = await firstExistingIcon([game.iconPath]);
       if (icon) return icon;
     }
   }

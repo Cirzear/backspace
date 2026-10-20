@@ -347,3 +347,30 @@ describe('Wine programs', () => {
     expect(await findGameIcon(target({ cwd, winExes: ['Bad.exe'] }), home)).toBeNull();
   });
 });
+
+describe('launcher games', () => {
+  it('uses the icon Lutris keeps for a game it detected', async () => {
+    write(path.join(home, '.config/lutris/games/named-1.yml'), Buffer.from('name: Named\ngame:\n  working_dir: /games/named\n'));
+    write(path.join(home, '.local/share/icons/hicolor/128x128/apps/lutris_named.png'), PNG);
+    const icon = await findGameIcon(target({ id: 'lutris-named', name: 'Named' }), home);
+    expect(icon?.bytes.equals(PNG)).toBe(true);
+  });
+
+  it('finds the launcher game behind a dictionary match by its program and folder', async () => {
+    write(path.join(home, '.config/lutris/games/zzz-1.yml'), Buffer.from('game:\n  exe: /games/zzz/ZenlessZoneZero.exe\n'));
+    write(path.join(home, '.local/share/icons/hicolor/128x128/apps/lutris_zzz.png'), PNG);
+    const icon = await findGameIcon(
+      target({ id: 'zzz', name: 'Zenless Zone Zero', exe: '/runner/wine64-preloader', winExes: ['ZenlessZoneZero.exe'], cwd: '/games/zzz' }),
+      home,
+    );
+    expect(icon?.bytes.equals(PNG)).toBe(true);
+  });
+
+  it('finds a Bottles game by the name the player gave it, and uses its icon', async () => {
+    const bottle = path.join(home, '.local/share/bottles/bottles/B');
+    write(path.join(bottle, 'bottle.yml'), Buffer.from('External_Programs:\n  Farm:\n    name: Farm\n    executable: Farm.exe\n'));
+    write(path.join(bottle, 'icons', 'Farm.png'), PNG);
+    const icon = await findGameIcon(target({ id: '', name: 'farm' }), home);
+    expect(icon?.bytes.equals(PNG)).toBe(true);
+  });
+});
