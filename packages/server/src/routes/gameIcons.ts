@@ -3,7 +3,6 @@ import { and, count, eq } from 'drizzle-orm';
 import sharp from 'sharp';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
-import path from 'node:path';
 import {
   GAME_ICON_DIMENSION, GAME_ICON_ID_PATTERN, GAME_ICON_UPLOADS_PER_MINUTE,
   MAX_GAME_ICON_BYTES, MAX_GAME_ICONS_PER_USER, type GameIconUpload,
@@ -11,7 +10,7 @@ import {
 import { getDb, schema } from '../db/index.js';
 import { authenticate } from '../utils/auth.js';
 import { getOurOrigin } from '../utils/federationAuth.js';
-import { config } from '../config.js';
+import { gameIconAssetDir, gameIconAssetPath } from '../utils/gameIconAssets.js';
 import { sendError } from '../utils/httpErrors.js';
 import { createFixedWindowLimit } from '../utils/fixedWindowLimit.js';
 
@@ -60,7 +59,13 @@ function collectGameIcon(userId: string, id: string): GameIconUpload | null {
   const existing = () => db.select().from(schema.gameIcons).where(and(
     eq(schema.gameIcons.userId, userId), eq(schema.gameIcons.iconId, id),
   )).get();
-  if (existing()) return { id, url: urlFor(id) };
+  if (existing()) {
+    // An upload of the same bytes renews the claim: `created_at` is "last uploaded" (retention, utils/gameIconAssets.ts)
+    db.update(schema.gameIcons).set({ createdAt: Date.now() }).where(and(
+      eq(schema.gameIcons.userId, userId), eq(schema.gameIcons.iconId, id),
+    )).run();
+    return { id, url: urlFor(id) };
+  }
   if (iconCount(userId) >= MAX_GAME_ICONS_PER_USER) return null;
   db.insert(schema.gameIcons).values({ userId, iconId: id, createdAt: Date.now() })
     .onConflictDoNothing().run();
@@ -92,14 +97,6 @@ export async function encodeGameIcon(bytes: Buffer): Promise<Buffer> {
   }
   if (encoded.length > MAX_GAME_ICON_BYTES) throw new GameIconImageError();
   return encoded;
-}
-
-function gameIconAssetDir(): string {
-  return path.join(config.uploadDir, 'game-icons');
-}
-
-function gameIconAssetPath(id: string): string {
-  return path.join(gameIconAssetDir(), `${id}.webp`);
 }
 
 export async function gameIconRoutes(app: FastifyInstance): Promise<void> {

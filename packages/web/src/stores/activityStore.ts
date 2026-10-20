@@ -33,6 +33,15 @@ const GAME_ICON_ENRICH_TIMEOUT_MS = 4000;
 /** A name that failed to resolve is not retried for this long (the desktop warms its cache in the background). */
 const GAME_ICON_RETRY_MS = 60_000;
 const iconMissAges = new Map<string, number>();
+/**
+ * When each cached URL was last uploaded. The server drops an icon nobody
+ * uploaded for a year (retention, server utils/gameIconAssets.ts), so a game
+ * that is still played uploads its icon again once this long has passed; the
+ * upload is idempotent and renews the claim.
+ */
+const GAME_ICON_SEEN_KEY = 'backspace_game_icons_seen';
+const GAME_ICON_RENEW_MS = 30 * 24 * 60 * 60 * 1000;
+const iconRenewing = new Set<string>();
 
 function cachedIconUrl(name: string): string | null {
   try {
@@ -46,11 +55,24 @@ function cachedIconUrl(name: string): string | null {
   }
 }
 
+function iconSeenAt(name: string): number {
+  try {
+    const seen = JSON.parse(localStorage.getItem(GAME_ICON_SEEN_KEY) ?? '{}') as Record<string, unknown>;
+    const at = seen[name];
+    return typeof at === 'number' ? at : 0;
+  } catch {
+    return 0;
+  }
+}
+
 function rememberIconUrl(name: string, url: string): void {
   try {
     const map = JSON.parse(localStorage.getItem(GAME_ICON_CACHE_KEY) ?? '{}') as Record<string, string>;
     map[name] = url;
     localStorage.setItem(GAME_ICON_CACHE_KEY, JSON.stringify(map));
+    const seen = JSON.parse(localStorage.getItem(GAME_ICON_SEEN_KEY) ?? '{}') as Record<string, number>;
+    seen[name] = Date.now();
+    localStorage.setItem(GAME_ICON_SEEN_KEY, JSON.stringify(seen));
   } catch {
     // Storage unavailable: the icon re-uploads next session
   }
@@ -95,6 +117,27 @@ function attachCachedIcons(activities: Activity[]): Activity[] {
     return { ...activity, assets: { ...activity.assets, largeImage: cached } };
   });
   return changed ? result : activities;
+}
+
+/**
+ * Upload again the icons of games being played whose last upload is a month
+ * old, so the server's retention never drops an icon that is still in use.
+ * Never awaited: the activity goes out with the cached URL either way.
+ */
+function renewStaleIcons(activities: Activity[]): void {
+  if (!window.backspace?.getGameIcon) return;
+  for (const activity of activities) {
+    if (!GAME_ICON_TYPES.has(activity.type)) continue;
+    const name = activity.name;
+    if (!cachedIconUrl(name) || iconRenewing.has(name)) continue;
+    if (Date.now() - iconSeenAt(name) < GAME_ICON_RENEW_MS) continue;
+    const missedAt = iconMissAges.get(name);
+    if (missedAt !== undefined && Date.now() - missedAt <= GAME_ICON_RETRY_MS) continue;
+    iconRenewing.add(name);
+    void withTimeout(resolveGameIconUrl(name), GAME_ICON_ENRICH_TIMEOUT_MS)
+      .then((url) => { if (!url) iconMissAges.set(name, Date.now()); })
+      .finally(() => { iconRenewing.delete(name); });
+  }
 }
 
 /** Names that would benefit from an icon upload: game activity, no art, no cached URL, no fresh miss, and a desktop bridge to ask. */
@@ -320,6 +363,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
       // Cached icons attach synchronously, so a push that needs no upload
       // sends exactly as it did before icons existed.
       const withCached = attachCachedIcons(base);
+      renewStaleIcons(withCached);
       const pending = pendingIconNames(withCached);
       if (pending.length === 0) {
         const final = withRenames(withCached, get().gameRenames);

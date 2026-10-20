@@ -79,6 +79,7 @@ describe('activityStore game icon enrichment', () => {
 
   it('attaches a cached url without contacting the desktop or the instance', async () => {
     localStorage.setItem('backspace_game_icons', JSON.stringify({ Minecraft: 'https://chat.test/api/game-icons/assets/cached.webp' }));
+    localStorage.setItem('backspace_game_icons_seen', JSON.stringify({ Minecraft: Date.now() }));
     useActivityStore.getState().pushActivities([GAME_ACTIVITY]);
     await vi.advanceTimersByTimeAsync(5000);
     expect(getGameIcon).not.toHaveBeenCalled();

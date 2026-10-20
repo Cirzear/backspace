@@ -201,3 +201,38 @@ describe('manual game tied to a program', () => {
     expect(setBinding).toHaveBeenLastCalledWith(null);
   });
 });
+
+describe('icon renewal', () => {
+  const CACHE_KEY = 'backspace_game_icons';
+  const SEEN_KEY = 'backspace_game_icons_seen';
+  const DAY = 24 * 60 * 60 * 1000;
+  const GAME: Activity = { type: 'playing', name: 'Hades' };
+
+  beforeEach(() => {
+    mockUpload.mockResolvedValue({ id: 'a', url: 'https://chat.test/api/game-icons/assets/a.webp' });
+    getGameIcon.mockResolvedValue({ data: 'AAAA', mime: 'image/png' });
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ Hades: 'https://chat.test/api/game-icons/assets/a.webp' }));
+  });
+
+  it('uploads again an icon last uploaded over a month ago, without delaying the send', async () => {
+    localStorage.setItem(SEEN_KEY, JSON.stringify({ Hades: Date.now() - 31 * DAY }));
+    useActivityStore.getState().pushActivities([GAME]);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(lastSent()[0]?.assets?.largeImage).toBe('https://chat.test/api/game-icons/assets/a.webp');
+    expect(mockUpload).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(localStorage.getItem(SEEN_KEY) ?? '{}').Hades).toBeGreaterThan(Date.now() - 60_000);
+  });
+
+  it('leaves a recently uploaded icon alone', async () => {
+    localStorage.setItem(SEEN_KEY, JSON.stringify({ Hades: Date.now() - 2 * DAY }));
+    useActivityStore.getState().pushActivities([GAME]);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(mockUpload).not.toHaveBeenCalled();
+  });
+
+  it('treats an icon cached before the date was kept as due', async () => {
+    useActivityStore.getState().pushActivities([GAME]);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(mockUpload).toHaveBeenCalledTimes(1);
+  });
+});

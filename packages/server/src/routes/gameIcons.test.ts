@@ -82,6 +82,15 @@ describe('game icons', () => {
     expect(rows).toHaveLength(1);
   });
 
+  it('re-uploading renews the claim, which the retention janitor counts from', async () => {
+    const image = await pngBytes('green');
+    const { id } = (await upload(image)).json() as { id: string };
+    sqlite.prepare('UPDATE game_icons SET created_at = 1 WHERE icon_id = ?').run(id);
+    await upload(image);
+    const row = db.select().from(schema.gameIcons).all()[0];
+    expect(row?.createdAt).toBeGreaterThan(Date.now() - 60_000);
+  });
+
   it('rejects non-image payloads', async () => {
     const response = await upload(Buffer.from('definitely not an image'));
     expect(response.statusCode).toBe(400);
