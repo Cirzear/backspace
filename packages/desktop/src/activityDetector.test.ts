@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import {
   pickProcName,
+  deriveWindowsExe,
   readProcessInfos,
   readProcessInfoByPid,
   parseProcessList,
@@ -634,5 +635,75 @@ describe('Steam source detector', () => {
   it('still matches a native game by the directory its executable lives in', () => {
     const infos = [{ pid: 1, name: 'game', cmdline: 'game', exe: '/lib/steamapps/common/ELDEN RING/game' }];
     expect(detectActivity(infos, [], [steam])?.id).toBe('steam-1245620');
+  });
+});
+
+describe('Wine processes', () => {
+  const dict = [
+    { id: 'honkai-sr', name: 'Honkai: Star Rail', processes: ['StarRail.exe'] },
+    { id: 'stardew', name: 'Stardew Valley', processes: ['Stardew Valley.exe', 'StardewValley'] },
+  ];
+  const PRELOADER = '/home/u/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0/bin/wine64-preloader';
+
+  it('names the program from its Windows command line, not the loader', () => {
+    const root = makeFakeProc([
+      { pid: 5, exe: PRELOADER, cmdline: ['Z:\\home\\u\\Games\\HSR\\StarRail.exe'], comm: 'StarRail.exe' },
+    ]);
+    const info = readProcessInfos(root)[0]!;
+    expect(info.name).toBe('wine64-preloader');
+    expect(info.winExe).toBe('StarRail.exe');
+    expect(findMatchingGame([info], dict)?.id).toBe('honkai-sr');
+  });
+
+  it('reads a program name with spaces and arguments out of one command line token', () => {
+    expect(deriveWindowsExe(PRELOADER, ['C:\\Program Files\\Stardew Valley\\Stardew Valley.exe -console'], null))
+      .toBe('Stardew Valley.exe');
+  });
+
+  it('falls back to the kernel-truncated comm, which still matches a longer dictionary name', () => {
+    const root = makeFakeProc([{ pid: 6, exe: PRELOADER, comm: 'Stardew Valley.' }]);
+    const info = readProcessInfos(root)[0]!;
+    expect(info.winExe).toBe('Stardew Valley.');
+    expect(findMatchingGame([info], dict)?.id).toBe('stardew');
+  });
+
+  it('works when the exe link is unreadable (a sandboxed process) but the command line is Windows-style', () => {
+    const root = makeFakeProc([{ pid: 8, exe: 'REGULAR', cmdline: ['Z:\\g\\StarRail.exe'], comm: 'StarRail.exe' }]);
+    const info = readProcessInfos(root)[0]!;
+    expect(info.name).toBe('StarRail.exe');
+    expect(findMatchingGame([info], dict)?.id).toBe('honkai-sr');
+  });
+
+  it('finds the program on the `wine game.exe` launcher process too', () => {
+    expect(deriveWindowsExe('/usr/bin/wine', ['wine', '/games/StarRail.exe'], 'wine')).toBe('StarRail.exe');
+  });
+
+  it('does not take a native program for a Wine one because an argument ends in .exe', () => {
+    expect(deriveWindowsExe('/usr/bin/vim', ['vim', 'StarRail.exe'], 'vim')).toBeUndefined();
+    const root = makeFakeProc([{ pid: 9, exe: '/usr/bin/vim', cmdline: ['vim', 'StarRail.exe'], comm: 'vim' }]);
+    expect(findMatchingGame(readProcessInfos(root), dict)).toBeNull();
+  });
+
+  it('ignores wineserver and the loader of an unrelated program', () => {
+    expect(deriveWindowsExe('/opt/wine/bin/wineserver', ['wineserver', '-p'], 'wineserver')).toBeUndefined();
+    expect(deriveWindowsExe(PRELOADER, ['C:\\windows\\system32\\services.exe'], 'services.exe')).toBe('services.exe');
+    const root = makeFakeProc([{ pid: 10, exe: PRELOADER, cmdline: ['C:\\windows\\system32\\services.exe'], comm: 'services.exe' }]);
+    expect(findMatchingGame(readProcessInfos(root), dict)).toBeNull();
+  });
+});
+
+describe('the shipped dictionary under Wine', () => {
+  const seed = loadDictionaryFile(path.join(__dirname, '..', 'resources', 'games.json'));
+  const PRELOADER = '/home/u/.local/share/lutris/runners/wine/lutris-9.0/bin/wine64-preloader';
+
+  it.each([
+    ['Honkai: Star Rail', 'StarRail.exe'],
+    ['Zenless Zone Zero', 'ZenlessZoneZero.exe'],
+    ['Genshin Impact', 'GenshinImpact.exe'],
+    ['Stardew Valley', 'Stardew Valley.exe'],
+  ])('finds %s from its Wine process', (name, exe) => {
+    const root = makeFakeProc([{ pid: 3, exe: PRELOADER, cmdline: [`Z:\\games\\${exe}`], comm: exe.slice(0, 15) }]);
+    const match = findMatchingGame(readProcessInfos(root), seed?.entries ?? []);
+    expect(match?.name).toBe(name);
   });
 });

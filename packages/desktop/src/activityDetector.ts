@@ -87,6 +87,13 @@ interface ProcessInfo {
   cmdline: string;
   /** Full executable path from the /proc exe symlink, case preserved; null when unavailable. */
   exe: string | null;
+  /**
+   * The Windows program a Wine/Proton process runs ("StarRail.exe"). Its
+   * `exe` is the Wine loader, so `name` says "wine64-preloader" whatever the
+   * game is; the real name is in the command line (a Windows path) or, kernel-
+   * truncated, in comm. Absent for anything that is not a Wine process.
+   */
+  winExe?: string;
 }
 
 /**
@@ -101,10 +108,38 @@ export function pickProcName(exeLink: string | null, cmdlineTokens: string[], co
   }
   const first = cmdlineTokens[0];
   if (first) {
-    const base = path.basename(first);
+    // A Windows path ("Z:\\games\\Game.exe") has no "/" for basename to split on
+    const base = WINDOWS_PATH.test(first) ? first.slice(first.search(/[^\\/]*$/)).replace(/"$/, '') : path.basename(first);
     if (base) return base;
   }
   return comm ?? null;
+}
+
+const WINDOWS_PATH = /^"?[A-Za-z]:[\\/]/;
+/** The first "<name>.exe" in a token, whatever separators precede it and whatever arguments follow. */
+const EXE_IN_TOKEN = /([^\\/"]+?\.exe)(?=["\s]|$)/i;
+
+/**
+ * The Windows program a Wine process runs, or undefined for any other
+ * process. A Wine process is recognised by its loader (`wine`, `wine64-
+ * preloader`, Proton's and Bottles' builds of it) or by a Windows-style
+ * command line; a native program that merely has "foo.exe" among its
+ * arguments (an editor opening one) is not one.
+ */
+export function deriveWindowsExe(exeLink: string | null, cmdlineTokens: string[], comm: string | null): string | undefined {
+  const base = exeLink ? path.basename(exeLink) : '';
+  const isLoader = /^wine(?!server)/i.test(base);
+  const first = cmdlineTokens[0];
+  const windowsStyle = first !== undefined && WINDOWS_PATH.test(first);
+  if (!isLoader && !windowsStyle) return undefined;
+
+  for (const token of cmdlineTokens) {
+    const match = EXE_IN_TOKEN.exec(token);
+    if (match) return match[1];
+  }
+  // Wine names the process after its program, cut to the kernel's 15 characters
+  if (isLoader && comm && !/^wine/i.test(comm)) return comm;
+  return undefined;
 }
 
 /**
@@ -155,7 +190,10 @@ export function readProcessInfos(procRoot = '/proc'): ProcessInfo[] {
     const name = pickProcName(exeLink, cmdlineTokens, comm);
     if (!name) continue; // kernel thread: no exe, no cmdline
 
-    infos.push({ pid: Number(pidStr), name, cmdline: cmdlineTokens.join(' '), exe: exeLink });
+    const info: ProcessInfo = { pid: Number(pidStr), name, cmdline: cmdlineTokens.join(' '), exe: exeLink };
+    const winExe = deriveWindowsExe(exeLink, cmdlineTokens, comm);
+    if (winExe) info.winExe = winExe;
+    infos.push(info);
   }
 
   return infos;
@@ -194,7 +232,10 @@ export function readProcessInfoByPid(pid: number, procRoot = '/proc'): ProcessIn
 
   const name = pickProcName(exeLink, cmdlineTokens, comm);
   if (!name) return null;
-  return { pid, name, cmdline: cmdlineTokens.join(' '), exe: exeLink };
+  const info: ProcessInfo = { pid, name, cmdline: cmdlineTokens.join(' '), exe: exeLink };
+  const winExe = deriveWindowsExe(exeLink, cmdlineTokens, comm);
+  if (winExe) info.winExe = winExe;
+  return info;
 }
 
 // ─── Platform process listing (fallback for non-Linux, or /proc unavailable) ─
@@ -294,14 +335,17 @@ const sourceDetectors: SourceDetector[] = [steamSourceDetector, flatpakSourceDet
  * - Linux comm truncation: dictionary name longer than 15 chars whose first
  *   15 chars equal the process name, or
  * - any cmdline pattern appearing in the process command line.
+ * A Wine process is also matched by the Windows program it runs (`winExe`).
  */
-export function matchesProcessName(entry: GameEntry, procName: string, cmdline: string): boolean {
-  const nameLower = procName.toLowerCase();
-
-  for (const proc of entry.processes) {
-    const p = proc.toLowerCase();
-    if (nameLower === p) return true;
-    if (p.length > COMM_MAX && nameLower.length === COMM_MAX && p.startsWith(nameLower)) return true;
+export function matchesProcessName(entry: GameEntry, procName: string, cmdline: string, winExe?: string): boolean {
+  // A Wine process answers to the Windows program it runs as well as to its loader
+  for (const candidate of winExe ? [procName, winExe] : [procName]) {
+    const nameLower = candidate.toLowerCase();
+    for (const proc of entry.processes) {
+      const p = proc.toLowerCase();
+      if (nameLower === p) return true;
+      if (p.length > COMM_MAX && nameLower.length === COMM_MAX && p.startsWith(nameLower)) return true;
+    }
   }
 
   if (entry.cmdlinePatterns && cmdline) {
@@ -322,7 +366,7 @@ export function matchesProcessName(entry: GameEntry, procName: string, cmdline: 
 export function findMatchingGame(infos: ProcessInfo[], entries: GameEntry[]): GameEntry | null {
   for (const entry of entries) {
     for (const info of infos) {
-      if (matchesProcessName(entry, info.name, info.cmdline)) return entry;
+      if (matchesProcessName(entry, info.name, info.cmdline, info.winExe)) return entry;
     }
   }
   return null;
@@ -375,7 +419,7 @@ function matchInfoFor(id: string, infos: ProcessInfo[], entries: GameEntry[]): P
   const entry = entries.find((e) => e.id === id);
   if (!entry) return null;
   for (const info of infos) {
-    if (matchesProcessName(entry, info.name, info.cmdline)) return info;
+    if (matchesProcessName(entry, info.name, info.cmdline, info.winExe)) return info;
   }
   return null;
 }
