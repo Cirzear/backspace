@@ -46,6 +46,8 @@ interface FakeProc {
   /** NUL-separated argv tokens */
   cmdline?: string[];
   comm?: string;
+  /** Symlink target for /proc/<pid>/cwd */
+  cwd?: string;
 }
 
 function makeFakeProc(entries: FakeProc[]): string {
@@ -65,6 +67,7 @@ function makeFakeProc(entries: FakeProc[]): string {
     if (e.comm) {
       fs.writeFileSync(path.join(dir, 'comm'), e.comm + '\n');
     }
+    if (e.cwd) fs.symlinkSync(e.cwd, path.join(dir, 'cwd'));
   }
   // Noise that exists in real /proc
   fs.mkdirSync(path.join(root, 'self'));
@@ -653,6 +656,17 @@ describe('Wine processes', () => {
     expect(info.name).toBe('wine64-preloader');
     expect(info.winExes).toContain('StarRail.exe');
     expect(findMatchingGame([info], dict)?.id).toBe('honkai-sr');
+  });
+
+  it('keeps the working directory of a Wine process, and only of one', () => {
+    const root = makeFakeProc([
+      { pid: 5, exe: PRELOADER, cmdline: ['Z:\\g\\StarRail.exe'], comm: 'StarRail.exe', cwd: '/home/u/Games/HSR' },
+      { pid: 6, exe: '/usr/bin/bash', cmdline: ['bash'], comm: 'bash', cwd: '/home/u' },
+    ]);
+    const infos = readProcessInfos(root);
+    expect(infos.find((i) => i.pid === 5)?.cwd).toBe('/home/u/Games/HSR');
+    expect(infos.find((i) => i.pid === 6)?.cwd).toBeUndefined();
+    expect(readProcessInfoByPid(5, root)?.cwd).toBe('/home/u/Games/HSR');
   });
 
   it('reads a program name with spaces and arguments out of one command line token', () => {

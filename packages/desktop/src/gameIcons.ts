@@ -4,6 +4,7 @@ import path from 'path';
 import { findSteamGameForProcess, getSteamRoots, loadSteamIndex } from './steamGames';
 import { findFlatpakGameForProcess, loadFlatpakIndex, getFlatpakInstallDirs } from './flatpakGames';
 import { findGogGameForProcess, loadGogIndex } from './gogGames';
+import { extractPeIcon } from './peIcon';
 
 /**
  * Local game icon extraction.
@@ -41,6 +42,10 @@ export interface GameIconTarget {
   exe: string | null;
   /** The process command line (may name the AppImage the binary was mounted from). */
   cmdline: string;
+  /** Windows program names of a Wine process (`ZenlessZoneZero.exe`). */
+  winExes?: string[];
+  /** Working directory of that process: where the program's own .exe lies. */
+  cwd?: string | null;
 }
 
 /**
@@ -364,6 +369,45 @@ function installedGameId(target: GameIconTarget, home: string): string | null {
 }
 
 /**
+ * A game run under Wine has no icon file of its own, but its .exe carries one
+ * in its resources. The program is looked up in the process's working
+ * directory (exact name first, then ignoring case: Windows paths do not care).
+ */
+async function windowsProgramIcon(target: GameIconTarget): Promise<GameIcon | null> {
+  if (!target.cwd || !target.winExes) return null;
+  let entries: string[] | null = null;
+  for (const name of target.winExes) {
+    if (!/\.exe$/i.test(name) || name.includes('/') || name.includes('\\')) continue;
+    let file: string | null = path.join(target.cwd, name);
+    if (!isFile(file)) {
+      entries ??= safeReaddir(target.cwd);
+      const found = entries.find((entry) => entry.toLowerCase() === name.toLowerCase());
+      file = found ? path.join(target.cwd, found) : null;
+    }
+    if (!file) continue;
+    const bytes = await extractPeIcon(file, MAX_ICON_BYTES);
+    if (bytes) return { bytes, mime: 'image/png' };
+  }
+  return null;
+}
+
+function isFile(file: string): boolean {
+  try {
+    return fs.statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function safeReaddir(dir: string): string[] {
+  try {
+    return fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Find an icon for a detected game. Sources are tried in order of precision;
  * the first readable image file wins. Every miss is cheap (a stat), every hit
  * is a bounded read.
@@ -396,6 +440,8 @@ export async function findGameIcon(
       if (icon) return icon;
     }
   }
+  const fromExe = await windowsProgramIcon(target);
+  if (fromExe) return fromExe;
   return genericIcon(target, home);
 }
 

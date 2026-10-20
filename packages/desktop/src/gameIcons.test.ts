@@ -14,6 +14,8 @@ import {
   __testResetGameIconCache,
   type GameIconTarget,
 } from './gameIcons';
+import { encodePng } from './peIcon';
+import { buildPe } from './peIcon.testSupport';
 
 // Minimal images: the extractor only sniffs magic bytes; the server is the
 // party that decodes and re-encodes.
@@ -301,5 +303,47 @@ describe('execProgramName', () => {
     expect(execProgramName('"/opt/my game/bin/start" --flag')).toBe('start');
     expect(execProgramName('java -jar a.jar')).toBe('java');
     expect(execProgramName('')).toBe('');
+  });
+});
+
+describe('Wine programs', () => {
+  const png = encodePng(1, 1, Buffer.from([10, 20, 30, 255]));
+  const exe = () => buildPe([{ id: 1, data: png }], [{ width: 256, height: 256, bits: 32, id: 1 }]);
+
+  it('takes the icon from the program .exe in the working directory', async () => {
+    const cwd = path.join(home, 'Games', 'Zzz');
+    write(path.join(cwd, 'ZenlessZoneZero.exe'), exe());
+    const icon = await findGameIcon(target({ cwd, winExes: ['ZenlessZoneZero.exe'] }), home);
+    expect(icon?.mime).toBe('image/png');
+    expect(icon?.bytes.equals(png)).toBe(true);
+  });
+
+  it('finds the file whatever its letter case', async () => {
+    const cwd = path.join(home, 'Games', 'Stardew');
+    write(path.join(cwd, 'Stardew Valley.exe'), exe());
+    const icon = await findGameIcon(target({ cwd, winExes: ['stardew valley.EXE'] }), home);
+    expect(icon?.bytes.equals(png)).toBe(true);
+  });
+
+  it('tries the next program name when the first is not there', async () => {
+    const cwd = path.join(home, 'Games', 'G');
+    write(path.join(cwd, 'Real.exe'), exe());
+    const icon = await findGameIcon(target({ cwd, winExes: ['Launcher.exe', 'Real.exe'] }), home);
+    expect(icon?.bytes.equals(png)).toBe(true);
+  });
+
+  it('does not follow a name that leaves the working directory', async () => {
+    write(path.join(home, 'Games', 'outside.exe'), exe());
+    const cwd = path.join(home, 'Games', 'G');
+    fs.mkdirSync(cwd, { recursive: true });
+    expect(await findGameIcon(target({ cwd, winExes: ['../outside.exe', '..\\outside.exe'] }), home)).toBeNull();
+  });
+
+  it('is a miss without a working directory, without a program or with a broken file', async () => {
+    const cwd = path.join(home, 'Games', 'G');
+    write(path.join(cwd, 'Bad.exe'), Buffer.from('MZ nope'));
+    expect(await findGameIcon(target({ winExes: ['Bad.exe'] }), home)).toBeNull();
+    expect(await findGameIcon(target({ cwd }), home)).toBeNull();
+    expect(await findGameIcon(target({ cwd, winExes: ['Bad.exe'] }), home)).toBeNull();
   });
 });

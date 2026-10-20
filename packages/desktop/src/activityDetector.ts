@@ -95,6 +95,12 @@ interface ProcessInfo {
    * comm. Absent for anything that is not a Wine process.
    */
   winExes?: string[];
+  /**
+   * Working directory of a Wine process. The Windows program is usually
+   * started from its own folder, which is where its icon is found. Only set
+   * together with `winExes`.
+   */
+  cwd?: string;
 }
 
 /**
@@ -225,7 +231,11 @@ export function readProcessInfos(procRoot = '/proc'): ProcessInfo[] {
 
     const info: ProcessInfo = { pid: Number(pidStr), name, cmdline: cmdlineTokens.join(' '), exe: exeLink };
     const winExes = deriveWindowsExes(exeLink, cmdlineTokens, comm);
-    if (winExes) info.winExes = winExes;
+    if (winExes) {
+      info.winExes = winExes;
+      const cwd = readCwd(dir);
+      if (cwd) info.cwd = cwd;
+    }
     infos.push(info);
   }
 
@@ -233,6 +243,15 @@ export function readProcessInfos(procRoot = '/proc'): ProcessInfo[] {
 }
 
 /** Read a single process' info by pid from /proc (used for late name lookups). */
+function readCwd(procDir: string): string | null {
+  try {
+    const target = fs.readlinkSync(path.join(procDir, 'cwd'));
+    return target && !target.endsWith(' (deleted)') ? target : null;
+  } catch {
+    return null; // gone, or not ours to read
+  }
+}
+
 export function readProcessInfoByPid(pid: number, procRoot = '/proc'): ProcessInfo | null {
   const dir = path.join(procRoot, String(pid));
   try {
@@ -267,7 +286,11 @@ export function readProcessInfoByPid(pid: number, procRoot = '/proc'): ProcessIn
   if (!name) return null;
   const info: ProcessInfo = { pid, name, cmdline: cmdlineTokens.join(' '), exe: exeLink };
   const winExes = deriveWindowsExes(exeLink, cmdlineTokens, comm);
-  if (winExes) info.winExes = winExes;
+  if (winExes) {
+    info.winExes = winExes;
+    const cwd = readCwd(dir);
+    if (cwd) info.cwd = cwd;
+  }
   return info;
 }
 
@@ -889,7 +912,7 @@ function poll(): void {
     isPolling = false;
     const { matched, info } = detectActivityWithInfo(infos, gameEntries);
     if (matched) {
-      void warmGameIcon({ id: matched.id, name: matched.name, exe: info?.exe ?? null, cmdline: info?.cmdline ?? '' });
+      void warmGameIcon({ id: matched.id, name: matched.name, exe: info?.exe ?? null, cmdline: info?.cmdline ?? '', winExes: info?.winExes, cwd: info?.cwd ?? null });
     }
     applyMatchedGame(matched);
     return;
@@ -916,7 +939,7 @@ function pollViaCommand(): void {
     const infos = infosFromNames(parseProcessList(stdout));
     const { matched, info } = detectActivityWithInfo(infos, gameEntries);
     if (matched) {
-      void warmGameIcon({ id: matched.id, name: matched.name, exe: info?.exe ?? null, cmdline: info?.cmdline ?? '' });
+      void warmGameIcon({ id: matched.id, name: matched.name, exe: info?.exe ?? null, cmdline: info?.cmdline ?? '', winExes: info?.winExes, cwd: info?.cwd ?? null });
     }
     applyMatchedGame(matched);
   });
