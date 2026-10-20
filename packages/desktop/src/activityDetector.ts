@@ -73,6 +73,8 @@ let ipcOverride: Activity | null = null;
 let currentActivities: Activity[] = [];
 let intervalId: NodeJS.Timeout | null = null;
 let isPolling = false;
+/** The program the player says their game is (see `setManualBinding`). */
+let manualBinding: ManualBinding | null = null;
 
 let hasErrored = false;
 let onChangeCallback: ((activity: Activity | null) => void) | null = null;
@@ -474,6 +476,76 @@ export function detectActivityWithInfo(
 /** Most games shown at once; the server accepts the same number of activities. */
 export const MAX_DETECTED_GAMES = 5;
 
+/** A program the player tied their game to: the status shows while it runs. */
+export interface ManualBinding {
+  name: string;
+  /** What `ProcessInfo.name` (or a Wine program name) must equal, ignoring case. */
+  process: string;
+}
+
+const MANUAL_ID = 'manual';
+const MAX_BINDING_FIELD = 256;
+
+export function parseManualBinding(value: unknown): ManualBinding | null {
+  if (!value || typeof value !== 'object') return null;
+  const { name, process: proc } = value as Record<string, unknown>;
+  if (typeof name !== 'string' || typeof proc !== 'string') return null;
+  const cleanName = name.trim();
+  const cleanProc = proc.trim();
+  if (cleanName === '' || cleanProc === '') return null;
+  if (cleanName.length > MAX_BINDING_FIELD || cleanProc.length > MAX_BINDING_FIELD) return null;
+  return { name: cleanName, process: cleanProc };
+}
+
+/** Bind the player's game to a running program (null clears it) and look again right away. */
+export function setManualBinding(value: unknown): void {
+  manualBinding = parseManualBinding(value);
+  if (intervalId) poll();
+}
+
+export interface RunningProgram {
+  /** What the picker shows and the game defaults to. */
+  label: string;
+  /** What the binding matches on. */
+  process: string;
+}
+
+const SYSTEM_PATH = /^\/(usr|bin|sbin|lib|lib32|lib64|etc|snap|run|proc|sys|var)\//;
+const MAX_RUNNING_PROGRAMS = 300;
+
+/**
+ * Programs the player can tie their game to: their own processes, minus the
+ * system's (anything run from /usr, /bin, ...). A Wine program is offered by
+ * its Windows name, not by the loader's.
+ */
+export function listRunningPrograms(procRoot = '/proc', uid: number | null = process.getuid?.() ?? null): RunningProgram[] {
+  let infos: ProcessInfo[];
+  try {
+    infos = readProcessInfos(procRoot);
+  } catch {
+    return [];
+  }
+  const seen = new Map<string, RunningProgram>();
+  for (const info of infos) {
+    if (uid !== null) {
+      try {
+        if (fs.statSync(path.join(procRoot, String(info.pid))).uid !== uid) continue;
+      } catch {
+        continue;
+      }
+    }
+    const windows = info.winExes?.[0];
+    const program = windows ?? info.name;
+    if (!windows && info.exe && SYSTEM_PATH.test(info.exe)) continue;
+    const label = windows ? windows.replace(/\.exe$/i, '') : info.name;
+    const key = program.toLowerCase();
+    if (!seen.has(key)) seen.set(key, { label, process: program });
+  }
+  return [...seen.values()]
+    .sort((a, b) => a.label.localeCompare(b.label))
+    .slice(0, MAX_RUNNING_PROGRAMS);
+}
+
 export interface DetectedGame {
   matched: MatchedGame;
   info: ProcessInfo | null;
@@ -499,6 +571,7 @@ export function detectActivitiesWithInfo(
   entries: GameEntry[],
   sources: SourceDetector[] = sourceDetectors,
   max: number = MAX_DETECTED_GAMES,
+  manual: ManualBinding | null = null,
 ): DetectedGame[] {
   const found: DetectedGame[] = [];
   const ids = new Set<string>();
@@ -511,8 +584,21 @@ export function detectActivitiesWithInfo(
     found.push({ matched, info });
   };
 
+  // The player's own game comes first and takes every process it matches, so
+  // the dictionary and the stores cannot list the same game a second time
+  if (manual) {
+    const entry: GameEntry = { id: MANUAL_ID, name: manual.name, processes: [manual.process] };
+    const running = infos.filter((info) => matchesProcessName(entry, info.name, info.cmdline, info.winExes));
+    const first = running[0];
+    if (first) {
+      add({ id: MANUAL_ID, name: manual.name, type: 'playing' }, first);
+      for (const info of running) if (info.pid > 0) claimedPids.add(info.pid);
+    }
+  }
+
   for (const entry of entries) {
     const info = matchInfoFor(entry.id, infos, entries);
+    if (info && info.pid > 0 && claimedPids.has(info.pid)) continue;
     if (info && !ids.has(entry.id)) {
       add({ id: entry.id, name: entry.name, type: entry.type ?? 'playing' }, info);
     }
@@ -1021,7 +1107,7 @@ function poll(): void {
       return;
     }
     isPolling = false;
-    applyDetectedGames(detectActivitiesWithInfo(infos, gameEntries));
+    applyDetectedGames(detectActivitiesWithInfo(infos, gameEntries, undefined, undefined, manualBinding));
     return;
   }
 
@@ -1044,7 +1130,7 @@ function pollViaCommand(): void {
     }
 
     const infos = infosFromNames(parseProcessList(stdout));
-    applyDetectedGames(detectActivitiesWithInfo(infos, gameEntries));
+    applyDetectedGames(detectActivitiesWithInfo(infos, gameEntries, undefined, undefined, manualBinding));
   });
 }
 

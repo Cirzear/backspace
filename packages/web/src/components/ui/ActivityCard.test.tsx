@@ -110,47 +110,33 @@ describe('ActivityCard', () => {
     expect(screen.getByText('by Blue Stahli')).toBeInTheDocument();
   });
 
-  it('renders large art with a tooltip and a small badge', () => {
+  it('renders no art in a list row, whatever the activity carries', () => {
     const activity: Activity = {
       type: 'playing',
       name: 'osu!',
-      details: 'Idle',
-      assets: {
-        largeImage: 'https://cdn.example.com/osu.png',
-        largeText: 'osu!',
-        smallImage: 'https://cdn.example.com/rank.png',
-        smallText: 'SS',
-      },
-    };
-    render(<ActivityCard activities={[activity]} />);
-    const large = screen.getByAltText('osu!');
-    expect(large).toHaveAttribute('src', 'https://cdn.example.com/osu.png');
-    expect(large).toHaveAttribute('title', 'osu!');
-    const badge = screen.getByAltText('SS');
-    expect(badge).toHaveAttribute('src', 'https://cdn.example.com/rank.png');
-    expect(badge).toHaveAttribute('title', 'SS');
-  });
-
-  it('hides art when the image fails to load', () => {
-    const activity: Activity = {
-      type: 'playing',
-      name: 'osu!',
-      assets: { largeImage: 'https://cdn.example.com/broken.png' },
-    };
-    render(<ActivityCard activities={[activity]} />);
-    const img = screen.getByAltText('osu!');
-    fireEvent.error(img);
-    expect(screen.queryByAltText('osu!')).not.toBeInTheDocument();
-  });
-
-  it('never renders non-http art URLs', () => {
-    const activity: Activity = {
-      type: 'playing',
-      name: 'osu!',
-      assets: { largeImage: 'data:image/png;base64,AAAA', smallImage: 'javascript:alert(1)' },
+      assets: { largeImage: 'https://cdn.example.com/osu.png', smallImage: 'https://cdn.example.com/rank.png' },
     };
     render(<ActivityCard activities={[activity]} />);
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
+    expect(screen.getByText('osu!')).toBeInTheDocument();
+  });
+
+  it('shows the first game and how many more are running', () => {
+    const games: Activity[] = [
+      { type: 'playing', name: 'Honkai: Star Rail' },
+      { type: 'playing', name: 'Stardew Valley' },
+      { type: 'playing', name: 'Zenless Zone Zero' },
+    ];
+    render(<ActivityCard activities={games} />);
+    expect(screen.getByText('Honkai: Star Rail')).toBeInTheDocument();
+    expect(screen.getByText('+2')).toHaveAttribute('title', 'Stardew Valley, Zenless Zone Zero');
+    expect(screen.queryByText('Stardew Valley')).not.toBeInTheDocument();
+  });
+
+  it('shows no counter for a single game, nor for music next to a game', () => {
+    render(<ActivityCard activities={[{ type: 'playing', name: 'cs2' }, { type: 'listening', name: 'Spotify' }]} />);
+    expect(screen.getByText('cs2')).toBeInTheDocument();
+    expect(screen.queryByText(/^\+\d/)).not.toBeInTheDocument();
   });
 
   it('renders emoji shortcodes in a custom status (issue #252)', () => {
@@ -291,20 +277,6 @@ describe('ActivityDetailCard', () => {
     fireEvent.error(screen.getByAltText('SS'));
     expect(container.querySelector('img')).toBeNull();
     expect(container.querySelector('.w-\\[60px\\]')).toBeNull();
-  });
-
-  it('leaves no empty frame in the row card when its image fails', () => {
-    const activity: Activity = {
-      type: 'playing',
-      name: 'osu!',
-      assets: { largeImage: 'https://cdn.example.com/broken.png' },
-    };
-
-    const { container } = render(<ActivityCard activities={[activity]} />);
-
-    expect(container.querySelector('.w-9')).not.toBeNull();
-    fireEvent.error(screen.getByAltText('osu!'));
-    expect(container.querySelector('.w-9')).toBeNull();
   });
 
   it('tries a new image after a different one failed', () => {

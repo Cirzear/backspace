@@ -60,13 +60,6 @@ interface ArtworkSize {
   single: string;
 }
 
-const ROW_ART: ArtworkSize = {
-  wrapper: 'relative shrink-0 w-9 h-9',
-  large: 'w-9 h-9 rounded-md object-cover',
-  badge: 'absolute -bottom-1 -right-1 w-4 h-4 rounded-full object-cover ring-2 ring-white',
-  single: 'w-9 h-9 rounded-md object-cover',
-};
-
 const POPOUT_ART: ArtworkSize = {
   wrapper: 'relative shrink-0 w-[60px] h-[60px]',
   large: 'w-[60px] h-[60px] rounded-[10px] object-cover bg-white/[0.04]',
@@ -127,6 +120,16 @@ export function getActivityAccentClass(type: Activity['type']): string {
   }
 }
 
+/** How many more games the user is playing besides the one shown. */
+export function otherGamesCount(activities: Activity[], primary: Activity): number {
+  if (primary.type !== 'playing') return 0;
+  return activities.filter((activity) => activity.type === 'playing' && activity !== primary).length;
+}
+
+function otherGameNames(activities: Activity[], primary: Activity): string {
+  return activities.filter((activity) => activity.type === 'playing' && activity !== primary).map((activity) => activity.name).join(', ');
+}
+
 /** Returns whether an activity should get the glass card row treatment */
 export function hasRichActivity(activities: Activity[]): boolean {
   const primary = getPrimaryActivity(activities);
@@ -134,8 +137,9 @@ export function hasRichActivity(activities: Activity[]): boolean {
 }
 
 /**
- * Renders the rich activity: art (large image with a small badge), app name,
- * details/state lines and a live elapsed/countdown time line.
+ * Renders the activity as a list row: app name (with "+N" when the user is
+ * playing more games), details/state lines and a live elapsed/countdown time
+ * line. No art: lists stay text-only, the profile popout shows the artwork.
  * The glass card wrapper is applied by the parent row container.
  */
 export function ActivityCard({ activities, fallbackCustomStatus }: ActivityCardProps) {
@@ -161,24 +165,19 @@ export function ActivityCard({ activities, fallbackCustomStatus }: ActivityCardP
     return <div className="text-[11px] leading-[1.3] text-txt-tertiary truncate">{replaceEmojiShortcodes(primary.name)}</div>;
   }
 
-  const assets = primary.assets;
-  const largeImage = isRenderableActivityImage(assets?.largeImage) ? assets.largeImage : null;
-  const smallImage = isRenderableActivityImage(assets?.smallImage) ? assets.smallImage : null;
   const timeText = activityTimeText(primary.timestamps ?? {}, now, t, formatDuration);
+  const moreGames = otherGamesCount(activities, primary);
 
-  // Rich activity — art, name, details/state and time (card wrapper is on the parent row)
+  // Rich activity — text only: name (+N more games), details/state and time
+  // (card wrapper is on the parent row). Art belongs to the profile view.
   return (
     <div className="flex items-center gap-1.5 min-w-0">
-      <ActivityArtwork
-        largeImage={largeImage}
-        smallImage={smallImage}
-        largeAlt={assets?.largeText || primary.name}
-        smallAlt={assets?.smallText}
-        size={ROW_ART}
-      />
       <div className="min-w-0 flex-1">
-        <div className="text-[11px] leading-[1.3] text-txt-secondary truncate">
-          {primary.name}
+        <div className="flex items-baseline gap-1 min-w-0 text-[11px] leading-[1.3] text-txt-secondary">
+          <span className="truncate">{primary.name}</span>
+          {moreGames > 0 && (
+            <span className="shrink-0 text-txt-tertiary tabular-nums" title={otherGameNames(activities, primary)}>+{moreGames}</span>
+          )}
         </div>
         {primary.details && (
           <div className="text-[10px] leading-[1.3] text-txt-tertiary truncate">

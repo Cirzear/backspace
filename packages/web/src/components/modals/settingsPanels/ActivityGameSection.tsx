@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ACTIVITY_LIMITS } from '@backspace/shared/src/activities';
 import { useActivityStore } from '../../../stores/activityStore';
@@ -16,6 +16,7 @@ const LINK_BUTTON = 'text-xs text-txt-tertiary hover:text-txt-secondary transiti
 export function ActivityGameSection() {
   const { t } = useTranslation('settings');
   const manualGame = useActivityStore((s) => s.manualGame);
+  const manualProcess = useActivityStore((s) => s.manualProcess);
   const detected = useActivityStore((s) => s.detectedActivities);
   const renames = useActivityStore((s) => s.gameRenames);
   const setManualGame = useActivityStore((s) => s.setManualGame);
@@ -24,11 +25,25 @@ export function ActivityGameSection() {
   const listId = useId();
   const [draft, setDraft] = useState(manualGame ?? '');
   const [suggestions, setSuggestions] = useState<string[]>([]);
+  // The desktop can tie the game to a running program; a browser cannot see processes
+  const canBind = typeof window.backspace?.listRunningPrograms === 'function';
+  const [programs, setPrograms] = useState<Array<{ label: string; process: string }>>([]);
+  const [program, setProgram] = useState(manualProcess ?? '');
   const [renameDrafts, setRenameDrafts] = useState<Record<string, string>>({});
 
   useEffect(() => {
     setDraft(manualGame ?? '');
-  }, [manualGame]);
+    setProgram(manualProcess ?? '');
+  }, [manualGame, manualProcess]);
+
+  const refreshPrograms = useCallback(() => {
+    window.backspace?.listRunningPrograms?.()
+      .then((list) => { if (Array.isArray(list)) setPrograms(list); })
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (canBind) refreshPrograms();
+  }, [canBind, refreshPrograms]);
 
   // The desktop client knows the dictionary and the installed games; the web
   // client has no suggestions and takes any name typed.
@@ -43,25 +58,53 @@ export function ActivityGameSection() {
   }, []);
 
   const detectedGames = useMemo(
-    () => detected.filter((activity) => activity.type === 'playing'),
-    [detected],
+    () => detected.filter((activity) => activity.type === 'playing' && !(manualProcess !== null && activity.name === manualGame)),
+    [detected, manualProcess, manualGame],
   );
   const renamedEntries = useMemo(() => Object.entries(renames), [renames]);
 
   const trimmed = draft.trim();
+  // A tied game needs its program; the program the player picked may have closed since
+  const programOptions = program !== '' && !programs.some((p) => p.process === program)
+    ? [{ label: program.replace(/\.exe$/i, ''), process: program }, ...programs]
+    : programs;
+  const running = manualGame !== null && detected.some((activity) => activity.type === 'playing' && activity.name === manualGame);
+  const canSet = trimmed !== '' && (!canBind || program !== '') && (trimmed !== manualGame || program !== (manualProcess ?? ''));
 
   return (
     <div className="mt-3 pt-3 border-t border-white/[0.06] space-y-4">
       <div>
         <div className="text-sm text-txt-primary">{t('privacy.activity.game.label')}</div>
-        <div className="text-xs text-txt-tertiary mt-0.5">{t('privacy.activity.game.description')}</div>
+        <div className="text-xs text-txt-tertiary mt-0.5">{t(canBind ? 'privacy.activity.game.descriptionBound' : 'privacy.activity.game.description')}</div>
         <form
           className="flex items-center gap-2 mt-2"
           onSubmit={(event) => {
             event.preventDefault();
-            if (trimmed !== '') setManualGame(trimmed);
+            if (canSet) setManualGame(trimmed, canBind ? program : null);
           }}
         >
+          {canBind && (
+            <>
+              <select
+                className="input-standard w-1/3 min-w-0 px-2 py-1.5 text-sm"
+                value={program}
+                aria-label={t('privacy.activity.game.programLabel')}
+                onFocus={refreshPrograms}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setProgram(next);
+                  // A name typed or stored before the pick stays; an empty one defaults to the program
+                  const chosen = programOptions.find((p) => p.process === next);
+                  if (chosen && (draft.trim() === '' || draft === programOptions.find((p) => p.process === program)?.label)) {
+                    setDraft(chosen.label);
+                  }
+                }}
+              >
+                <option value="">{t('privacy.activity.game.programPlaceholder')}</option>
+                {programOptions.map((p) => <option key={p.process} value={p.process}>{p.label}</option>)}
+              </select>
+            </>
+          )}
           <input
             className="input-standard flex-1 min-w-0 px-2.5 py-1.5 text-sm"
             value={draft}
@@ -74,7 +117,7 @@ export function ActivityGameSection() {
           <datalist id={listId}>
             {suggestions.map((name) => <option key={name} value={name} />)}
           </datalist>
-          <button type="submit" className={PRIMARY_BUTTON} disabled={trimmed === '' || trimmed === manualGame}>
+          <button type="submit" className={PRIMARY_BUTTON} disabled={!canSet}>
             {t('privacy.activity.game.set')}
           </button>
           {manualGame !== null && (
@@ -83,14 +126,19 @@ export function ActivityGameSection() {
             </button>
           )}
         </form>
+        {canBind && (
+          <div className="text-xs text-txt-tertiary mt-1.5">{t('privacy.activity.game.programHint')}</div>
+        )}
         {manualGame !== null && (
           <div className="text-xs text-txt-tertiary mt-1.5">
-            {t('privacy.activity.game.showing', { name: manualGame })}
+            {manualProcess === null
+              ? t('privacy.activity.game.showing', { name: manualGame })
+              : t(running ? 'privacy.activity.game.showingRunning' : 'privacy.activity.game.showingWaiting', { name: manualGame, program: manualProcess })}
           </div>
         )}
       </div>
 
-      {detectedGames.length > 0 && manualGame === null && (
+      {detectedGames.length > 0 && (manualGame === null || manualProcess !== null) && (
         <div>
           <div className="text-sm text-txt-primary">{t('privacy.activity.game.detectedLabel')}</div>
           <div className="text-xs text-txt-tertiary mt-0.5">{t('privacy.activity.game.detectedDescription')}</div>

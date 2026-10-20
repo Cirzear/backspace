@@ -4,9 +4,11 @@ import { ACTIVITY_LIMITS } from '@backspace/shared/src/activities';
 /**
  * What the player decided about the game they are shown as playing.
  *
- * - `manual`: a game the player named themselves. It replaces every detected
- *   "playing" activity and stays until the player clears it (no timer): the
- *   whole point is a game rich presence missed, so nothing ends it for us.
+ * - `manual`: a game the player named themselves. Tied to a program
+ *   (`manualProcess`), the desktop shows it while that program runs and the
+ *   detector, not this client, builds the activity. Without a program (a browser
+ *   has no processes) it replaces every detected "playing" activity and stays
+ *   until the player clears it.
  * - `renames`: for a game the detector DID find, the name the player wants
  *   shown instead (detected name, lowercased → chosen name). It is remembered,
  *   so the game is shown under that name every time it is detected.
@@ -16,6 +18,12 @@ import { ACTIVITY_LIMITS } from '@backspace/shared/src/activities';
  */
 export interface GameOverrides {
   manual: string | null;
+  /**
+   * The program the manual game is tied to (desktop only): the status shows
+   * while that program runs. Null is a game named without a program, shown
+   * until cleared. Never set without `manual`.
+   */
+  manualProcess: string | null;
   renames: Record<string, string>;
 }
 
@@ -32,6 +40,17 @@ export function sanitizeGameName(raw: string): string | null {
   return cleaned.slice(0, ACTIVITY_LIMITS.MAX_NAME_LENGTH).trim();
 }
 
+export function emptyOverrides(): GameOverrides {
+  return { manual: null, manualProcess: null, renames: {} };
+}
+
+/** A program name as the desktop reports it: trimmed, no control characters, bounded. Null when empty. */
+export function sanitizeProcessName(raw: string): string | null {
+  // eslint-disable-next-line no-control-regex
+  const cleaned = raw.replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  return cleaned === '' ? null : cleaned.slice(0, 256);
+}
+
 /** The key a detected name is remembered under. */
 export function renameKey(detectedName: string): string {
   return detectedName.trim().toLowerCase();
@@ -40,13 +59,14 @@ export function renameKey(detectedName: string): string {
 export function loadOverrides(): GameOverrides {
   try {
     const raw = localStorage.getItem(GAME_OVERRIDES_KEY);
-    if (!raw) return { manual: null, renames: {} };
+    if (!raw) return emptyOverrides();
     const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return { manual: null, renames: {} };
-    const { manual, renames } = parsed as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object') return emptyOverrides();
+    const { manual, manualProcess, renames } = parsed as Record<string, unknown>;
 
-    const result: GameOverrides = { manual: null, renames: {} };
+    const result = emptyOverrides();
     if (typeof manual === 'string') result.manual = sanitizeGameName(manual);
+    if (result.manual !== null && typeof manualProcess === 'string') result.manualProcess = sanitizeProcessName(manualProcess);
     if (renames && typeof renames === 'object') {
       for (const [key, value] of Object.entries(renames as Record<string, unknown>)) {
         if (typeof value !== 'string') continue;
@@ -56,7 +76,7 @@ export function loadOverrides(): GameOverrides {
     }
     return result;
   } catch {
-    return { manual: null, renames: {} };
+    return emptyOverrides();
   }
 }
 

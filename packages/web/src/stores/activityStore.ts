@@ -10,8 +10,10 @@ import {
   saveOverrides,
   setRename,
   withManualGame,
+  sanitizeProcessName,
   withRenames,
 } from '../utils/gameOverrides';
+import { syncManualBinding } from '../platform/manualGameBinding';
 
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
 /** Monotonic push generation: a debounce that fired but is still enriching must not send after a newer push arrived. */
@@ -171,6 +173,8 @@ interface ActivityState {
   detectedActivities: Activity[];
   /** A game the player named themselves; replaces detected "playing" activities until cleared. */
   manualGame: string | null;
+  /** The program `manualGame` is tied to (desktop): the desktop builds that activity, only while it runs. */
+  manualProcess: string | null;
   /** Detected name (lowercased) → the name the player wants shown for it. */
   gameRenames: Record<string, string>;
 
@@ -189,8 +193,11 @@ interface ActivityState {
   setOriginRows: (origin: string, rows: Map<string, PresenceSubject> | null) => void;
   setShowActivity: (show: boolean) => void;
   pushActivities: (activities: Activity[]) => void;
-  /** Name the game being played (null clears it). Blank names clear it too. */
-  setManualGame: (name: string | null) => void;
+  /**
+   * Name the game being played (null clears it; blank names clear it too).
+   * With a `process` the desktop shows it while that program runs.
+   */
+  setManualGame: (name: string | null, process?: string | null) => void;
   /** Show a detected game under another name from now on (null restores its own name). */
   setGameRename: (detectedName: string, chosen: string | null) => void;
   /** Push again what is currently effective, when there is something to show. */
@@ -200,6 +207,11 @@ interface ActivityState {
 
 const initialOverrides = loadOverrides();
 
+/** The manual game this client puts into the status itself: one not tied to a program. */
+function nameOnlyGame(state: { manualGame: string | null; manualProcess: string | null }): string | null {
+  return state.manualProcess === null ? state.manualGame : null;
+}
+
 export const useActivityStore = create<ActivityState>((set, get) => ({
   userActivities: new Map(),
   activityWriters: new Map(),
@@ -208,6 +220,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
   myActivities: null,
   detectedActivities: [],
   manualGame: initialOverrides.manual,
+  manualProcess: initialOverrides.manualProcess,
   gameRenames: initialOverrides.renames,
 
   setUserActivities: (subject, origin, activities) => {
@@ -293,7 +306,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
     set({ detectedActivities: activities });
     if (!get().showActivity) return;
     const effective = (list: Activity[]) => withRenames(
-      withManualGame(list, get().manualGame),
+      withManualGame(list, nameOnlyGame(get())),
       get().gameRenames,
     );
     set({ myActivities: effective(activities) });
@@ -303,7 +316,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
       pushTimer = null;
       // Icons are looked up by the name the machine knows the game by, so the
       // player's rename is applied after they are attached, not before.
-      const base = withManualGame(activities, get().manualGame);
+      const base = withManualGame(activities, nameOnlyGame(get()));
       // Cached icons attach synchronously, so a push that needs no upload
       // sends exactly as it did before icons existed.
       const withCached = attachCachedIcons(base);
@@ -325,22 +338,25 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
     }, 5000);
   },
 
-  setManualGame: (name) => {
+  setManualGame: (name, process = null) => {
     const manualGame = name === null ? null : sanitizeGameName(name);
-    set({ manualGame });
-    saveOverrides({ manual: manualGame, renames: get().gameRenames });
+    const manualProcess = manualGame !== null && process !== null ? sanitizeProcessName(process) : null;
+    set({ manualGame, manualProcess });
+    saveOverrides({ manual: manualGame, manualProcess, renames: get().gameRenames });
+    syncManualBinding(manualGame, manualProcess);
     get().republish();
   },
 
   setGameRename: (detectedName, chosen) => {
     const gameRenames = setRename(get().gameRenames, detectedName, chosen);
     set({ gameRenames });
-    saveOverrides({ manual: get().manualGame, renames: gameRenames });
+    saveOverrides({ manual: get().manualGame, manualProcess: get().manualProcess, renames: gameRenames });
     get().republish();
   },
 
   republish: () => {
-    const { detectedActivities, manualGame, myActivities, showActivity } = get();
+    const { detectedActivities, myActivities, showActivity } = get();
+    const manualGame = nameOnlyGame(get());
     if (!showActivity) return;
     // Nothing to show and nothing shown before: do not send an empty update.
     // With something shown before (a cleared manual game), the empty list is
@@ -361,9 +377,11 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
       myActivities: null,
       detectedActivities: [],
       manualGame: null,
+      manualProcess: null,
       gameRenames: {},
     });
     // The choices belong to the signed-in player; the next account starts clean
     clearOverrides();
+    syncManualBinding(null, null);
   },
 }));

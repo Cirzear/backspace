@@ -179,6 +179,9 @@ interface BackspaceElectronAPI {
   getCurrentActivities?: () => Promise<unknown>;
   /** Game names for the manual-game picker (dictionary + installed games); absent on older desktops. */
   listKnownGames?: () => Promise<string[]>;
+  /** Programs the player can tie their game to. Absent in desktop builds that predate the binding. */
+  listRunningPrograms?: () => Promise<Array<{ label: string; process: string }>>;
+  setManualGameBinding?: (binding: { name: string; process: string } | null) => Promise<void>;
   /**
    * Locally extracted game icon (Steam library cache, .desktop entries,
    * AppImage/GOG directories) as base64, or null when none was found. The

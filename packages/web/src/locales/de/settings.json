@@ -282,7 +282,13 @@
         "renameLabel": "{{name}} anzeigen als",
         "renamedLabel": "Umbenannte Spiele",
         "renamedItem": "{{detected}} → {{chosen}}",
-        "restore": "Zurücksetzen"
+        "restore": "Zurücksetzen",
+        "descriptionBound": "Wurde dein Spiel nicht erkannt, wähle sein Programm und benenne es. Es wird angezeigt, solange das Programm läuft.",
+        "programLabel": "Programm",
+        "programPlaceholder": "Laufendes Programm wählen…",
+        "programHint": "Starte zuerst das Spiel und wähle dann sein Programm aus der Liste.",
+        "showingRunning": "Angezeigt: {{name}} (läuft: {{program}})",
+        "showingWaiting": "Warte auf den Start von {{program}}, dann wird {{name}} angezeigt"
       }
     }
   },

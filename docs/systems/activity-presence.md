@@ -327,10 +327,10 @@ Detection combines two sources:
 
 The player has a say over the game shown as playing (Settings → Privacy, under the activity toggle; web and desktop alike):
 
-- **Manual game.** A name the player types for a game rich presence missed. It replaces every detected `playing` activity (music and video stay), carries no timestamps, and stays until the player clears it — there is no timer. The desktop offers suggestions (`list-known-games`); the web client takes any name.
+- **Manual game.** A game rich presence missed. On the desktop it is tied to a running program: the player picks one from `list-running-programs` (their own non-system processes; a Wine program under its Windows name) and names the game. The renderer hands `{ name, process }` to the detector (`set-manual-game-binding`, in memory; `initActivityBridge` and `setManualGame` resend it), and the detector reports the game, with its own start time and icon lookup, only while a process matching `process` runs — `detectActivitiesWithInfo` lists it first and claims every process it matches, so the dictionary and the stores do not list the same game again. Other detected games stay. A web client, or a desktop without the binding, has no processes to follow: there the name alone replaces every detected `playing` activity (music and video stay), carries no timestamps, and stays until the player clears it.
 - **Rename.** A detected game can be shown under another name, remembered by detected name (case-insensitive, at most 200, oldest dropped). Applies to `playing` activities only.
 
-Order in `pushActivities`: detected → manual game → icon lookup (by the name the machine knows) → renames → send. Both choices live in this client's `localStorage` (`backspace_game_overrides`), not on the server: the server and federation see an ordinary `playing` activity, and nothing changes in the wire format. They are per browser/desktop profile and are cleared on sign-in and sign-out.
+Order in `pushActivities`: detected → name-only manual game (a tied one is already among the detected) → icon lookup (by the name the machine knows) → renames → send. Both choices live in this client's `localStorage` (`backspace_game_overrides`), not on the server: the server and federation see an ordinary `playing` activity, and nothing changes in the wire format. They are per browser/desktop profile and are cleared on sign-in and sign-out.
 
 ### Game icons
 
@@ -362,7 +362,7 @@ The extractor reads only regular files of at most 512 KiB (a `stat` first, then 
 2. On change: calls `pushActivities(list)`; an older desktop's single activity becomes a one-item list, null becomes `[]` (`toActivityList`)
 3. On init: also queries `getCurrentActivities()` (or `getCurrentActivity()`) for immediate state; the reconnect re-push in `useWebSocket` uses the same `fetchCurrentActivities()`
 
-Several games at once travel as several `playing` activities (the server accepts up to five). A manual game still replaces every detected `playing` activity.
+Several games at once travel as several `playing` activities (the server accepts up to five). A name-only manual game still replaces every detected `playing` activity; a program-tied one is just another detected game. The member and friend lists show the first game and "+N" for the others, text only; the profile popout is unchanged.
 4. Cleanup: `teardownActivityBridge()` removes the IPC listener
 
 ---
@@ -380,6 +380,7 @@ interface ActivityState {
   myActivities: Activity[] | null;           // Current user's own activities as sent: manual game and renames applied
   detectedActivities: Activity[];            // What the machine detected, before the player's own choices
   manualGame: string | null;                 // A game the player named themselves
+  manualProcess: string | null;              // The program it is tied to (desktop); null = shown by name alone
   gameRenames: Record<string, string>;       // Detected name (lowercased) → name the player wants shown
 }
 ```

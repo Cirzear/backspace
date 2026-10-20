@@ -284,7 +284,13 @@
         "renameLabel": "Показывать {{name}} как",
         "renamedLabel": "Переименованные игры",
         "renamedItem": "{{detected}} → {{chosen}}",
-        "restore": "Вернуть"
+        "restore": "Вернуть",
+        "descriptionBound": "Если игра не определилась, выберите её программу и назовите игру. Она показывается, пока программа запущена.",
+        "programLabel": "Программа",
+        "programPlaceholder": "Выберите запущенную программу…",
+        "programHint": "Сначала запустите игру, затем выберите её программу из списка.",
+        "showingRunning": "Показывается: {{name}} (запущено: {{program}})",
+        "showingWaiting": "Ждём запуска {{program}}, тогда покажем {{name}}"
       }
     }
   },

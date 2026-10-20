@@ -283,7 +283,13 @@
         "renameLabel": "Mostrar {{name}} como",
         "renamedLabel": "Jogos renomeados",
         "renamedItem": "{{detected}} → {{chosen}}",
-        "restore": "Restaurar"
+        "restore": "Restaurar",
+        "descriptionBound": "Se o seu jogo não foi detectado, escolha o programa dele e dê um nome. Ele é exibido enquanto esse programa estiver em execução.",
+        "programLabel": "Programa",
+        "programPlaceholder": "Escolha um programa em execução…",
+        "programHint": "Inicie o jogo primeiro e depois escolha o programa dele na lista.",
+        "showingRunning": "Exibindo: {{name}} (em execução: {{program}})",
+        "showingWaiting": "Aguardando {{program}} iniciar para exibir {{name}}"
       }
     }
   },

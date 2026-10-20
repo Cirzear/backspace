@@ -281,7 +281,13 @@
         "renameLabel": "将 {{name}} 显示为",
         "renamedLabel": "已重命名的游戏",
         "renamedItem": "{{detected}} → {{chosen}}",
-        "restore": "恢复"
+        "restore": "恢复",
+        "descriptionBound": "如果没有检测到你的游戏，请选择它的程序并命名。该程序运行期间会显示这个游戏。",
+        "programLabel": "程序",
+        "programPlaceholder": "选择正在运行的程序…",
+        "programHint": "请先启动游戏，再从列表中选择它的程序。",
+        "showingRunning": "正在显示：{{name}}（运行中：{{program}}）",
+        "showingWaiting": "等待 {{program}} 启动后显示 {{name}}"
       }
     }
   },

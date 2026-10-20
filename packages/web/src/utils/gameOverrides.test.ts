@@ -27,9 +27,18 @@ describe('sanitizeGameName', () => {
 describe('loadOverrides', () => {
   it('survives junk in storage', () => {
     localStorage.setItem(GAME_OVERRIDES_KEY, 'not json');
-    expect(loadOverrides()).toEqual({ manual: null, renames: {} });
+    expect(loadOverrides()).toEqual({ manual: null, manualProcess: null, renames: {} });
     localStorage.setItem(GAME_OVERRIDES_KEY, JSON.stringify({ manual: 5, renames: { a: 7, b: 'Ok', '': 'x' } }));
-    expect(loadOverrides()).toEqual({ manual: null, renames: { b: 'Ok' } });
+    expect(loadOverrides()).toEqual({ manual: null, manualProcess: null, renames: { b: 'Ok' } });
+  });
+
+  it('keeps the program of a manual game, and drops a program without a game', () => {
+    localStorage.setItem(GAME_OVERRIDES_KEY, JSON.stringify({ manual: 'Hades', manualProcess: ' Hades.exe ', renames: {} }));
+    expect(loadOverrides()).toMatchObject({ manual: 'Hades', manualProcess: 'Hades.exe' });
+    localStorage.setItem(GAME_OVERRIDES_KEY, JSON.stringify({ manualProcess: 'Hades.exe', renames: {} }));
+    expect(loadOverrides().manualProcess).toBeNull();
+    localStorage.setItem(GAME_OVERRIDES_KEY, JSON.stringify({ manual: 'Hades', manualProcess: 7 }));
+    expect(loadOverrides().manualProcess).toBeNull();
   });
 });
 

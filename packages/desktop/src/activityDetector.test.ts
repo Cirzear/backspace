@@ -32,6 +32,9 @@ import {
   MAX_DETECTED_GAMES,
   type SourceDetector,
   type ProcessInfo,
+  parseManualBinding,
+  setManualBinding,
+  listRunningPrograms,
 } from './activityDetector';
 import type { IpcActivityPush, IpcActivityPayload } from './richPresenceIpc';
 
@@ -913,5 +916,74 @@ describe('scan layer and IPC with several games', () => {
       __testSetScanActivities([{ type: 'playing', name: 'A' }]);
       expect(lists).toHaveLength(1);
     });
+  });
+});
+
+describe('a game tied to a program', () => {
+  const dict = [{ id: 'stardew', name: 'Stardew Valley', processes: ['Stardew Valley.exe'] }];
+  const proc = (pid: number, name: string, extra: Partial<ProcessInfo> = {}): ProcessInfo => ({ pid, name, cmdline: name, exe: null, ...extra });
+
+  it('is shown while its program runs, under the player\'s name, and not otherwise', () => {
+    const binding = { name: 'My Game', process: 'mygame' };
+    expect(detectActivitiesWithInfo([proc(1, 'MyGame')], dict, [], 5, binding).map((g) => g.matched.name)).toEqual(['My Game']);
+    expect(detectActivitiesWithInfo([proc(1, 'bash')], dict, [], 5, binding)).toEqual([]);
+  });
+
+  it('follows a Wine program by its Windows name', () => {
+    const wine = proc(4, 'wine64-preloader', { winExes: ['Weird.exe'] });
+    const games = detectActivitiesWithInfo([wine], dict, [], 5, { name: 'Weird', process: 'weird.exe' });
+    expect(games[0]?.info?.pid).toBe(4);
+  });
+
+  it('replaces the automatic entry for the same process instead of listing the game twice', () => {
+    const games = detectActivitiesWithInfo(
+      [proc(1, 'Stardew Valley.exe')],
+      dict,
+      [],
+      5,
+      { name: 'Farm', process: 'Stardew Valley.exe' },
+    );
+    expect(games.map((g) => g.matched.name)).toEqual(['Farm']);
+  });
+
+  it('keeps other games next to it, the tied one first', () => {
+    const games = detectActivitiesWithInfo(
+      [proc(1, 'Stardew Valley.exe'), proc(2, 'MyGame')],
+      dict,
+      [],
+      5,
+      { name: 'Mine', process: 'MyGame' },
+    );
+    expect(games.map((g) => g.matched.name)).toEqual(['Mine', 'Stardew Valley']);
+  });
+
+  it('accepts only a well-formed binding', () => {
+    expect(parseManualBinding({ name: ' A ', process: ' b ' })).toEqual({ name: 'A', process: 'b' });
+    expect(parseManualBinding(null)).toBeNull();
+    expect(parseManualBinding({ name: 'A' })).toBeNull();
+    expect(parseManualBinding({ name: '', process: 'b' })).toBeNull();
+    expect(parseManualBinding({ name: 'A', process: 'x'.repeat(257) })).toBeNull();
+    expect(parseManualBinding({ name: 5, process: 'b' })).toBeNull();
+    setManualBinding('junk'); // ignored, clears
+  });
+});
+
+describe('listRunningPrograms', () => {
+  it('offers the player\'s own non-system programs, Wine ones by their Windows name', () => {
+    const root = makeFakeProc([
+      { pid: 1, exe: '/usr/bin/bash', cmdline: ['bash'], comm: 'bash' },
+      { pid: 2, exe: '/home/u/Games/mygame/MyGame', cmdline: ['/home/u/Games/mygame/MyGame'], comm: 'MyGame' },
+      { pid: 3, exe: '/home/u/runners/bin/wine64-preloader', cmdline: ['Z:\\g\\Weird Game.exe'], comm: 'Weird Game.ex' },
+      { pid: 4, exe: '/home/u/Games/mygame/MyGame', cmdline: ['/home/u/Games/mygame/MyGame'], comm: 'MyGame' },
+    ]);
+    const programs = listRunningPrograms(root, null);
+    expect(programs.map((p) => p.process).sort()).toEqual(['MyGame', 'Weird Game.exe']);
+    expect(programs.find((p) => p.process === 'Weird Game.exe')?.label).toBe('Weird Game');
+  });
+
+  it('skips processes of other users', () => {
+    const root = makeFakeProc([{ pid: 2, exe: '/home/u/g/Game', cmdline: ['Game'], comm: 'Game' }]);
+    expect(listRunningPrograms(root, process.getuid!() + 1)).toEqual([]);
+    expect(listRunningPrograms(root, process.getuid!())).toHaveLength(1);
   });
 });

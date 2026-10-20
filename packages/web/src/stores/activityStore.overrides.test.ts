@@ -145,3 +145,59 @@ describe('renamed games', () => {
     expect(lastSent()).toEqual([MUSIC]);
   });
 });
+
+describe('manual game tied to a program', () => {
+  const setBinding = vi.fn(() => Promise.resolve());
+  beforeEach(() => {
+    setBinding.mockClear();
+    (window as unknown as { backspace: unknown }).backspace = { getGameIcon, setManualGameBinding: setBinding };
+  });
+
+  it('hands the binding to the desktop and remembers it', () => {
+    useActivityStore.getState().setManualGame('Hades', ' Hades.exe ');
+    expect(setBinding).toHaveBeenCalledWith({ name: 'Hades', process: 'Hades.exe' });
+    expect(JSON.parse(localStorage.getItem(GAME_OVERRIDES_KEY) ?? '{}')).toMatchObject({ manual: 'Hades', manualProcess: 'Hades.exe' });
+  });
+
+  it('adds nothing itself: the desktop reports the game while the program runs', async () => {
+    useActivityStore.getState().setManualGame('Hades', 'Hades.exe');
+    useActivityStore.getState().pushActivities([]);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(lastSent()).toEqual([]); // program not running: nothing to say
+
+    const reported: Activity = { type: 'playing', name: 'Hades', timestamps: { start: 5 } };
+    useActivityStore.getState().pushActivities([reported, RUNTIME]);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(lastSent()).toEqual([reported, RUNTIME]); // other detected games are not replaced
+  });
+
+  it('stops when the program stops', async () => {
+    const reported: Activity = { type: 'playing', name: 'Hades' };
+    useActivityStore.getState().setManualGame('Hades', 'Hades.exe');
+    useActivityStore.getState().pushActivities([reported]);
+    await vi.advanceTimersByTimeAsync(5000);
+    useActivityStore.getState().pushActivities([]);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(lastSent()).toEqual([]);
+  });
+
+  it('clearing it clears the desktop binding', () => {
+    useActivityStore.getState().setManualGame('Hades', 'Hades.exe');
+    useActivityStore.getState().setManualGame(null);
+    expect(setBinding).toHaveBeenLastCalledWith(null);
+    expect(useActivityStore.getState().manualProcess).toBeNull();
+  });
+
+  it('a name without a program is still shown by this client', async () => {
+    useActivityStore.getState().setManualGame('Hades');
+    expect(setBinding).toHaveBeenLastCalledWith(null);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(lastSent()).toEqual([{ type: 'playing', name: 'Hades' }]);
+  });
+
+  it('reset forgets the binding on the desktop too', () => {
+    useActivityStore.getState().setManualGame('Hades', 'Hades.exe');
+    useActivityStore.getState().reset();
+    expect(setBinding).toHaveBeenLastCalledWith(null);
+  });
+});

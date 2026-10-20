@@ -1,5 +1,6 @@
 import type { Activity } from '@backspace/shared';
 import { useActivityStore } from '../stores/activityStore';
+import { syncManualBinding } from './manualGameBinding';
 
 let unsubscribe: (() => void) | null = null;
 
@@ -33,6 +34,10 @@ export function initActivityBridge(): void {
   unsubscribe = bridge.onActivitiesDetected
     ? bridge.onActivitiesDetected(push)
     : bridge.onActivityDetected(push);
+
+  // The desktop forgets the binding with its process: hand it over again
+  const { manualGame, manualProcess } = useActivityStore.getState();
+  if (manualGame && manualProcess) syncManualBinding(manualGame, manualProcess);
 
   // Request current state (handles instance-switch: game was already running)
   fetchCurrentActivities().then((activities) => {

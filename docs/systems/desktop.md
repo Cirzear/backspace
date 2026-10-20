@@ -981,6 +981,8 @@ Detection: `typeof window.backspace !== 'undefined'` (see `platform.ts:isElectro
 | `setAutoLaunchSettings(s)` | invoke | R->M | |
 | `onActivityDetected(cb)` | listen | M->R | Returns cleanup function `() => void` |
 | `getCurrentActivity()` | invoke | R->M | Returns `Promise<Activity \| null>` (the first activity) |
+| `listRunningPrograms()` | invoke | R->M | `Promise<{ label, process }[]>`: the player's own non-system programs. Optional in `electron.d.ts` |
+| `setManualGameBinding(b)` | invoke | R->M | `{ name, process } \| null`: tie the player's game to a program (validated by `parseManualBinding`, held in memory). Optional likewise |
 | `onActivitiesDetected(cb)` | listen | M->R | List channel; returns cleanup function. Optional in `electron.d.ts`: older desktops lack it |
 | `getCurrentActivities()` | invoke | R->M | Returns `Promise<Activity[]>`. Optional likewise |
 | `syncKeybinds(keybinds)` | fire | R->M | |

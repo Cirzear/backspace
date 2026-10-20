@@ -282,7 +282,13 @@
         "renameLabel": "Show {{name}} as",
         "renamedLabel": "Renamed games",
         "renamedItem": "{{detected}} → {{chosen}}",
-        "restore": "Restore"
+        "restore": "Restore",
+        "descriptionBound": "If your game wasn't detected, pick its program and name it. It is shown while that program is running.",
+        "programLabel": "Program",
+        "programPlaceholder": "Pick a running program…",
+        "programHint": "Start the game first, then pick its program from the list.",
+        "showingRunning": "Showing: {{name}} (running: {{program}})",
+        "showingWaiting": "Waiting for {{program}} to start, then showing {{name}}"
       }
     }
   },
