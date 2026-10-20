@@ -287,7 +287,8 @@
         "programPlaceholder": "选择正在运行的程序…",
         "programHint": "请先启动游戏，再从列表中选择它的程序。",
         "showingRunning": "正在显示：{{name}}（运行中：{{program}}）",
-        "showingWaiting": "等待 {{program}} 启动后显示 {{name}}"
+        "showingWaiting": "等待 {{program}} 启动后显示 {{name}}",
+        "clearRename": "清除"
       }
     }
   },

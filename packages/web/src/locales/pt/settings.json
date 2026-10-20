@@ -289,7 +289,8 @@
         "programPlaceholder": "Escolha um programa em execução…",
         "programHint": "Inicie o jogo primeiro e depois escolha o programa dele na lista.",
         "showingRunning": "Exibindo: {{name}} (em execução: {{program}})",
-        "showingWaiting": "Aguardando {{program}} iniciar para exibir {{name}}"
+        "showingWaiting": "Aguardando {{program}} iniciar para exibir {{name}}",
+        "clearRename": "Limpar"
       }
     }
   },

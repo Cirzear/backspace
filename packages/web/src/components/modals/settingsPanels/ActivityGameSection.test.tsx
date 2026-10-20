@@ -57,6 +57,25 @@ describe('ActivityGameSection on the desktop', () => {
   });
 });
 
+describe('renaming a detected game', () => {
+  it('has no suggestion menu, and Clear brings the detected name back', () => {
+    useActivityStore.setState({ detectedActivities: [{ type: 'playing', name: 'Stardew Valley' }] });
+    const { container } = render(<ActivityGameSection />);
+    const input = screen.getByLabelText('Show Stardew Valley as');
+    expect(input).not.toHaveAttribute('list');
+    expect(screen.queryByRole('button', { name: 'Clear' })).not.toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: 'Farm' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Set' })[1]!);
+    expect(useActivityStore.getState().gameRenames).toEqual({ 'stardew valley': 'Farm' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(useActivityStore.getState().gameRenames).toEqual({});
+    expect(screen.getByLabelText('Show Stardew Valley as')).toHaveValue('');
+    expect(container.querySelectorAll('datalist')).toHaveLength(1); // only the manual game name keeps its suggestions
+  });
+});
+
 describe('ActivityGameSection in a browser', () => {
   it('takes just a name, as before', () => {
     render(<ActivityGameSection />);

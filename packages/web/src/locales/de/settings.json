@@ -288,7 +288,8 @@
         "programPlaceholder": "Laufendes Programm wählen…",
         "programHint": "Starte zuerst das Spiel und wähle dann sein Programm aus der Liste.",
         "showingRunning": "Angezeigt: {{name}} (läuft: {{program}})",
-        "showingWaiting": "Warte auf den Start von {{program}}, dann wird {{name}} angezeigt"
+        "showingWaiting": "Warte auf den Start von {{program}}, dann wird {{name}} angezeigt",
+        "clearRename": "Leeren"
       }
     }
   },

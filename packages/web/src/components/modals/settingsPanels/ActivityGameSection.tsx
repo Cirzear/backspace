@@ -161,7 +161,6 @@ export function ActivityGameSection() {
                     className="input-standard flex-1 min-w-0 px-2.5 py-1.5 text-sm"
                     value={value}
                     maxLength={ACTIVITY_LIMITS.MAX_NAME_LENGTH}
-                    list={listId}
                     placeholder={t('privacy.activity.game.renamePlaceholder')}
                     aria-label={t('privacy.activity.game.renameLabel', { name: game.name })}
                     onChange={(event) => setRenameDrafts((drafts) => ({ ...drafts, [key]: event.target.value }))}
@@ -169,6 +168,22 @@ export function ActivityGameSection() {
                   <button type="submit" className={PRIMARY_BUTTON} disabled={value.trim() === '' || value.trim() === shownAs}>
                     {t('privacy.activity.game.set')}
                   </button>
+                  {(shownAs !== undefined || value !== '') && (
+                    <button
+                      type="button"
+                      className={LINK_BUTTON}
+                      onClick={() => {
+                        setRenameDrafts((drafts) => {
+                          const next = { ...drafts };
+                          delete next[key];
+                          return next;
+                        });
+                        setGameRename(game.name, null);
+                      }}
+                    >
+                      {t('privacy.activity.game.clearRename')}
+                    </button>
+                  )}
                 </form>
               );
             })}
