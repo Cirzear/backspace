@@ -68,18 +68,19 @@ const COMM_MAX = 15;
 
 let gameEntries: GameEntry[] = [];
 let dictionaryVersion = 0;
-let scanActivity: Activity | null = null;
+let scanActivities: Activity[] = [];
 let ipcOverride: Activity | null = null;
-let currentActivity: Activity | null = null;
+let currentActivities: Activity[] = [];
 let intervalId: NodeJS.Timeout | null = null;
 let isPolling = false;
 
 let hasErrored = false;
 let onChangeCallback: ((activity: Activity | null) => void) | null = null;
+let onListChangeCallback: ((activities: Activity[]) => void) | null = null;
 
 // ─── Process information ────────────────────────────────────────────────────
 
-interface ProcessInfo {
+export interface ProcessInfo {
   pid: number;
   /** Best-effort process name: exe basename, else first cmdline token, else comm. */
   name: string;
@@ -470,6 +471,70 @@ export function detectActivityWithInfo(
   return { matched: null, info: null };
 }
 
+/** Most games shown at once; the server accepts the same number of activities. */
+export const MAX_DETECTED_GAMES = 5;
+
+export interface DetectedGame {
+  matched: MatchedGame;
+  info: ProcessInfo | null;
+}
+
+/** A launcher or client is not what the player is playing while a game runs. */
+export function isLauncherGame(game: MatchedGame): boolean {
+  return /launcher/i.test(game.name) || /launcher/i.test(game.id);
+}
+
+function nameKey(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+/**
+ * Every game that is running, not just the first: dictionary matches in
+ * dictionary order, then the games the source detectors resolve. A game found
+ * twice (two processes, or a store and the dictionary) is listed once, under
+ * the dictionary's name. A launcher is dropped as soon as a real game runs.
+ */
+export function detectActivitiesWithInfo(
+  infos: ProcessInfo[],
+  entries: GameEntry[],
+  sources: SourceDetector[] = sourceDetectors,
+  max: number = MAX_DETECTED_GAMES,
+): DetectedGame[] {
+  const found: DetectedGame[] = [];
+  const ids = new Set<string>();
+  const names = new Set<string>();
+  const claimedPids = new Set<number>();
+  const add = (matched: MatchedGame, info: ProcessInfo | null): void => {
+    ids.add(matched.id);
+    names.add(`${matched.type}:${nameKey(matched.name)}`);
+    if (info && info.pid > 0) claimedPids.add(info.pid);
+    found.push({ matched, info });
+  };
+
+  for (const entry of entries) {
+    const info = matchInfoFor(entry.id, infos, entries);
+    if (info && !ids.has(entry.id)) {
+      add({ id: entry.id, name: entry.name, type: entry.type ?? 'playing' }, info);
+    }
+  }
+
+  for (const source of sources) {
+    for (const info of infos) {
+      if (info.pid > 0 && claimedPids.has(info.pid)) continue;
+      const match = source(info);
+      if (!match || ids.has(match.id)) continue;
+      if (names.has(`${match.type}:${nameKey(match.name)}`)) continue;
+      add(match, info);
+    }
+  }
+
+  const hasRealGame = found.some(({ matched }) => matched.type === 'playing' && !isLauncherGame(matched));
+  const visible = hasRealGame
+    ? found.filter(({ matched }) => !(matched.type === 'playing' && isLauncherGame(matched)))
+    : found;
+  return visible.slice(0, max);
+}
+
 /** The process a dictionary match came from: the first info the entry's matchers accept. */
 function matchInfoFor(id: string, infos: ProcessInfo[], entries: GameEntry[]): ProcessInfo | null {
   const entry = entries.find((e) => e.id === id);
@@ -779,8 +844,18 @@ async function syncDictionary(): Promise<void> {
  * Apply a matched game (or its absence) to the scan layer of the detection
  * state, then refresh the effective activity.
  */
-function applyMatchedGame(matched: MatchedGame | null): void {
-  scanActivity = nextScanActivity(matched, scanActivity, Date.now());
+function applyDetectedGames(games: DetectedGame[]): void {
+  for (const { matched, info } of games) {
+    void warmGameIcon({
+      id: matched.id,
+      name: matched.name,
+      exe: info?.exe ?? null,
+      cmdline: info?.cmdline ?? '',
+      winExes: info?.winExes,
+      cwd: info?.cwd ?? null,
+    });
+  }
+  scanActivities = nextScanActivities(games.map((game) => game.matched), scanActivities, Date.now());
   refreshEffectiveActivity();
 }
 
@@ -801,21 +876,51 @@ export function nextScanActivity(
 }
 
 /**
+ * The scan layer for one poll, several games at once. Each game that is still
+ * running keeps its previous activity object, so every game keeps its own
+ * start time.
+ */
+export function nextScanActivities(
+  matched: MatchedGame[],
+  previous: Activity[],
+  now: number,
+): Activity[] {
+  return matched.map((game) => nextScanActivity(game, previous.find((p) => p.name === game.name && p.type === game.type) ?? null, now) as Activity);
+}
+
+/**
+ * The activities shown: the scan layer, where a live IPC push stands in for
+ * the scanned game it belongs to (same name; it is richer: real details, map
+ * state, art), or leads the list when the scan found no such game.
+ */
+export function mergeActivities(scan: Activity[], override: Activity | null, max: number = MAX_DETECTED_GAMES): Activity[] {
+  if (!override) return scan.slice(0, max);
+  const key = nameKey(override.name);
+  const at = scan.findIndex((activity) => activity.type === override.type && nameKey(activity.name) === key);
+  if (at === -1) return [override, ...scan].slice(0, max);
+  return scan.map((activity, i) => (i === at ? override : activity)).slice(0, max);
+}
+
+/**
  * The effective activity is the IPC push when one is live (richer: real
  * details, map state, art), otherwise the scan-detected game. A change is
  * emitted only when the effective activity actually changed.
  */
 function refreshEffectiveActivity(): void {
-  const effective = ipcOverride ?? scanActivity;
-  if (JSON.stringify(effective) !== JSON.stringify(currentActivity)) {
-    currentActivity = effective;
-    console.log(
-      `[ActivityDetector] Effective activity: ${
-        effective ? `${effective.name} (source: ${ipcOverride ? 'ipc' : 'scan'}, details: ${effective.details ? 'yes' : 'no'})` : 'none'
-      }`,
-    );
-    onChangeCallback?.(currentActivity);
-  }
+  const effective = mergeActivities(scanActivities, ipcOverride);
+  if (JSON.stringify(effective) === JSON.stringify(currentActivities)) return;
+  const primaryChanged = JSON.stringify(effective[0] ?? null) !== JSON.stringify(currentActivities[0] ?? null);
+  currentActivities = effective;
+  console.log(
+    `[ActivityDetector] Effective activities: ${
+      effective.length
+        ? effective.map((a) => `${a.name} (${a === ipcOverride ? 'ipc' : 'scan'}${a.details ? ', details' : ''})`).join(', ')
+        : 'none'
+    }`,
+  );
+  // The single-activity callback only serves clients that predate the list
+  if (primaryChanged) onChangeCallback?.(currentActivities[0] ?? null);
+  onListChangeCallback?.(currentActivities);
 }
 
 // ─── IPC overlay (IPC-pushed activities) ────────────────────────────────────
@@ -890,7 +995,13 @@ export function applyIpcActivity(push: IpcActivityPush | null): void {
 
 /** Test seam: inject the scan-detected activity without touching /proc. */
 export function __testSetScanActivity(activity: Activity | null): void {
-  scanActivity = activity;
+  scanActivities = activity ? [activity] : [];
+  refreshEffectiveActivity();
+}
+
+/** Test seam: several scan-detected activities. */
+export function __testSetScanActivities(activities: Activity[]): void {
+  scanActivities = activities;
   refreshEffectiveActivity();
 }
 
@@ -910,11 +1021,7 @@ function poll(): void {
       return;
     }
     isPolling = false;
-    const { matched, info } = detectActivityWithInfo(infos, gameEntries);
-    if (matched) {
-      void warmGameIcon({ id: matched.id, name: matched.name, exe: info?.exe ?? null, cmdline: info?.cmdline ?? '', winExes: info?.winExes, cwd: info?.cwd ?? null });
-    }
-    applyMatchedGame(matched);
+    applyDetectedGames(detectActivitiesWithInfo(infos, gameEntries));
     return;
   }
 
@@ -937,11 +1044,7 @@ function pollViaCommand(): void {
     }
 
     const infos = infosFromNames(parseProcessList(stdout));
-    const { matched, info } = detectActivityWithInfo(infos, gameEntries);
-    if (matched) {
-      void warmGameIcon({ id: matched.id, name: matched.name, exe: info?.exe ?? null, cmdline: info?.cmdline ?? '', winExes: info?.winExes, cwd: info?.cwd ?? null });
-    }
-    applyMatchedGame(matched);
+    applyDetectedGames(detectActivitiesWithInfo(infos, gameEntries));
   });
 }
 
@@ -949,6 +1052,7 @@ function pollViaCommand(): void {
 
 export function startActivityDetection(
   onActivityChange: (activity: Activity | null) => void,
+  onActivitiesChange?: (activities: Activity[]) => void,
 ): void {
   if (intervalId) return; // Already running
 
@@ -966,6 +1070,7 @@ export function startActivityDetection(
   console.log(`[ActivityDetector] Loaded ${best.entries.length} games v${best.version}`);
 
   onChangeCallback = onActivityChange;
+  onListChangeCallback = onActivitiesChange ?? null;
   hasErrored = false;
 
   // Run first poll immediately
@@ -986,10 +1091,15 @@ export function stopActivityDetection(): void {
     intervalId = null;
   }
   onChangeCallback = null;
+  onListChangeCallback = null;
 }
 
 export function getCurrentActivity(): Activity | null {
-  return currentActivity;
+  return currentActivities[0] ?? null;
+}
+
+export function getCurrentActivities(): Activity[] {
+  return currentActivities;
 }
 
 const MAX_KNOWN_GAME_NAMES = 5000;

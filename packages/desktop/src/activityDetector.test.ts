@@ -23,7 +23,15 @@ import {
   resolveIpcGameName,
   __testSetScanActivity,
   nextScanActivity,
+  nextScanActivities,
+  mergeActivities,
+  detectActivitiesWithInfo,
+  isLauncherGame,
+  getCurrentActivities,
+  __testSetScanActivities,
+  MAX_DETECTED_GAMES,
   type SourceDetector,
+  type ProcessInfo,
 } from './activityDetector';
 import type { IpcActivityPush, IpcActivityPayload } from './richPresenceIpc';
 
@@ -776,5 +784,134 @@ describe('Wine processes as they really look', () => {
   it('keeps the shim as the program only when it names nothing else', () => {
     expect(deriveWindowsExes(LOADER, ['steam.exe'], 'steam.exe')).toEqual(['steam.exe']);
     expect(deriveWindowsExes(LOADER, ['steam.exe', 'Game.exe'], 'steam.exe')).toEqual(['Game.exe']);
+  });
+});
+
+describe('several games at once', () => {
+  const dict = [
+    { id: 'hsr', name: 'Honkai: Star Rail', processes: ['StarRail.exe'] },
+    { id: 'stardew', name: 'Stardew Valley', processes: ['Stardew Valley.exe'] },
+    { id: 'minecraft-launcher', name: 'Minecraft Launcher', processes: ['minecraft-launcher'] },
+    { id: 'mpv', name: 'mpv', processes: ['mpv'], type: 'watching' },
+  ];
+  const proc = (pid: number, name: string, extra: Partial<ProcessInfo> = {}): ProcessInfo => ({ pid, name, cmdline: name, exe: null, ...extra });
+
+  it('lists every running game, in dictionary order', () => {
+    const games = detectActivitiesWithInfo([proc(1, 'Stardew Valley.exe'), proc(2, 'StarRail.exe')], dict, []);
+    expect(games.map((g) => g.matched.name)).toEqual(['Honkai: Star Rail', 'Stardew Valley']);
+    expect(games[0]?.info?.pid).toBe(2);
+  });
+
+  it('lists a game once however many processes it has', () => {
+    const games = detectActivitiesWithInfo([proc(1, 'StarRail.exe'), proc(2, 'StarRail.exe')], dict, []);
+    expect(games).toHaveLength(1);
+  });
+
+  it('hides a launcher while a game runs, and shows it alone', () => {
+    const both = detectActivitiesWithInfo([proc(1, 'minecraft-launcher'), proc(2, 'StarRail.exe')], dict, []);
+    expect(both.map((g) => g.matched.id)).toEqual(['hsr']);
+    const alone = detectActivitiesWithInfo([proc(1, 'minecraft-launcher')], dict, []);
+    expect(alone.map((g) => g.matched.id)).toEqual(['minecraft-launcher']);
+  });
+
+  it('keeps a video player next to a game and does not let it hide a launcher', () => {
+    const games = detectActivitiesWithInfo([proc(1, 'mpv'), proc(2, 'minecraft-launcher')], dict, []);
+    expect(games.map((g) => g.matched.id).sort()).toEqual(['minecraft-launcher', 'mpv']);
+  });
+
+  it('adds source-detected games after the dictionary ones, without repeating a claimed process or name', () => {
+    const source: SourceDetector = (info) => {
+      if (info.name === 'steamgame') return { id: 'steam-1', name: 'Steam Only', type: 'playing' };
+      if (info.name === 'StarRail.exe') return { id: 'steam-2', name: 'Honkai Star Rail', type: 'playing' };
+      if (info.name === 'reaper') return { id: 'steam-3', name: 'honkai: star rail', type: 'playing' };
+      return null;
+    };
+    const games = detectActivitiesWithInfo(
+      [proc(1, 'steamgame'), proc(2, 'StarRail.exe'), proc(3, 'reaper')],
+      dict,
+      [source],
+    );
+    expect(games.map((g) => g.matched.name)).toEqual(['Honkai: Star Rail', 'Steam Only']);
+  });
+
+  it('does not let a source rename a process the dictionary already claimed', () => {
+    const source: SourceDetector = (info) => (info.name === 'StarRail.exe' ? { id: 'steam-9', name: 'HSR (Steam title)', type: 'playing' } : null);
+    const games = detectActivitiesWithInfo([proc(2, 'StarRail.exe')], dict, [source]);
+    expect(games.map((g) => g.matched.name)).toEqual(['Honkai: Star Rail']);
+  });
+
+  it('caps the list', () => {
+    const many = Array.from({ length: 9 }, (_, i) => ({ id: `g${i}`, name: `Game ${i}`, processes: [`g${i}.exe`] }));
+    const infos = many.map((g, i) => proc(i + 1, `g${i}.exe`));
+    expect(detectActivitiesWithInfo(infos, many, [])).toHaveLength(MAX_DETECTED_GAMES);
+  });
+
+  it('knows a launcher by name or id', () => {
+    expect(isLauncherGame({ id: 'x', name: 'Prism Launcher', type: 'playing' })).toBe(true);
+    expect(isLauncherGame({ id: 'minecraft-launcher', name: 'Minecraft', type: 'playing' })).toBe(true);
+    expect(isLauncherGame({ id: 'hsr', name: 'Honkai: Star Rail', type: 'playing' })).toBe(false);
+  });
+});
+
+describe('scan layer and IPC with several games', () => {
+  const a = { id: 'a', name: 'A', type: 'playing' };
+  const b = { id: 'b', name: 'B', type: 'playing' };
+
+  it('keeps each running game its own start time', () => {
+    const first = nextScanActivities([a, b], [], 1000);
+    const next = nextScanActivities([b, a], first, 16_000);
+    expect(next[0]).toBe(first[1]);
+    expect(next[1]).toBe(first[0]);
+    const third = nextScanActivities([a], next, 31_000);
+    expect(third[0]).toBe(first[0]);
+  });
+
+  it('lets a push stand in for the scanned game of the same name, in place', () => {
+    const scan = nextScanActivities([a, b], [], 1);
+    const push = { type: 'playing', name: 'b', details: 'map' };
+    const merged = mergeActivities(scan, push);
+    expect(merged.map((x) => x.name)).toEqual(['A', 'b']);
+    expect(merged[1]).toBe(push);
+  });
+
+  it('puts a push for an unscanned game first and keeps the scanned ones', () => {
+    const scan = nextScanActivities([a], [], 1);
+    const merged = mergeActivities(scan, { type: 'playing', name: 'osu!lazer' });
+    expect(merged.map((x) => x.name)).toEqual(['osu!lazer', 'A']);
+  });
+
+  it('never exceeds the cap', () => {
+    const scan = Array.from({ length: 5 }, (_, i) => ({ type: 'playing', name: `G${i}` }));
+    expect(mergeActivities(scan, { type: 'playing', name: 'new' })).toHaveLength(MAX_DETECTED_GAMES);
+  });
+
+  describe('emitted changes', () => {
+    const lists: Array<Array<{ name: string }>> = [];
+    const singles: Array<{ name: string } | null> = [];
+    beforeAll(() => {
+      startActivityDetection((x) => singles.push(x), (x) => lists.push(x));
+    });
+    afterAll(() => stopActivityDetection());
+    afterEach(() => {
+      applyIpcActivity(null);
+      __testSetScanActivities([]);
+      lists.length = 0;
+      singles.length = 0;
+    });
+
+    it('sends the list on every change and the single activity only when the first changes', () => {
+      __testSetScanActivities([{ type: 'playing', name: 'A' }]);
+      __testSetScanActivities([{ type: 'playing', name: 'A' }, { type: 'playing', name: 'B' }]);
+      expect(lists.map((l) => l.map((x) => x.name))).toEqual([['A'], ['A', 'B']]);
+      expect(singles.map((x) => x?.name)).toEqual(['A']);
+      expect(getCurrentActivity()).toMatchObject({ name: 'A' });
+      expect(getCurrentActivities().map((x) => x.name)).toEqual(['A', 'B']);
+    });
+
+    it('does not repeat an unchanged list', () => {
+      __testSetScanActivities([{ type: 'playing', name: 'A' }]);
+      __testSetScanActivities([{ type: 'playing', name: 'A' }]);
+      expect(lists).toHaveLength(1);
+    });
   });
 });

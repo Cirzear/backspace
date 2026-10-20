@@ -174,6 +174,9 @@ interface BackspaceElectronAPI {
   // Activity detection (game/app process scanning)
   onActivityDetected: (callback: (activity: unknown) => void) => (() => void);
   getCurrentActivity: () => Promise<unknown>;
+  /** Every game running at once. Absent in desktop builds that predate multi-game detection. */
+  onActivitiesDetected?: (callback: (activities: unknown) => void) => (() => void);
+  getCurrentActivities?: () => Promise<unknown>;
   /** Game names for the manual-game picker (dictionary + installed games); absent on older desktops. */
   listKnownGames?: () => Promise<string[]>;
   /**

@@ -133,6 +133,12 @@ contextBridge.exposeInMainWorld('backspace', {
     return () => { ipcRenderer.removeListener('activity-detected', handler); };
   },
   getCurrentActivity: () => ipcRenderer.invoke('get-current-activity'),
+  onActivitiesDetected: (callback: (activities: unknown) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, activities: unknown) => callback(activities);
+    ipcRenderer.on('activities-detected', handler);
+    return () => { ipcRenderer.removeListener('activities-detected', handler); };
+  },
+  getCurrentActivities: () => ipcRenderer.invoke('get-current-activities'),
   listKnownGames: (): Promise<string[]> => ipcRenderer.invoke('list-known-games'),
   // Locally extracted game icon (Steam library cache, .desktop entries,
   // AppImage/GOG directories), base64; the renderer uploads it to the

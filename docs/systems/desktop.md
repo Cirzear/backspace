@@ -934,7 +934,8 @@ All handlers registered in `main.ts:registerIpcHandlers()`.
 | `update-downloaded` | `{ version }` | electron-updater |
 | `update-error` | `{ message, releaseUrl }` | electron-updater (only after confirmed update) |
 | `screen-share-sources` | `ElectronScreenSource[]` | Display media handler |
-| `activity-detected` | `Activity \| null` | Activity detector poll |
+| `activity-detected` | `Activity \| null` | Activity detector: the first activity, sent only when it changes (builds that predate the list) |
+| `activities-detected` | `Activity[]` | Activity detector: every detected game, sent on any change |
 | `keybind-action` | `{ actionId, pressed }` | KeybindManager match |
 | `accessibility-status` | `{ trusted }` | macOS accessibility check result |
 | `keybind-hook-error` | `{ message }` | uIOhook start failure |
@@ -979,7 +980,9 @@ Detection: `typeof window.backspace !== 'undefined'` (see `platform.ts:isElectro
 | `getAutoLaunchSettings()` | invoke | R->M | |
 | `setAutoLaunchSettings(s)` | invoke | R->M | |
 | `onActivityDetected(cb)` | listen | M->R | Returns cleanup function `() => void` |
-| `getCurrentActivity()` | invoke | R->M | Returns `Promise<Activity \| null>` |
+| `getCurrentActivity()` | invoke | R->M | Returns `Promise<Activity \| null>` (the first activity) |
+| `onActivitiesDetected(cb)` | listen | M->R | List channel; returns cleanup function. Optional in `electron.d.ts`: older desktops lack it |
+| `getCurrentActivities()` | invoke | R->M | Returns `Promise<Activity[]>`. Optional likewise |
 | `syncKeybinds(keybinds)` | fire | R->M | |
 | `onKeybindAction(cb)` | listen | M->R | Returns cleanup function |
 | `onAccessibilityStatus(cb)` | listen | M->R | Returns cleanup function |
@@ -1096,7 +1099,7 @@ A running process matches a dictionary entry when any of these hold:
 2. **comm truncation:** the dictionary name is longer than 15 characters, the process name is exactly 15 characters, and the dictionary name starts with it — because the kernel stores `comm` in a 16-byte buffer (`minecraft-launcher` → `minecraft-launc`)
 3. **Command-line pattern:** any of `entry.cmdlinePatterns` appears (case-insensitive) in the space-joined argv
 
-The first entry in dictionary order matched by any running process wins — dictionary order is the priority order. This is what makes the game beat its launcher when both run.
+Every running game is reported, up to five (`detectActivitiesWithInfo`, `MAX_DETECTED_GAMES`): dictionary matches in dictionary order — which is also the order shown, the first being the primary activity — then the games the source detectors resolve. A game found twice (several processes, or a store plus the dictionary) is listed once under the dictionary's name: a source match is skipped when its process was already claimed or its name equals (ignoring case and punctuation) one already listed. A launcher (`isLauncherGame`: "launcher" in the name or id, `playing` type) is hidden as soon as a real game runs and shown alone otherwise. Other types (watching, listening, streaming) never hide anything and are never hidden.
 
 ### Local Game Sources (Steam, Flatpak, GOG)
 
@@ -1115,11 +1118,11 @@ Properties common to all sources:
 - **Roots:** Steam roots are realpath-deduplicated across `~/.steam/steam`, the native data dir, the Flatpak sandbox and the snap layout; Flatpak covers user and system installs.
 - **Linux-first:** the sources light up where the metadata exists (Linux). On Windows/macOS detection is dictionary-only.
 
-Detection flows through `detectActivity`: the dictionary is consulted first, then the source detectors above (in registration order) for anything installed but not curated. The state machine semantics are unchanged:
+Detection flows through `detectActivitiesWithInfo` (`detectActivity` returns its first game for older callers): the dictionary is consulted first, then the source detectors above (in registration order) for anything installed but not curated. The state machine semantics are unchanged:
 
-4. **Game detected (new or changed):** Build the `Activity` with `timestamps.start = Date.now()` and refresh the effective activity
+4. **Game detected (new or changed):** Build the `Activity` with `timestamps.start = Date.now()` and refresh the effective activities. Every game keeps its own start time while it runs (`nextScanActivities` returns the previous object for a game still running)
 5. **Same game still running:** No-op (no IPC sent)
-6. **Game exited (was detected, now gone):** Clear the scan activity and refresh — emits only if the effective activity (IPC push ?? scan) actually changed
+6. **Game exited (was detected, now gone):** Drop it from the scan layer and refresh — emits only if the effective list (IPC push merged into scan) actually changed. An IPC push replaces the scanned game of the same name in place, or leads the list when no scanned game has that name (`mergeActivities`)
 7. **No game (and none before):** No-op
 
 ### Activity Object

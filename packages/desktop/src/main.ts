@@ -15,7 +15,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { pathToFileURL } from 'url';
-import { startActivityDetection, stopActivityDetection, getCurrentActivity, applyIpcActivity, listKnownGameNames } from './activityDetector';
+import { startActivityDetection, stopActivityDetection, getCurrentActivity, getCurrentActivities, applyIpcActivity, listKnownGameNames } from './activityDetector';
 import { resolveGameIcon } from './gameIcons';
 import { startRichPresenceIpcServer, stopRichPresenceIpcServer } from './richPresenceIpc';
 import { KeybindManager } from './keybindManager';
@@ -1479,9 +1479,14 @@ if (!gotTheLock) {
     initAutoUpdater();
 
     // ─── Activity Detection ────────────────────────────────────────────────
-    startActivityDetection((activity) => {
-      mainWindow?.webContents.send('activity-detected', activity);
-    });
+    startActivityDetection(
+      (activity) => {
+        mainWindow?.webContents.send('activity-detected', activity);
+      },
+      (activities) => {
+        mainWindow?.webContents.send('activities-detected', activities);
+      },
+    );
 
     // Rich presence IPC server: games (osu!lazer & co.) push richer
     // activity that overlays process detection
@@ -1492,6 +1497,7 @@ if (!gotTheLock) {
     });
 
     ipcMain.handle('get-current-activity', () => getCurrentActivity());
+    ipcMain.handle('get-current-activities', () => getCurrentActivities());
     ipcMain.handle('list-known-games', () => listKnownGameNames());
 
     // The renderer uploads the icon to the user's instance itself (it holds

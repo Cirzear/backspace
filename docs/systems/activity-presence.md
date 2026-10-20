@@ -20,7 +20,7 @@ Source files:
 - `packages/desktop/src/flatpakGames.ts` — Flatpak source: Game-category apps and their sandbox files dirs
 - `packages/desktop/src/gogGames.ts` — GOG source: ~/GOG Games metadata
 - `packages/desktop/src/richPresenceIpc.ts` — local rich presence IPC server (see desktop.md)
-- `packages/desktop/src/preload.ts` — IPC channel exposure (activity-detected, get-current-activity)
+- `packages/desktop/src/preload.ts` — IPC channel exposure (activity-detected, activities-detected, get-current-activity, get-current-activities)
 - `packages/desktop/src/main.ts` — startActivityDetection call, IPC handler registration
 
 ---
@@ -220,7 +220,7 @@ Activities are **ephemeral** — stored only in server memory (`ConnectionManage
 
 ```
 Desktop Process Scanner (15s poll)
-  → IPC 'activity-detected' → preload bridge
+  → IPC 'activities-detected' (list; 'activity-detected' for older web clients) → preload bridge
     → activityBridge.ts → activityStore.pushActivities()
       → 5s debounce → wsSendAll('activity_update')
         → Server validates, rate-limits (3s)
@@ -351,16 +351,18 @@ The extractor reads only regular files of at most 512 KiB (a `stat` first, then 
 | `gameIcons.ts:warmGameIcon(target)` / `warmGameIconForIpc(name, pid)` | Extract the detected game's icon locally in the background (Steam cache, Flatpak, GOG, AppImage, .desktop) and cache it by game name |
 | `gameIcons.ts:resolveGameIcon(name)` | The icon for a game name, served to the renderer over the `get-game-icon` IPC; waits for a lookup in flight and starts one for a name nothing warmed |
 | `main.ts` → renderer → `POST /api/game-icons` | The renderer uploads the extracted bytes to the user's own instance and attaches the returned URL to the activity's `assets.largeImage` (cached per game name) |
-| `main.ts` | Starts detection and the IPC server on app ready; forwards changes via IPC `activity-detected`; registers `get-current-activity`; stops both in `before-quit` |
-| `preload.ts` | Exposes `onActivityDetected` (subscription) and `getCurrentActivity` (invoke) to renderer |
+| `main.ts` | Starts detection and the IPC server on app ready; forwards changes via IPC `activities-detected` (the full list) and `activity-detected` (the first activity, only when it changes, for web clients that predate the list); registers `get-current-activity` and `get-current-activities`; stops both in `before-quit` |
+| `preload.ts` | Exposes `onActivitiesDetected` / `getCurrentActivities` and, for older web clients, `onActivityDetected` / `getCurrentActivity` to renderer |
 
 ### Bridge to Activity Store
 
 `activityBridge.ts` is initialized once in `AppLayout` via `useEffect`:
 
-1. Calls `initActivityBridge()` → subscribes to `window.backspace.onActivityDetected`
-2. On activity change: calls `pushActivities([activity])` or `pushActivities([])` (null means no activity)
-3. On init: also queries `getCurrentActivity()` for immediate state
+1. Calls `initActivityBridge()` → subscribes to `window.backspace.onActivitiesDetected` when the desktop has it, otherwise to `onActivityDetected` (never both: a new desktop would push the same state twice)
+2. On change: calls `pushActivities(list)`; an older desktop's single activity becomes a one-item list, null becomes `[]` (`toActivityList`)
+3. On init: also queries `getCurrentActivities()` (or `getCurrentActivity()`) for immediate state; the reconnect re-push in `useWebSocket` uses the same `fetchCurrentActivities()`
+
+Several games at once travel as several `playing` activities (the server accepts up to five). A manual game still replaces every detected `playing` activity.
 4. Cleanup: `teardownActivityBridge()` removes the IPC listener
 
 ---
