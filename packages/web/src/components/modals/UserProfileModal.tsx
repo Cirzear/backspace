@@ -25,6 +25,8 @@ import { replaceEmojiShortcodes, useEmojiShortcodeNames } from '../../utils/emoj
 import { getProfileMember, useProfileMemberRoles } from '../../hooks/useProfileMember';
 import { useShownStatus } from '../../hooks/useShownStatus';
 import { ProfileRoles } from '../ui/ProfileRoles';
+import { ProfileGamesList } from '../ui/ActivityCard';
+import { useActivityStore, activitiesFor } from '../../stores/activityStore';
 
 type Tab = 'about' | 'friends' | 'spaces';
 
@@ -52,6 +54,8 @@ export function UserProfileModal() {
   const [mutualSpaces, setMutualSpaces] = useState<MutualSpace[]>([]);
   const [loadingMutuals, setLoadingMutuals] = useState(false);
   const [friendActionLoading, setFriendActionLoading] = useState(false);
+
+  const userActivities = useActivityStore((s) => s.userActivities);
 
   const isOpen = activeModal === 'userProfile';
   const userId = modalData?.userId as string | undefined;
@@ -142,6 +146,8 @@ export function UserProfileModal() {
   const shownStatus = useShownStatus(user, userOrigin, user?.status);
 
   if (!isOpen || !user) return null;
+
+  const playingNow = activitiesFor(userActivities, user, userOrigin).filter((activity) => activity.type === 'playing');
 
   const { baseName, domain } = parseFederatedUsername(user.username);
   const displayName = user.displayName ?? baseName;
@@ -319,6 +325,17 @@ export function UserProfileModal() {
                     {t('social:profile.aboutMe')}
                   </span>
                   <ProfileBio bio={user.bio} />
+                </div>
+              )}
+
+              {playingNow.length > 0 && (
+                <div>
+                  <span className="text-[11px] uppercase tracking-wide font-semibold text-txt-tertiary">
+                    {t('social:profile.playingNow')}
+                  </span>
+                  <div className="mt-1">
+                    <ProfileGamesList activities={playingNow} />
+                  </div>
                 </div>
               )}
 

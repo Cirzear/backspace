@@ -228,6 +228,7 @@ export function ActivityDetailCard({ activities }: { activities: Activity[] }) {
   const largeImage = isRenderableActivityImage(assets?.largeImage) ? assets.largeImage : null;
   const smallImage = isRenderableActivityImage(assets?.smallImage) ? assets.smallImage : null;
   const timeText = activityTimeText(primary.timestamps ?? {}, now, t, formatDuration);
+  const moreGames = otherGamesCount(activities, primary);
 
   return (
     <div className="flex gap-3 items-start">
@@ -239,8 +240,11 @@ export function ActivityDetailCard({ activities }: { activities: Activity[] }) {
         size={POPOUT_ART}
       />
       <div className="flex-1 min-w-0">
-        <div className="text-[13px] font-medium leading-[1.3] text-txt-primary truncate">
-          {replaceEmojiShortcodes(headline)}
+        <div className="flex items-baseline gap-1.5 min-w-0 text-[13px] font-medium leading-[1.3] text-txt-primary">
+          <span className="truncate">{replaceEmojiShortcodes(headline)}</span>
+          {moreGames > 0 && (
+            <span className="shrink-0 text-[12px] font-normal text-txt-tertiary tabular-nums" title={otherGameNames(activities, primary)}>+{moreGames}</span>
+          )}
         </div>
         {primary.details && primary.name && (
           <div className="text-[12px] leading-[1.3] text-txt-secondary truncate">
@@ -259,5 +263,42 @@ export function ActivityDetailCard({ activities }: { activities: Activity[] }) {
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * The full profile's list of everything the person is playing: one row per
+ * game, each with its own running time. Text only, in the order the person
+ * set (the first is the one the lists show).
+ */
+export function ProfileGamesList({ activities }: { activities: Activity[] }) {
+  useEmojiShortcodeNames();
+  const { t } = useTranslation('common');
+  const { formatDuration } = useFormatters();
+  const games = activities.filter((activity) => activity.type === 'playing' && activity.name);
+  const ticking = games.some((game) => typeof game.timestamps?.start === 'number' || typeof game.timestamps?.end === 'number');
+  const now = useNowTick(ticking);
+  if (games.length === 0) return null;
+
+  return (
+    <ul className="space-y-2">
+      {games.map((game, index) => {
+        const timeText = activityTimeText(game.timestamps ?? {}, now, t, formatDuration);
+        return (
+          <li key={`${game.name}:${index}`} className="min-w-0">
+            <div className="text-[13px] font-medium leading-[1.3] text-txt-primary truncate">{game.name}</div>
+            {game.details && (
+              <div className="text-[12px] leading-[1.3] text-txt-secondary truncate">{replaceEmojiShortcodes(game.details)}</div>
+            )}
+            {game.state && (
+              <div className="text-[12px] leading-[1.3] text-txt-secondary truncate">{replaceEmojiShortcodes(game.state)}</div>
+            )}
+            {timeText && (
+              <div className="text-[11px] leading-[1.3] text-txt-tertiary tabular-nums">{timeText}</div>
+            )}
+          </li>
+        );
+      })}
+    </ul>
   );
 }

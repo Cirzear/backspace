@@ -34,6 +34,8 @@ import {
   type ProcessInfo,
   parseManualBinding,
   setManualBinding,
+  setManualBindings,
+  getManualBindings,
   listRunningPrograms,
   findUnknownWinePrograms,
 } from './activityDetector';
@@ -956,6 +958,23 @@ describe('a game tied to a program', () => {
       { name: 'Mine', process: 'MyGame' },
     );
     expect(games.map((g) => g.matched.name)).toEqual(['Mine', 'Stardew Valley']);
+  });
+
+  it('ties several games at once, each first-listed in the order given', () => {
+    const bindings = [{ name: 'One', process: 'one' }, { name: 'Two', process: 'two.exe' }];
+    const wine = proc(7, 'wine64-preloader', { winExes: ['Two.exe'] });
+    const games = detectActivitiesWithInfo([proc(1, 'one'), wine, proc(2, 'Stardew Valley.exe')], dict, [], 5, bindings);
+    expect(games.map((g) => g.matched.name)).toEqual(['One', 'Two', 'Stardew Valley']);
+    expect(new Set(games.map((g) => g.matched.id)).size).toBe(3);
+  });
+
+  it('takes a list through the setter, ignoring junk and repeats', () => {
+    setManualBindings([{ name: 'A', process: 'a' }, { name: 'A again', process: 'A' }, 5, null, { name: '', process: 'x' }]);
+    expect(getManualBindings()).toEqual([{ name: 'A', process: 'a' }]);
+    setManualBinding({ name: 'Solo', process: 'solo' });
+    expect(getManualBindings()).toEqual([{ name: 'Solo', process: 'solo' }]);
+    setManualBindings('nope');
+    expect(getManualBindings()).toEqual([]);
   });
 
   it('accepts only a well-formed binding', () => {

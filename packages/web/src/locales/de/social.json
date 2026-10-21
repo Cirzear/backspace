@@ -72,7 +72,8 @@
     "sendMessage": "Nachricht senden",
     "editRoles": "Rollen bearbeiten",
     "viewFull": "Ganzes Profil ansehen",
-    "addFriend": "Freund hinzufügen"
+    "addFriend": "Freund hinzufügen",
+    "playingNow": "Spielt gerade"
   },
   "activity": {
     "title": "Jetzt aktiv",

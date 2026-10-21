@@ -323,14 +323,16 @@ Detection combines two sources:
 1. **Process scanning** — a curated process-name dictionary (`games.json`, synced from the repo) plus local install metadata for Steam, Flatpak and GOG games, so any installed title is detectable even when unlisted. The dictionary wins on conflicts; sources fill the gaps. Polled every 15s.
 2. **Rich presence IPC pushes** — games speaking the rich presence IPC protocol (osu!lazer & co.) push rich activities to the desktop's IPC server: details, state, absolute timestamps and art. Applied immediately as an overlay over the scan result; the last push wins.
 
-### Manual game and renames (`utils/gameOverrides.ts`, `ActivityGameSection`)
+### Game preferences (`utils/gameOverrides.ts`, `ActivityGameSection`)
 
-The player has a say over the game shown as playing (Settings → Privacy, under the activity toggle; web and desktop alike):
+The player has a say over the games shown as playing (Settings → Privacy, under the activity toggle; web and desktop alike). Everything below is remembered by this client (`backspace_game_overrides`) and the server sees ordinary `playing` activities:
 
-- **Manual game.** A game rich presence missed. On the desktop it is tied to a running program: the player picks one from `list-running-programs` (their own non-system processes; a Wine program under its Windows name) and names the game. The renderer hands `{ name, process }` to the detector (`set-manual-game-binding`, in memory; `initActivityBridge` and `setManualGame` resend it), and the detector reports the game, with its own start time and icon lookup, only while a process matching `process` runs — `detectActivitiesWithInfo` lists it first and claims every process it matches, so the dictionary and the stores do not list the same game again. Other detected games stay. A web client, or a desktop without the binding, has no processes to follow: there the name alone replaces every detected `playing` activity (music and video stay), carries no timestamps, and stays until the player clears it.
+- **Created manually.** A list of games rich presence missed (at most 30). On the desktop an entry is tied to a running program: the player picks one from `list-running-programs` (their own non-system processes; a Wine program under its Windows name) and names the game. The renderer hands the tied entries `[{ name, process }]` to the detector (`set-manual-game-bindings`, in memory; `initActivityBridge` and every change resend them; a desktop from before the list gets the first one through `set-manual-game-binding`), and the detector reports each game, with its own start time and icon lookup, only while a process matching `process` runs: `detectActivitiesWithInfo` lists them first and claims every process they match, so the dictionary and the stores do not list the same game again. An entry without a program (a browser sees no processes) is added by this client and shown until removed. A previous single manual game is migrated into the list on load.
+- **Hide.** A game can be hidden by name key: still detected (it stays in the settings list so it can be shown again), never sent.
+- **Order.** The player's priority order of games, by name key (↑/↓ in settings). Games the order does not list come after the listed ones. The first game sent is what the member and friend lists and the profile popout lead with.
 - **Rename.** A detected game can be shown under another name, remembered by detected name (case-insensitive, at most 200, oldest dropped). Applies to `playing` activities only.
 
-Order in `pushActivities`: detected → name-only manual game (a tied one is already among the detected) → icon lookup (by the name the machine knows) → renames → send. Both choices live in this client's `localStorage` (`backspace_game_overrides`), not on the server: the server and federation see an ordinary `playing` activity, and nothing changes in the wire format. They are per browser/desktop profile and are cleared on sign-in and sign-out.
+Order in `pushActivities`: detected → name-only manual games added → hidden games dropped → player's order → cut to five → icon lookup (by the name the machine knows) → renames → send. A hidden or reordered game is matched by its detected name, a rename never changes it. Both choices live in this client's `localStorage` (`backspace_game_overrides`), not on the server: the server and federation see an ordinary `playing` activity, and nothing changes in the wire format. They are per browser/desktop profile and are cleared on sign-in and sign-out.
 
 ### Game icons
 
@@ -362,7 +364,7 @@ The extractor reads only regular files of at most 512 KiB (a `stat` first, then 
 2. On change: calls `pushActivities(list)`; an older desktop's single activity becomes a one-item list, null becomes `[]` (`toActivityList`)
 3. On init: also queries `getCurrentActivities()` (or `getCurrentActivity()`) for immediate state; the reconnect re-push in `useWebSocket` uses the same `fetchCurrentActivities()`
 
-Several games at once travel as several `playing` activities (the server accepts up to five). Wine programs no detected game owns are offered in settings (`get-unknown-wine-programs`, "Use as game" ties the manual game to that program with one click). A name-only manual game still replaces every detected `playing` activity; a program-tied one is just another detected game. The member and friend lists show the first game and "+N" for the others, text only; the profile popout is unchanged.
+Several games at once travel as several `playing` activities (the server accepts up to five). Wine programs no detected game owns are offered in settings (`get-unknown-wine-programs`, "Add to my games" adds that program to the manual list with one click). The member and friend lists show the first game and "+N" for the others, text only. The profile popout shows the first game with "+N", and the full profile (About tab, "Playing now") lists every game as a row with its own running time.
 4. Cleanup: `teardownActivityBridge()` removes the IPC listener
 
 ---
@@ -379,8 +381,9 @@ interface ActivityState {
   showActivity: boolean;                     // Current user's visibility preference
   myActivities: Activity[] | null;           // Current user's own activities as sent: manual game and renames applied
   detectedActivities: Activity[];            // What the machine detected, before the player's own choices
-  manualGame: string | null;                 // A game the player named themselves
-  manualProcess: string | null;              // The program it is tied to (desktop); null = shown by name alone
+  manualGames: ManualGame[];                 // Games the player added by hand; { name, process | null }
+  hiddenGames: string[];                     // Name keys not to show
+  gameOrder: string[];                       // Name keys in the player's priority order
   gameRenames: Record<string, string>;       // Detected name (lowercased) → name the player wants shown
 }
 ```
@@ -395,7 +398,8 @@ interface ActivityState {
 | `setOriginRows(origin, rows)` | Keeps the rows an older server's `ready` listed (`readyRowIndex`), or drops them (`null`, a current server) |
 | `setShowActivity(show)` | Sets flag; if `false`: cancels debounce, sends empty `activity_update` via `wsSendAll`, clears `myActivities` |
 | `pushActivities(activities)` | Records `activities` as `detectedActivities`; guards on `showActivity`; sets `myActivities` (manual game and renames applied) immediately; starts/resets 5s debounce timer; on fire: sends `activity_update` via `wsSendAll` |
-| `setManualGame(name \| null)` | Names the game being played (sanitized; null or blank clears it), persists, republishes |
+| `addManualGame(name, process?)` / `removeManualGame(name)` | Edit the manual list (sanitized, replaced by name), persist, resend the desktop bindings, republish |
+| `setGameHidden(name, hidden)` / `setGameOrder(keys)` | Hide a game / set the priority order; persist, republish |
 | `setGameRename(detectedName, chosen \| null)` | Remembers the name to show for a detected game (null restores it), persists, republishes |
 | `republish()` | Pushes `detectedActivities` again when something is, or was, shown; used after a choice changes, when sharing is switched on and on connect (a manual game stands even with nothing detected) |
 | `reset()` | Cancels timer, clears all state and the persisted choices (sign-in/sign-out) |

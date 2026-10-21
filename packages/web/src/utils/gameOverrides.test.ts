@@ -2,10 +2,19 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   GAME_OVERRIDES_KEY,
   MAX_GAME_RENAMES,
+  addManualGame,
+  boundGames,
   loadOverrides,
+  moveKey,
+  orderedKeys,
+  removeManualGame,
   sanitizeGameName,
+  saveOverrides,
+  setHidden,
   setRename,
-  withManualGame,
+  withManualGames,
+  withOrder,
+  withoutHidden,
   withRenames,
 } from './gameOverrides';
 import type { Activity } from '@backspace/shared';
@@ -27,34 +36,105 @@ describe('sanitizeGameName', () => {
 describe('loadOverrides', () => {
   it('survives junk in storage', () => {
     localStorage.setItem(GAME_OVERRIDES_KEY, 'not json');
-    expect(loadOverrides()).toEqual({ manual: null, manualProcess: null, renames: {} });
+    expect(loadOverrides()).toEqual({ manualGames: [], hidden: [], order: [], renames: {} });
     localStorage.setItem(GAME_OVERRIDES_KEY, JSON.stringify({ manual: 5, renames: { a: 7, b: 'Ok', '': 'x' } }));
-    expect(loadOverrides()).toEqual({ manual: null, manualProcess: null, renames: { b: 'Ok' } });
+    expect(loadOverrides()).toEqual({ manualGames: [], hidden: [], order: [], renames: { b: 'Ok' } });
   });
 
-  it('keeps the program of a manual game, and drops a program without a game', () => {
+  it('turns the single manual game of an earlier version into a one-item list', () => {
     localStorage.setItem(GAME_OVERRIDES_KEY, JSON.stringify({ manual: 'Hades', manualProcess: ' Hades.exe ', renames: {} }));
-    expect(loadOverrides()).toMatchObject({ manual: 'Hades', manualProcess: 'Hades.exe' });
-    localStorage.setItem(GAME_OVERRIDES_KEY, JSON.stringify({ manualProcess: 'Hades.exe', renames: {} }));
-    expect(loadOverrides().manualProcess).toBeNull();
+    expect(loadOverrides().manualGames).toEqual([{ name: 'Hades', process: 'Hades.exe' }]);
     localStorage.setItem(GAME_OVERRIDES_KEY, JSON.stringify({ manual: 'Hades', manualProcess: 7 }));
-    expect(loadOverrides().manualProcess).toBeNull();
+    expect(loadOverrides().manualGames).toEqual([{ name: 'Hades', process: null }]);
+    localStorage.setItem(GAME_OVERRIDES_KEY, JSON.stringify({ manualProcess: 'Hades.exe' }));
+    expect(loadOverrides().manualGames).toEqual([]);
+  });
+
+  it('round-trips the lists and cleans them up on load', () => {
+    saveOverrides({ manualGames: [{ name: 'A', process: 'a.exe' }], hidden: ['b'], order: ['c', 'a'], renames: {} });
+    expect(loadOverrides()).toEqual({ manualGames: [{ name: 'A', process: 'a.exe' }], hidden: ['b'], order: ['c', 'a'], renames: {} });
+    localStorage.setItem(GAME_OVERRIDES_KEY, JSON.stringify({
+      manualGames: [{ name: 'A' }, { name: ' a ', process: 'x' }, { name: '' }, 5, null],
+      hidden: ['X', 'x', 7, ''],
+      order: 'nope',
+    }));
+    expect(loadOverrides()).toMatchObject({ manualGames: [{ name: 'A', process: null }], hidden: ['x'], order: [] });
+  });
+
+  it('stores nothing at all when every choice is empty', () => {
+    saveOverrides({ manualGames: [], hidden: [], order: [], renames: {} });
+    expect(localStorage.getItem(GAME_OVERRIDES_KEY)).toBeNull();
   });
 });
 
-describe('withManualGame / withRenames', () => {
+describe('manual games', () => {
+  it('adds, replaces by name and removes', () => {
+    let games = addManualGame([], '  Half   Life ', null);
+    games = addManualGame(games, 'Weird', 'Weird.exe');
+    games = addManualGame(games, 'half life', 'hl.exe');
+    expect(games).toEqual([{ name: 'Weird', process: 'Weird.exe' }, { name: 'half life', process: 'hl.exe' }]);
+    expect(addManualGame(games, '   ', null)).toBe(games);
+    expect(removeManualGame(games, 'WEIRD')).toEqual([{ name: 'half life', process: 'hl.exe' }]);
+  });
+
+  it('lists the tied ones for the desktop', () => {
+    expect(boundGames([{ name: 'A', process: null }, { name: 'B', process: 'b.exe' }])).toEqual([{ name: 'B', process: 'b.exe' }]);
+  });
+
+  it('adds only the games without a program, once, and keeps the rest of the list', () => {
+    const list: Activity[] = [{ type: 'playing', name: 'Weird' }, { type: 'listening', name: 'M' }];
+    const out = withManualGames(list, [
+      { name: 'weird', process: null },
+      { name: 'By Name', process: null },
+      { name: 'Tied', process: 'tied.exe' },
+    ]);
+    expect(out.map((a) => a.name)).toEqual(['By Name', 'Weird', 'M']);
+    expect(withManualGames(list, [{ name: 'Tied', process: 'tied.exe' }])).toBe(list);
+  });
+});
+
+describe('hidden games and order', () => {
+  const game = (name: string): Activity => ({ type: 'playing', name });
+  const music: Activity = { type: 'listening', name: 'M' };
+
+  it('leaves out hidden games only, ignoring case', () => {
+    const list = [game('A'), music, game('B')];
+    expect(withoutHidden(list, ['a'])).toEqual([music, game('B')]);
+    expect(withoutHidden(list, [])).toBe(list);
+    expect(withoutHidden(list, ['zzz'])).toBe(list);
+  });
+
+  it('hides and shows', () => {
+    expect(setHidden([], ' A ', true)).toEqual(['a']);
+    expect(setHidden(['a'], 'A', true)).toEqual(['a']);
+    expect(setHidden(['a', 'b'], 'A', false)).toEqual(['b']);
+  });
+
+  it('puts games in the player\'s order, unlisted ones last, other types where they were', () => {
+    const list = [game('A'), music, game('B'), game('C')];
+    expect(withOrder(list, ['c', 'a']).map((a) => a.name)).toEqual(['C', 'M', 'A', 'B']);
+    expect(withOrder(list, [])).toBe(list);
+    expect(withOrder(list, ['a', 'b', 'c'])).toBe(list);
+  });
+
+  it('works out the order to show and moves one place at a time', () => {
+    expect(orderedKeys(['a', 'b', 'c'], ['c', 'zzz', 'a'])).toEqual(['c', 'a', 'b']);
+    expect(moveKey(['a', 'b', 'c'], 'c', -1)).toEqual(['a', 'c', 'b']);
+    const keys = ['a', 'b'];
+    expect(moveKey(keys, 'a', -1)).toBe(keys);
+    expect(moveKey(keys, 'b', 1)).toBe(keys);
+    expect(moveKey(keys, 'zzz', 1)).toBe(keys);
+  });
+});
+
+describe('withRenames', () => {
   const list: Activity[] = [{ type: 'playing', name: 'A' }, { type: 'listening', name: 'M' }];
 
   it('returns the very same list when there is nothing to apply', () => {
-    expect(withManualGame(list, null)).toBe(list);
     expect(withRenames(list, {})).toBe(list);
     expect(withRenames(list, { zzz: 'Q' })).toBe(list);
   });
 
-  it('stays within the activity limit', () => {
-    const many: Activity[] = Array.from({ length: 5 }, (_, i) => ({ type: 'listening', name: `m${i}` }));
-    expect(withManualGame(many, 'G')).toHaveLength(5);
-  });
 });
 
 describe('setRename', () => {

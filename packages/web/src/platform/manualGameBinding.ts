@@ -1,11 +1,15 @@
 /**
- * Tell the desktop which program the player's own game is tied to, so its
- * detector shows the game while that program runs. A browser, or a desktop
+ * Tell the desktop which programs the player's own games are tied to, so its
+ * detector shows each game while its program runs. A browser, or a desktop
  * build that predates the binding, has no such channel and ignores this.
  */
-export function syncManualBinding(name: string | null, process: string | null): void {
+export function syncManualBindings(bindings: Array<{ name: string; process: string }>): void {
   const bridge = window.backspace;
-  if (!bridge?.setManualGameBinding) return;
-  const binding = name !== null && process !== null ? { name, process } : null;
-  bridge.setManualGameBinding(binding).catch(() => {});
+  if (!bridge) return;
+  if (bridge.setManualGameBindings) {
+    bridge.setManualGameBindings(bindings).catch(() => {});
+  } else if (bridge.setManualGameBinding) {
+    // A desktop from before the list can follow one program
+    bridge.setManualGameBinding(bindings[0] ?? null).catch(() => {});
+  }
 }

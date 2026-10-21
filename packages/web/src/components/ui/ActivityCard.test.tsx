@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Activity } from '@backspace/shared';
 import { setLanguage } from '../../i18n';
-import { ActivityCard, ActivityDetailCard, activityTimeText, isRenderableActivityImage } from './ActivityCard';
+import { ActivityCard, ActivityDetailCard, ProfileGamesList, activityTimeText, isRenderableActivityImage } from './ActivityCard';
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -316,5 +316,41 @@ describe('ActivityDetailCard', () => {
     render(<ActivityDetailCard activities={[activity]} />);
 
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
+  });
+});
+
+describe('profile popout and full profile with several games', () => {
+  const makeGames = (): Activity[] => [
+    { type: 'playing', name: 'Honkai: Star Rail', timestamps: { start: Date.now() - 3_600_000 } },
+    { type: 'playing', name: 'Stardew Valley', details: 'Day 12', timestamps: { start: Date.now() - 60_000 } },
+    { type: 'listening', name: 'Spotify' },
+  ];
+
+  it('the popout card names the first game and counts the others', () => {
+    render(<ActivityDetailCard activities={makeGames()} />);
+    expect(screen.getByText('Honkai: Star Rail')).toBeInTheDocument();
+    expect(screen.getByText('+1')).toHaveAttribute('title', 'Stardew Valley');
+  });
+
+  it('the popout card has no counter for a single game', () => {
+    render(<ActivityDetailCard activities={[makeGames()[0] as Activity]} />);
+    expect(screen.queryByText(/^\+\d/)).not.toBeInTheDocument();
+  });
+
+  it('the full profile lists every game in turn, each with its own time, and not the music', () => {
+    const { container } = render(<ProfileGamesList activities={makeGames()} />);
+    const rows = container.querySelectorAll('li');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.textContent).toContain('Honkai: Star Rail');
+    expect(rows[1]?.textContent).toContain('Stardew Valley');
+    expect(rows[1]?.textContent).toContain('Day 12');
+    expect(rows[0]?.querySelector('.tabular-nums')).not.toBeNull();
+    expect(rows[0]?.textContent).not.toBe(rows[1]?.textContent);
+    expect(screen.queryByText('Spotify')).not.toBeInTheDocument();
+  });
+
+  it('renders nothing without a game', () => {
+    const { container } = render(<ProfileGamesList activities={[{ type: 'listening', name: 'Spotify' }]} />);
+    expect(container).toBeEmptyDOMElement();
   });
 });

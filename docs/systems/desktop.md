@@ -983,7 +983,8 @@ Detection: `typeof window.backspace !== 'undefined'` (see `platform.ts:isElectro
 | `getCurrentActivity()` | invoke | R->M | Returns `Promise<Activity \| null>` (the first activity) |
 | `getUnknownWinePrograms()` | invoke | R->M | Running Wine programs of the last scan that no detected game owns (not its process, not its folder), up to 20. Optional in `electron.d.ts` |
 | `listRunningPrograms()` | invoke | R->M | `Promise<{ label, process }[]>`: the player's own non-system programs. Optional in `electron.d.ts` |
-| `setManualGameBinding(b)` | invoke | R->M | `{ name, process } \| null`: tie the player's game to a program (validated by `parseManualBinding`, held in memory). Optional likewise |
+| `setManualGameBindings(list)` | invoke | R->M | `{ name, process }[]` (at most 50, deduplicated by program): the programs the player's manual games follow, validated by `parseManualBinding`, held in memory. Optional in `electron.d.ts` |
+| `setManualGameBinding(b)` | invoke | R->M | `{ name, process } \| null`: one binding, for web clients that predate the list. Optional likewise |
 | `onActivitiesDetected(cb)` | listen | M->R | List channel; returns cleanup function. Optional in `electron.d.ts`: older desktops lack it |
 | `getCurrentActivities()` | invoke | R->M | Returns `Promise<Activity[]>`. Optional likewise |
 | `syncKeybinds(keybinds)` | fire | R->M | |

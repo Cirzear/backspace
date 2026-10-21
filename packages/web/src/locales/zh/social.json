@@ -70,7 +70,8 @@
     "sendMessage": "发送消息",
     "editRoles": "编辑身份组",
     "viewFull": "查看完整个人资料",
-    "addFriend": "添加好友"
+    "addFriend": "添加好友",
+    "playingNow": "正在玩"
   },
   "activity": {
     "title": "当前活跃",

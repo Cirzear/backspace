@@ -2,28 +2,33 @@ import type { Activity } from '@backspace/shared';
 import { ACTIVITY_LIMITS } from '@backspace/shared/src/activities';
 
 /**
- * What the player decided about the game they are shown as playing.
+ * What the player decided about the games they are shown as playing.
  *
- * - `manual`: a game the player named themselves. Tied to a program
- *   (`manualProcess`), the desktop shows it while that program runs and the
- *   detector, not this client, builds the activity. Without a program (a browser
- *   has no processes) it replaces every detected "playing" activity and stays
- *   until the player clears it.
+ * - `manualGames`: games the player added themselves ("Created manually").
+ *   One tied to a program (`process`, desktop only) is shown while that program
+ *   runs: the detector builds the activity, this client only tells it which
+ *   programs to watch. One without a program (a browser has no processes) is
+ *   shown until the player removes it.
+ * - `hidden`: games (by name key) the player does not want shown. They are
+ *   still detected, just not sent.
+ * - `order`: the priority order of games (name keys). The first one shown is
+ *   what lists and the profile popout lead with.
  * - `renames`: for a game the detector DID find, the name the player wants
- *   shown instead (detected name, lowercased → chosen name). It is remembered,
- *   so the game is shown under that name every time it is detected.
+ *   shown instead (detected name, lowercased → chosen name), remembered.
  *
- * Both live in this browser's storage only: they are a presentation choice of
- * this client, and the server and federation see an ordinary activity.
+ * All of it lives in this browser's storage only: it is a presentation choice
+ * of this client, and the server and federation see ordinary activities.
  */
+export interface ManualGame {
+  name: string;
+  /** The program the game follows (desktop), or null for a game shown by name alone. */
+  process: string | null;
+}
+
 export interface GameOverrides {
-  manual: string | null;
-  /**
-   * The program the manual game is tied to (desktop only): the status shows
-   * while that program runs. Null is a game named without a program, shown
-   * until cleared. Never set without `manual`.
-   */
-  manualProcess: string | null;
+  manualGames: ManualGame[];
+  hidden: string[];
+  order: string[];
   renames: Record<string, string>;
 }
 
@@ -31,6 +36,10 @@ export const GAME_OVERRIDES_KEY = 'backspace_game_overrides';
 
 /** More renames than any library holds; the oldest is dropped past this. */
 export const MAX_GAME_RENAMES = 200;
+/** Games a player can add by hand. */
+export const MAX_MANUAL_GAMES = 30;
+/** Bound on the remembered hidden and order lists. */
+export const MAX_GAME_LIST = 200;
 
 /** Collapse whitespace, drop control characters, cap at the activity name limit. Null when nothing is left. */
 export function sanitizeGameName(raw: string): string | null {
@@ -40,10 +49,6 @@ export function sanitizeGameName(raw: string): string | null {
   return cleaned.slice(0, ACTIVITY_LIMITS.MAX_NAME_LENGTH).trim();
 }
 
-export function emptyOverrides(): GameOverrides {
-  return { manual: null, manualProcess: null, renames: {} };
-}
-
 /** A program name as the desktop reports it: trimmed, no control characters, bounded. Null when empty. */
 export function sanitizeProcessName(raw: string): string | null {
   // eslint-disable-next-line no-control-regex
@@ -51,9 +56,50 @@ export function sanitizeProcessName(raw: string): string | null {
   return cleaned === '' ? null : cleaned.slice(0, 256);
 }
 
-/** The key a detected name is remembered under. */
+/** The key a game name is remembered under (renames, hidden, order). */
 export function renameKey(detectedName: string): string {
   return detectedName.trim().toLowerCase();
+}
+
+export const gameKey = renameKey;
+
+export function emptyOverrides(): GameOverrides {
+  return { manualGames: [], hidden: [], order: [], renames: {} };
+}
+
+function keyList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const keys: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string') continue;
+    const key = renameKey(item);
+    if (key !== '' && !keys.includes(key)) keys.push(key);
+  }
+  return keys.slice(0, MAX_GAME_LIST);
+}
+
+function manualList(value: unknown): ManualGame[] {
+  if (!Array.isArray(value)) return [];
+  const games: ManualGame[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue;
+    const { name, process } = item as Record<string, unknown>;
+    const cleanName = typeof name === 'string' ? sanitizeGameName(name) : null;
+    if (!cleanName) continue;
+    const cleanProcess = typeof process === 'string' ? sanitizeProcessName(process) : null;
+    games.push({ name: cleanName, process: cleanProcess });
+  }
+  return dedupeManual(games).slice(0, MAX_MANUAL_GAMES);
+}
+
+function dedupeManual(games: ManualGame[]): ManualGame[] {
+  const seen = new Set<string>();
+  return games.filter((game) => {
+    const key = renameKey(game.name);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export function loadOverrides(): GameOverrides {
@@ -62,11 +108,19 @@ export function loadOverrides(): GameOverrides {
     if (!raw) return emptyOverrides();
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') return emptyOverrides();
-    const { manual, manualProcess, renames } = parsed as Record<string, unknown>;
+    const { manualGames, manual, manualProcess, hidden, order, renames } = parsed as Record<string, unknown>;
 
     const result = emptyOverrides();
-    if (typeof manual === 'string') result.manual = sanitizeGameName(manual);
-    if (result.manual !== null && typeof manualProcess === 'string') result.manualProcess = sanitizeProcessName(manualProcess);
+    result.manualGames = manualList(manualGames);
+    // Before the list existed there was one manual game, with or without a program
+    if (result.manualGames.length === 0 && typeof manual === 'string') {
+      const name = sanitizeGameName(manual);
+      if (name) {
+        result.manualGames = [{ name, process: typeof manualProcess === 'string' ? sanitizeProcessName(manualProcess) : null }];
+      }
+    }
+    result.hidden = keyList(hidden);
+    result.order = keyList(order);
     if (renames && typeof renames === 'object') {
       for (const [key, value] of Object.entries(renames as Record<string, unknown>)) {
         if (typeof value !== 'string') continue;
@@ -82,7 +136,12 @@ export function loadOverrides(): GameOverrides {
 
 export function saveOverrides(overrides: GameOverrides): void {
   try {
-    if (overrides.manual === null && Object.keys(overrides.renames).length === 0) {
+    if (
+      overrides.manualGames.length === 0
+      && overrides.hidden.length === 0
+      && overrides.order.length === 0
+      && Object.keys(overrides.renames).length === 0
+    ) {
       localStorage.removeItem(GAME_OVERRIDES_KEY);
       return;
     }
@@ -100,16 +159,97 @@ export function clearOverrides(): void {
   }
 }
 
+// ─── Manual games ───────────────────────────────────────────────────────────
+
+/** Add a manual game, or replace the one with the same name. Returns the list unchanged for a blank name. */
+export function addManualGame(games: ManualGame[], name: string, process: string | null): ManualGame[] {
+  const cleanName = sanitizeGameName(name);
+  if (!cleanName) return games;
+  const cleanProcess = process === null ? null : sanitizeProcessName(process);
+  const key = renameKey(cleanName);
+  const next = games.filter((game) => renameKey(game.name) !== key);
+  next.push({ name: cleanName, process: cleanProcess });
+  return next.slice(-MAX_MANUAL_GAMES);
+}
+
+export function removeManualGame(games: ManualGame[], name: string): ManualGame[] {
+  const key = renameKey(name);
+  return games.filter((game) => renameKey(game.name) !== key);
+}
+
+/** The manual games the desktop must watch a program for. */
+export function boundGames(games: ManualGame[]): Array<{ name: string; process: string }> {
+  const bound: Array<{ name: string; process: string }> = [];
+  for (const game of games) {
+    if (game.process !== null) bound.push({ name: game.name, process: game.process });
+  }
+  return bound;
+}
+
+// ─── Applying the choices ───────────────────────────────────────────────────
+
 /**
- * Put the player's own game in place of whatever was detected as "playing".
- * Other activity types (music, video) are untouched. The input is returned
- * as is when there is no manual game.
+ * Add the games the player named without a program. Other activity types
+ * (music, video) are untouched, and a game already detected under that name is
+ * not listed twice. The input is returned as is when there is nothing to add.
  */
-export function withManualGame(detected: Activity[], manual: string | null): Activity[] {
-  if (manual === null) return detected;
-  const others = detected.filter((activity) => activity.type !== 'playing');
-  const game: Activity = { type: 'playing', name: manual };
-  return [game, ...others].slice(0, ACTIVITY_LIMITS.MAX_ACTIVITIES_PER_USER);
+export function withManualGames(detected: Activity[], manualGames: ManualGame[]): Activity[] {
+  const present = new Set(detected.filter((a) => a.type === 'playing').map((a) => renameKey(a.name)));
+  const added: Activity[] = [];
+  for (const game of manualGames) {
+    if (game.process !== null || present.has(renameKey(game.name))) continue;
+    added.push({ type: 'playing', name: game.name });
+  }
+  return added.length === 0 ? detected : [...added, ...detected];
+}
+
+/** Leave out the games the player hides. */
+export function withoutHidden(activities: Activity[], hidden: string[]): Activity[] {
+  if (hidden.length === 0) return activities;
+  const kept = activities.filter((a) => a.type !== 'playing' || !hidden.includes(renameKey(a.name)));
+  return kept.length === activities.length ? activities : kept;
+}
+
+/**
+ * Put the games in the player's priority order. Only the "playing" entries
+ * move, among the places playing entries already hold; a game the order does
+ * not list comes after the listed ones, in the order it came.
+ */
+export function withOrder(activities: Activity[], order: string[]): Activity[] {
+  if (order.length === 0) return activities;
+  const rank = (a: Activity) => {
+    const at = order.indexOf(renameKey(a.name));
+    return at === -1 ? Number.MAX_SAFE_INTEGER : at;
+  };
+  const games = activities.filter((a) => a.type === 'playing');
+  const sorted = [...games].sort((a, b) => rank(a) - rank(b)); // stable
+  if (sorted.every((game, i) => game === games[i])) return activities;
+  let next = 0;
+  return activities.map((a) => (a.type === 'playing' ? (sorted[next++] as Activity) : a));
+}
+
+/** Keys of `known` in the player's order, then the rest as given. */
+export function orderedKeys(known: string[], order: string[]): string[] {
+  const listed = order.filter((key) => known.includes(key));
+  return [...listed, ...known.filter((key) => !listed.includes(key))];
+}
+
+/** Move `key` one place up or down in `keys`; the list unchanged at either end. */
+export function moveKey(keys: string[], key: string, direction: -1 | 1): string[] {
+  const at = keys.indexOf(key);
+  const to = at + direction;
+  if (at === -1 || to < 0 || to >= keys.length) return keys;
+  const next = [...keys];
+  [next[at], next[to]] = [next[to] as string, next[at] as string];
+  return next;
+}
+
+/** Hide or show a game. */
+export function setHidden(hidden: string[], name: string, hide: boolean): string[] {
+  const key = renameKey(name);
+  const without = hidden.filter((k) => k !== key);
+  if (!hide || key === '') return without;
+  return [...without, key].slice(-MAX_GAME_LIST);
 }
 
 /**

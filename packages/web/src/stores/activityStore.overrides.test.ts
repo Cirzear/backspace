@@ -39,42 +39,49 @@ afterEach(() => {
   delete (window as unknown as { backspace: unknown }).backspace;
 });
 
-describe('manual game', () => {
-  it('is shown when nothing is detected, and is remembered', async () => {
-    useActivityStore.getState().setManualGame('  Hades  ');
+describe('manual games', () => {
+  it('shows a game added by name when nothing is detected, and remembers it', async () => {
+    useActivityStore.getState().addManualGame('  Hades  ');
     await vi.advanceTimersByTimeAsync(5000);
     expect(lastSent()).toEqual([{ type: 'playing', name: 'Hades' }]);
-    expect(JSON.parse(localStorage.getItem(GAME_OVERRIDES_KEY) ?? '{}').manual).toBe('Hades');
+    expect(JSON.parse(localStorage.getItem(GAME_OVERRIDES_KEY) ?? '{}').manualGames).toEqual([{ name: 'Hades', process: null }]);
   });
 
-  it('replaces a detected game and keeps other activity types', async () => {
+  it('adds to a detected game instead of replacing it, and keeps other activity types', async () => {
     useActivityStore.getState().pushActivities([RUNTIME, MUSIC]);
-    useActivityStore.getState().setManualGame('Hades');
+    useActivityStore.getState().addManualGame('Hades');
     await vi.advanceTimersByTimeAsync(5000);
-    expect(lastSent()).toEqual([{ type: 'playing', name: 'Hades' }, MUSIC]);
+    expect(lastSent()).toEqual([{ type: 'playing', name: 'Hades' }, RUNTIME, MUSIC]);
+  });
+
+  it('holds several at once', async () => {
+    useActivityStore.getState().addManualGame('Hades');
+    useActivityStore.getState().addManualGame('Celeste');
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(lastSent().map((a) => a.name).sort()).toEqual(['Celeste', 'Hades']);
   });
 
   it('survives the detector reporting nothing', async () => {
-    useActivityStore.getState().setManualGame('Hades');
+    useActivityStore.getState().addManualGame('Hades');
     useActivityStore.getState().pushActivities([]);
     await vi.advanceTimersByTimeAsync(5000);
     expect(lastSent()).toEqual([{ type: 'playing', name: 'Hades' }]);
   });
 
-  it('is cleared back to what is detected', async () => {
+  it('removing it goes back to what is detected', async () => {
     useActivityStore.getState().pushActivities([RUNTIME]);
-    useActivityStore.getState().setManualGame('Hades');
+    useActivityStore.getState().addManualGame('Hades');
     await vi.advanceTimersByTimeAsync(5000);
-    useActivityStore.getState().setManualGame(null);
+    useActivityStore.getState().removeManualGame('hades');
     await vi.advanceTimersByTimeAsync(5000);
     expect(lastSent()).toEqual([RUNTIME]);
     expect(localStorage.getItem(GAME_OVERRIDES_KEY)).toBeNull();
   });
 
-  it('clearing it with nothing detected tells the others the player stopped', async () => {
-    useActivityStore.getState().setManualGame('Hades');
+  it('removing the only one tells the others the player stopped', async () => {
+    useActivityStore.getState().addManualGame('Hades');
     await vi.advanceTimersByTimeAsync(5000);
-    useActivityStore.getState().setManualGame(null);
+    useActivityStore.getState().removeManualGame('Hades');
     await vi.advanceTimersByTimeAsync(5000);
     expect(lastSent()).toEqual([]);
   });
@@ -82,7 +89,7 @@ describe('manual game', () => {
   it('looks its icon up by the name the player typed', async () => {
     getGameIcon.mockResolvedValue({ data: 'aWNvbg==', mime: 'image/png' });
     mockUpload.mockResolvedValue({ id: 'a', url: 'https://chat.test/api/game-icons/assets/a.webp' });
-    useActivityStore.getState().setManualGame('Hades');
+    useActivityStore.getState().addManualGame('Hades');
     await vi.advanceTimersByTimeAsync(5000);
     expect(getGameIcon).toHaveBeenCalledWith('Hades');
     expect(lastSent()[0].assets?.largeImage).toBe('https://chat.test/api/game-icons/assets/a.webp');
@@ -91,7 +98,7 @@ describe('manual game', () => {
   it('is not sent while sharing is off, and shows up when it is switched on', async () => {
     useActivityStore.getState().setShowActivity(false);
     mockWsSendAll.mockClear();
-    useActivityStore.getState().setManualGame('Hades');
+    useActivityStore.getState().addManualGame('Hades');
     await vi.advanceTimersByTimeAsync(5000);
     expect(mockWsSendAll).not.toHaveBeenCalled();
     useActivityStore.getState().setShowActivity(true);
@@ -100,10 +107,73 @@ describe('manual game', () => {
   });
 
   it('is forgotten when the account signs out', () => {
-    useActivityStore.getState().setManualGame('Hades');
+    useActivityStore.getState().addManualGame('Hades');
     useActivityStore.getState().reset();
-    expect(useActivityStore.getState().manualGame).toBeNull();
+    expect(useActivityStore.getState().manualGames).toEqual([]);
     expect(localStorage.getItem(GAME_OVERRIDES_KEY)).toBeNull();
+  });
+});
+
+describe('hidden games', () => {
+  const A: Activity = { type: 'playing', name: 'Game A' };
+  const B: Activity = { type: 'playing', name: 'Game B' };
+
+  it('are detected but not sent, and come back when shown again', async () => {
+    useActivityStore.getState().pushActivities([A, B]);
+    useActivityStore.getState().setGameHidden('game a', true);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(lastSent()).toEqual([B]);
+    expect(useActivityStore.getState().detectedActivities).toEqual([A, B]);
+    expect(JSON.parse(localStorage.getItem(GAME_OVERRIDES_KEY) ?? '{}').hidden).toEqual(['game a']);
+
+    useActivityStore.getState().setGameHidden('Game A', false);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(lastSent()).toEqual([A, B]);
+  });
+
+  it('hiding the only game tells the others the player stopped', async () => {
+    useActivityStore.getState().pushActivities([A]);
+    await vi.advanceTimersByTimeAsync(5000);
+    useActivityStore.getState().setGameHidden('Game A', true);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(lastSent()).toEqual([]);
+  });
+
+  it('are hidden under the detected name even when renamed', async () => {
+    useActivityStore.getState().setGameRename('Game A', 'Secret');
+    useActivityStore.getState().setGameHidden('Game A', true);
+    useActivityStore.getState().pushActivities([A, B]);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(lastSent()).toEqual([B]);
+  });
+});
+
+describe('game order', () => {
+  const A: Activity = { type: 'playing', name: 'Game A' };
+  const B: Activity = { type: 'playing', name: 'Game B' };
+  const C: Activity = { type: 'playing', name: 'Game C' };
+
+  it('sends the games in the player\'s priority order, so the first leads', async () => {
+    useActivityStore.getState().setGameOrder(['game c', 'game a']);
+    useActivityStore.getState().pushActivities([A, B, C, MUSIC]);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(lastSent().map((a) => a.name)).toEqual(['Game C', 'Game A', 'Game B', 'Spotify']);
+    expect(JSON.parse(localStorage.getItem(GAME_OVERRIDES_KEY) ?? '{}').order).toEqual(['game c', 'game a']);
+  });
+
+  it('applies to games the desktop reports for a tied program', async () => {
+    useActivityStore.getState().setGameOrder(['mine']);
+    useActivityStore.getState().pushActivities([A, { type: 'playing', name: 'Mine' }]);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(lastSent().map((a) => a.name)).toEqual(['Mine', 'Game A']);
+  });
+
+  it('cuts to the five the server accepts after ordering, so a hidden game does not take a place', async () => {
+    const six = Array.from({ length: 6 }, (_, i): Activity => ({ type: 'playing', name: `G${i}` }));
+    useActivityStore.getState().setGameHidden('G0', true);
+    useActivityStore.getState().pushActivities(six);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(lastSent().map((a) => a.name)).toEqual(['G1', 'G2', 'G3', 'G4', 'G5']);
   });
 });
 
@@ -146,21 +216,26 @@ describe('renamed games', () => {
   });
 });
 
-describe('manual game tied to a program', () => {
-  const setBinding = vi.fn(() => Promise.resolve());
+describe('manual games tied to a program', () => {
+  const setBindings = vi.fn(() => Promise.resolve());
   beforeEach(() => {
-    setBinding.mockClear();
-    (window as unknown as { backspace: unknown }).backspace = { getGameIcon, setManualGameBinding: setBinding };
+    setBindings.mockClear();
+    (window as unknown as { backspace: unknown }).backspace = { getGameIcon, setManualGameBindings: setBindings };
   });
 
-  it('hands the binding to the desktop and remembers it', () => {
-    useActivityStore.getState().setManualGame('Hades', ' Hades.exe ');
-    expect(setBinding).toHaveBeenCalledWith({ name: 'Hades', process: 'Hades.exe' });
-    expect(JSON.parse(localStorage.getItem(GAME_OVERRIDES_KEY) ?? '{}')).toMatchObject({ manual: 'Hades', manualProcess: 'Hades.exe' });
+  it('hands every tied game to the desktop and remembers them', () => {
+    useActivityStore.getState().addManualGame('Hades', ' Hades.exe ');
+    useActivityStore.getState().addManualGame('Weird', 'Weird.exe');
+    useActivityStore.getState().addManualGame('By name');
+    expect(setBindings).toHaveBeenLastCalledWith([
+      { name: 'Hades', process: 'Hades.exe' },
+      { name: 'Weird', process: 'Weird.exe' },
+    ]);
+    expect(JSON.parse(localStorage.getItem(GAME_OVERRIDES_KEY) ?? '{}').manualGames).toHaveLength(3);
   });
 
   it('adds nothing itself: the desktop reports the game while the program runs', async () => {
-    useActivityStore.getState().setManualGame('Hades', 'Hades.exe');
+    useActivityStore.getState().addManualGame('Hades', 'Hades.exe');
     useActivityStore.getState().pushActivities([]);
     await vi.advanceTimersByTimeAsync(5000);
     expect(lastSent()).toEqual([]); // program not running: nothing to say
@@ -168,12 +243,12 @@ describe('manual game tied to a program', () => {
     const reported: Activity = { type: 'playing', name: 'Hades', timestamps: { start: 5 } };
     useActivityStore.getState().pushActivities([reported, RUNTIME]);
     await vi.advanceTimersByTimeAsync(5000);
-    expect(lastSent()).toEqual([reported, RUNTIME]); // other detected games are not replaced
+    expect(lastSent()).toEqual([reported, RUNTIME]); // other detected games stay
   });
 
   it('stops when the program stops', async () => {
     const reported: Activity = { type: 'playing', name: 'Hades' };
-    useActivityStore.getState().setManualGame('Hades', 'Hades.exe');
+    useActivityStore.getState().addManualGame('Hades', 'Hades.exe');
     useActivityStore.getState().pushActivities([reported]);
     await vi.advanceTimersByTimeAsync(5000);
     useActivityStore.getState().pushActivities([]);
@@ -181,24 +256,24 @@ describe('manual game tied to a program', () => {
     expect(lastSent()).toEqual([]);
   });
 
-  it('clearing it clears the desktop binding', () => {
-    useActivityStore.getState().setManualGame('Hades', 'Hades.exe');
-    useActivityStore.getState().setManualGame(null);
-    expect(setBinding).toHaveBeenLastCalledWith(null);
-    expect(useActivityStore.getState().manualProcess).toBeNull();
+  it('removing one updates the desktop', () => {
+    useActivityStore.getState().addManualGame('Hades', 'Hades.exe');
+    useActivityStore.getState().addManualGame('Weird', 'Weird.exe');
+    useActivityStore.getState().removeManualGame('hades');
+    expect(setBindings).toHaveBeenLastCalledWith([{ name: 'Weird', process: 'Weird.exe' }]);
   });
 
-  it('a name without a program is still shown by this client', async () => {
-    useActivityStore.getState().setManualGame('Hades');
-    expect(setBinding).toHaveBeenLastCalledWith(null);
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(lastSent()).toEqual([{ type: 'playing', name: 'Hades' }]);
-  });
-
-  it('reset forgets the binding on the desktop too', () => {
-    useActivityStore.getState().setManualGame('Hades', 'Hades.exe');
+  it('reset forgets the bindings on the desktop too', () => {
+    useActivityStore.getState().addManualGame('Hades', 'Hades.exe');
     useActivityStore.getState().reset();
-    expect(setBinding).toHaveBeenLastCalledWith(null);
+    expect(setBindings).toHaveBeenLastCalledWith([]);
+  });
+
+  it('a desktop from before the list follows the first tied program', () => {
+    const single = vi.fn(() => Promise.resolve());
+    (window as unknown as { backspace: unknown }).backspace = { getGameIcon, setManualGameBinding: single };
+    useActivityStore.getState().addManualGame('Hades', 'Hades.exe');
+    expect(single).toHaveBeenLastCalledWith({ name: 'Hades', process: 'Hades.exe' });
   });
 });
 

@@ -74,8 +74,8 @@ let ipcOverride: Activity | null = null;
 let currentActivities: Activity[] = [];
 let intervalId: NodeJS.Timeout | null = null;
 let isPolling = false;
-/** The program the player says their game is (see `setManualBinding`). */
-let manualBinding: ManualBinding | null = null;
+/** The programs the player says their games are (see `setManualBindings`). */
+let manualBindings: ManualBinding[] = [];
 
 let hasErrored = false;
 let onChangeCallback: ((activity: Activity | null) => void) | null = null;
@@ -504,10 +504,28 @@ export function parseManualBinding(value: unknown): ManualBinding | null {
   return { name: cleanName, process: cleanProc };
 }
 
-/** Bind the player's game to a running program (null clears it) and look again right away. */
-export function setManualBinding(value: unknown): void {
-  manualBinding = parseManualBinding(value);
+const MAX_MANUAL_BINDINGS = 50;
+
+/** Tie the player's games to running programs (an empty or invalid list clears them) and look again right away. */
+export function setManualBindings(value: unknown): void {
+  const list = Array.isArray(value) ? value : [];
+  const bindings: ManualBinding[] = [];
+  for (const item of list.slice(0, MAX_MANUAL_BINDINGS)) {
+    const binding = parseManualBinding(item);
+    if (binding && !bindings.some((b) => b.process.toLowerCase() === binding.process.toLowerCase())) bindings.push(binding);
+  }
+  manualBindings = bindings;
   if (intervalId) poll();
+}
+
+export function getManualBindings(): readonly ManualBinding[] {
+  return manualBindings;
+}
+
+/** One game: the channel of clients that predate the list. */
+export function setManualBinding(value: unknown): void {
+  const binding = parseManualBinding(value);
+  setManualBindings(binding ? [binding] : []);
 }
 
 /**
@@ -611,7 +629,7 @@ export function detectActivitiesWithInfo(
   entries: GameEntry[],
   sources: SourceDetector[] = sourceDetectors,
   max: number = MAX_DETECTED_GAMES,
-  manual: ManualBinding | null = null,
+  manual: readonly ManualBinding[] | ManualBinding | null = null,
 ): DetectedGame[] {
   const found: DetectedGame[] = [];
   const ids = new Set<string>();
@@ -626,12 +644,14 @@ export function detectActivitiesWithInfo(
 
   // The player's own game comes first and takes every process it matches, so
   // the dictionary and the stores cannot list the same game a second time
-  if (manual) {
-    const entry: GameEntry = { id: MANUAL_ID, name: manual.name, processes: [manual.process] };
+  const bindings = manual === null ? [] : Array.isArray(manual) ? manual : [manual as ManualBinding];
+  for (const binding of bindings) {
+    const id = `${MANUAL_ID}:${binding.process.toLowerCase()}`;
+    const entry: GameEntry = { id, name: binding.name, processes: [binding.process] };
     const running = infos.filter((info) => matchesProcessName(entry, info.name, info.cmdline, info.winExes));
     const first = running[0];
-    if (first) {
-      add({ id: MANUAL_ID, name: manual.name, type: 'playing' }, first);
+    if (first && !ids.has(id)) {
+      add({ id, name: binding.name, type: 'playing' }, first);
       for (const info of running) if (info.pid > 0) claimedPids.add(info.pid);
     }
   }
@@ -1148,7 +1168,7 @@ function poll(): void {
       return;
     }
     isPolling = false;
-    applyDetectedGames(detectActivitiesWithInfo(infos, gameEntries, undefined, undefined, manualBinding), infos);
+    applyDetectedGames(detectActivitiesWithInfo(infos, gameEntries, undefined, undefined, manualBindings), infos);
     return;
   }
 
@@ -1171,7 +1191,7 @@ function pollViaCommand(): void {
     }
 
     const infos = infosFromNames(parseProcessList(stdout));
-    applyDetectedGames(detectActivitiesWithInfo(infos, gameEntries, undefined, undefined, manualBinding), infos);
+    applyDetectedGames(detectActivitiesWithInfo(infos, gameEntries, undefined, undefined, manualBindings), infos);
   });
 }
 

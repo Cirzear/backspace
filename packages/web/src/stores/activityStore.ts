@@ -4,16 +4,22 @@ import { wsSendAll } from '../hooks/useWebSocket';
 import { api } from '../api/client';
 import { userKey, type PresenceSubject } from '../utils/identity';
 import {
+  addManualGame,
+  boundGames,
   clearOverrides,
   loadOverrides,
-  sanitizeGameName,
+  removeManualGame,
   saveOverrides,
+  setHidden,
   setRename,
-  withManualGame,
-  sanitizeProcessName,
+  withManualGames,
+  withOrder,
+  withoutHidden,
   withRenames,
+  type ManualGame,
 } from '../utils/gameOverrides';
-import { syncManualBinding } from '../platform/manualGameBinding';
+import { ACTIVITY_LIMITS } from '@backspace/shared/src/activities';
+import { syncManualBindings } from '../platform/manualGameBinding';
 
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
 /** Monotonic push generation: a debounce that fired but is still enriching must not send after a newer push arrived. */
@@ -214,10 +220,12 @@ interface ActivityState {
   myActivities: Activity[] | null;
   /** What the machine detected, before the player's own choices (`utils/gameOverrides.ts`). */
   detectedActivities: Activity[];
-  /** A game the player named themselves; replaces detected "playing" activities until cleared. */
-  manualGame: string | null;
-  /** The program `manualGame` is tied to (desktop): the desktop builds that activity, only while it runs. */
-  manualProcess: string | null;
+  /** Games the player added by hand. One tied to a program is built by the desktop while it runs; one without is added here. */
+  manualGames: ManualGame[];
+  /** Name keys of games the player does not want shown. */
+  hiddenGames: string[];
+  /** Name keys in the player's priority order; the first shown leads the lists. */
+  gameOrder: string[];
   /** Detected name (lowercased) → the name the player wants shown for it. */
   gameRenames: Record<string, string>;
 
@@ -236,11 +244,13 @@ interface ActivityState {
   setOriginRows: (origin: string, rows: Map<string, PresenceSubject> | null) => void;
   setShowActivity: (show: boolean) => void;
   pushActivities: (activities: Activity[]) => void;
-  /**
-   * Name the game being played (null clears it; blank names clear it too).
-   * With a `process` the desktop shows it while that program runs.
-   */
-  setManualGame: (name: string | null, process?: string | null) => void;
+  /** Add a game by hand (replacing one of the same name). With a `process` the desktop shows it while that program runs. */
+  addManualGame: (name: string, process?: string | null) => void;
+  removeManualGame: (name: string) => void;
+  /** Stop (or resume) showing one game; remembered. */
+  setGameHidden: (name: string, hidden: boolean) => void;
+  /** The priority order of games, by name key; remembered. */
+  setGameOrder: (keys: string[]) => void;
   /** Show a detected game under another name from now on (null restores its own name). */
   setGameRename: (detectedName: string, chosen: string | null) => void;
   /** Push again what is currently effective, when there is something to show. */
@@ -250,9 +260,28 @@ interface ActivityState {
 
 const initialOverrides = loadOverrides();
 
-/** The manual game this client puts into the status itself: one not tied to a program. */
-function nameOnlyGame(state: { manualGame: string | null; manualProcess: string | null }): string | null {
-  return state.manualProcess === null ? state.manualGame : null;
+type Choices = { manualGames: ManualGame[]; hiddenGames: string[]; gameOrder: string[]; gameRenames: Record<string, string> };
+
+/**
+ * What the player's choices make of a detected list, before icons and renames:
+ * their name-only games added, hidden games left out, the rest in their order,
+ * and no more than the server accepts. A tied game is already in the list: the
+ * desktop reports it while its program runs.
+ */
+function applyChoices(list: Activity[], choices: Choices): Activity[] {
+  return withOrder(
+    withoutHidden(withManualGames(list, choices.manualGames), choices.hiddenGames),
+    choices.gameOrder,
+  ).slice(0, ACTIVITY_LIMITS.MAX_ACTIVITIES_PER_USER);
+}
+
+function persistChoices(choices: Choices): void {
+  saveOverrides({
+    manualGames: choices.manualGames,
+    hidden: choices.hiddenGames,
+    order: choices.gameOrder,
+    renames: choices.gameRenames,
+  });
 }
 
 export const useActivityStore = create<ActivityState>((set, get) => ({
@@ -262,8 +291,9 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
   showActivity: true,
   myActivities: null,
   detectedActivities: [],
-  manualGame: initialOverrides.manual,
-  manualProcess: initialOverrides.manualProcess,
+  manualGames: initialOverrides.manualGames,
+  hiddenGames: initialOverrides.hidden,
+  gameOrder: initialOverrides.order,
   gameRenames: initialOverrides.renames,
 
   setUserActivities: (subject, origin, activities) => {
@@ -348,10 +378,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
   pushActivities: (activities) => {
     set({ detectedActivities: activities });
     if (!get().showActivity) return;
-    const effective = (list: Activity[]) => withRenames(
-      withManualGame(list, nameOnlyGame(get())),
-      get().gameRenames,
-    );
+    const effective = (list: Activity[]) => withRenames(applyChoices(list, get()), get().gameRenames);
     set({ myActivities: effective(activities) });
     if (pushTimer) clearTimeout(pushTimer);
     const seq = ++pushSeq;
@@ -359,7 +386,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
       pushTimer = null;
       // Icons are looked up by the name the machine knows the game by, so the
       // player's rename is applied after they are attached, not before.
-      const base = withManualGame(activities, nameOnlyGame(get()));
+      const base = applyChoices(activities, get());
       // Cached icons attach synchronously, so a push that needs no upload
       // sends exactly as it did before icons existed.
       const withCached = attachCachedIcons(base);
@@ -382,30 +409,49 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
     }, 5000);
   },
 
-  setManualGame: (name, process = null) => {
-    const manualGame = name === null ? null : sanitizeGameName(name);
-    const manualProcess = manualGame !== null && process !== null ? sanitizeProcessName(process) : null;
-    set({ manualGame, manualProcess });
-    saveOverrides({ manual: manualGame, manualProcess, renames: get().gameRenames });
-    syncManualBinding(manualGame, manualProcess);
+  addManualGame: (name, process = null) => {
+    const manualGames = addManualGame(get().manualGames, name, process);
+    if (manualGames === get().manualGames) return;
+    set({ manualGames });
+    persistChoices(get());
+    syncManualBindings(boundGames(manualGames));
+    get().republish();
+  },
+
+  removeManualGame: (name) => {
+    const manualGames = removeManualGame(get().manualGames, name);
+    set({ manualGames });
+    persistChoices(get());
+    syncManualBindings(boundGames(manualGames));
+    get().republish();
+  },
+
+  setGameHidden: (name, hidden) => {
+    set({ hiddenGames: setHidden(get().hiddenGames, name, hidden) });
+    persistChoices(get());
+    get().republish();
+  },
+
+  setGameOrder: (keys) => {
+    set({ gameOrder: keys.slice(0, 200) });
+    persistChoices(get());
     get().republish();
   },
 
   setGameRename: (detectedName, chosen) => {
-    const gameRenames = setRename(get().gameRenames, detectedName, chosen);
-    set({ gameRenames });
-    saveOverrides({ manual: get().manualGame, manualProcess: get().manualProcess, renames: gameRenames });
+    set({ gameRenames: setRename(get().gameRenames, detectedName, chosen) });
+    persistChoices(get());
     get().republish();
   },
 
   republish: () => {
-    const { detectedActivities, myActivities, showActivity } = get();
-    const manualGame = nameOnlyGame(get());
+    const { detectedActivities, myActivities, showActivity, manualGames } = get();
     if (!showActivity) return;
     // Nothing to show and nothing shown before: do not send an empty update.
-    // With something shown before (a cleared manual game), the empty list is
+    // With something shown before (a removed manual game), the empty list is
     // exactly what must reach the others.
-    if (detectedActivities.length === 0 && manualGame === null && (myActivities?.length ?? 0) === 0) return;
+    const hasNameOnlyGame = manualGames.some((game) => game.process === null);
+    if (detectedActivities.length === 0 && !hasNameOnlyGame && (myActivities?.length ?? 0) === 0) return;
     get().pushActivities(detectedActivities);
   },
 
@@ -420,12 +466,13 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
       showActivity: true,
       myActivities: null,
       detectedActivities: [],
-      manualGame: null,
-      manualProcess: null,
+      manualGames: [],
+      hiddenGames: [],
+      gameOrder: [],
       gameRenames: {},
     });
     // The choices belong to the signed-in player; the next account starts clean
     clearOverrides();
-    syncManualBinding(null, null);
+    syncManualBindings([]);
   },
 }));
