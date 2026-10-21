@@ -57,9 +57,9 @@ describe('manual games on the desktop', () => {
     useActivityStore.getState().addManualGame('Other', 'other.exe');
     useActivityStore.setState({ detectedActivities: [{ type: 'playing', name: 'Weird' }] });
     render(<ActivityGameSection />);
-    const status = (text: string) => screen.getByText((_, el) => el?.tagName === 'SPAN' && el.textContent === text);
-    expect(status('Weird · running')).toBeInTheDocument();
-    expect(status('Other · waiting for other.exe')).toBeInTheDocument();
+    expect(screen.getByLabelText('Name of Weird')).toHaveValue('Weird');
+    expect(screen.getByText('running')).toBeInTheDocument();
+    expect(screen.getByText('waiting for other.exe')).toBeInTheDocument();
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Remove' })[0] as HTMLElement);
     expect(useActivityStore.getState().manualGames.map((g) => g.name)).toEqual(['Other']);
@@ -149,5 +149,64 @@ describe('renaming a detected game', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
     expect(useActivityStore.getState().gameRenames).toEqual({});
     expect(screen.getByLabelText('Show Stardew Valley as')).toHaveValue('');
+  });
+});
+
+describe('renaming a manual game', () => {
+  it('renames it in place, keeping the program, and ignores a colliding name', () => {
+    installDesktop();
+    useActivityStore.getState().addManualGame('Weird', 'Weird Game.exe');
+    useActivityStore.getState().addManualGame('Other', 'other.exe');
+    setBindings.mockClear();
+    render(<ActivityGameSection />);
+
+    const input = screen.getByLabelText('Name of Weird');
+    const save = input.closest('form')?.querySelector('button[type="submit"]') as HTMLButtonElement;
+    expect(save).toBeDisabled(); // nothing changed yet
+
+    fireEvent.change(input, { target: { value: 'Other' } }); // taken
+    fireEvent.click(save);
+    expect(useActivityStore.getState().manualGames.map((g) => g.name)).toEqual(['Weird', 'Other']);
+
+    fireEvent.change(input, { target: { value: 'Renamed' } });
+    fireEvent.click(save);
+    expect(useActivityStore.getState().manualGames).toEqual([
+      { name: 'Renamed', process: 'Weird Game.exe' },
+      { name: 'Other', process: 'other.exe' },
+    ]);
+    expect(setBindings).toHaveBeenCalledWith([
+      { name: 'Renamed', process: 'Weird Game.exe' },
+      { name: 'Other', process: 'other.exe' },
+    ]);
+  });
+});
+
+describe('your games: drag to reorder', () => {
+  const games = [
+    { type: 'playing', name: 'Game A' },
+    { type: 'playing', name: 'Game B' },
+    { type: 'playing', name: 'Game C' },
+  ];
+  const dataTransfer = () => ({ setData: vi.fn(), setDragImage: vi.fn(), effectAllowed: '', dropEffect: '' });
+
+  it('drops a game onto another one by its left handle', () => {
+    useActivityStore.setState({ detectedActivities: games });
+    render(<ActivityGameSection />);
+    const handle = screen.getByLabelText('Drag Game C to change its priority');
+    const targetRow = screen.getByLabelText('Drag Game A to change its priority').closest('li') as HTMLElement;
+
+    fireEvent.dragStart(handle, { dataTransfer: dataTransfer() });
+    fireEvent.dragOver(targetRow, { dataTransfer: dataTransfer() });
+    fireEvent.drop(targetRow, { dataTransfer: dataTransfer() });
+    expect(useActivityStore.getState().gameOrder).toEqual(['game c', 'game a', 'game b']);
+  });
+
+  it('does nothing when the drag is cancelled', () => {
+    useActivityStore.setState({ detectedActivities: games });
+    render(<ActivityGameSection />);
+    const handle = screen.getByLabelText('Drag Game C to change its priority');
+    fireEvent.dragStart(handle, { dataTransfer: dataTransfer() });
+    fireEvent.dragEnd(handle);
+    expect(useActivityStore.getState().gameOrder).toEqual([]);
   });
 });

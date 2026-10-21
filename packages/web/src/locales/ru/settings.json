@@ -303,7 +303,10 @@
         "remove": "Убрать",
         "statusName": "показывается по названию",
         "statusRunning": "запущена",
-        "statusWaiting": "ждём {{program}}"
+        "statusWaiting": "ждём {{program}}",
+        "dragHandle": "Перетащите «{{name}}», чтобы изменить приоритет",
+        "manualNameLabel": "Название «{{name}}»",
+        "save": "Сохранить"
       }
     }
   },

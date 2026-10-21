@@ -300,7 +300,10 @@
         "remove": "移除",
         "statusName": "仅按名称显示",
         "statusRunning": "运行中",
-        "statusWaiting": "等待 {{program}}"
+        "statusWaiting": "等待 {{program}}",
+        "dragHandle": "拖动 {{name}} 以更改优先级",
+        "manualNameLabel": "{{name}} 的名称",
+        "save": "保存"
       }
     }
   },

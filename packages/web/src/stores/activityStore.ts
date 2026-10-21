@@ -6,6 +6,8 @@ import { userKey, type PresenceSubject } from '../utils/identity';
 import {
   addManualGame,
   boundGames,
+  renameKeyIn,
+  renameManualGame,
   clearOverrides,
   loadOverrides,
   removeManualGame,
@@ -247,6 +249,8 @@ interface ActivityState {
   /** Add a game by hand (replacing one of the same name). With a `process` the desktop shows it while that program runs. */
   addManualGame: (name: string, process?: string | null) => void;
   removeManualGame: (name: string) => void;
+  /** Give a manual game another name; its program, place and hidden state follow. */
+  renameManualGame: (from: string, to: string) => void;
   /** Stop (or resume) showing one game; remembered. */
   setGameHidden: (name: string, hidden: boolean) => void;
   /** The priority order of games, by name key; remembered. */
@@ -421,6 +425,19 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
   removeManualGame: (name) => {
     const manualGames = removeManualGame(get().manualGames, name);
     set({ manualGames });
+    persistChoices(get());
+    syncManualBindings(boundGames(manualGames));
+    get().republish();
+  },
+
+  renameManualGame: (from, to) => {
+    const manualGames = renameManualGame(get().manualGames, from, to);
+    if (!manualGames) return;
+    set({
+      manualGames,
+      hiddenGames: renameKeyIn(get().hiddenGames, from, to),
+      gameOrder: renameKeyIn(get().gameOrder, from, to),
+    });
     persistChoices(get());
     syncManualBindings(boundGames(manualGames));
     get().republish();

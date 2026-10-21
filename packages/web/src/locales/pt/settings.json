@@ -302,7 +302,10 @@
         "remove": "Remover",
         "statusName": "exibido pelo nome",
         "statusRunning": "em execução",
-        "statusWaiting": "aguardando {{program}}"
+        "statusWaiting": "aguardando {{program}}",
+        "dragHandle": "Arraste {{name}} para mudar a prioridade",
+        "manualNameLabel": "Nome de {{name}}",
+        "save": "Salvar"
       }
     }
   },

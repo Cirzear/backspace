@@ -301,7 +301,10 @@
         "remove": "Remove",
         "statusName": "shown by name",
         "statusRunning": "running",
-        "statusWaiting": "waiting for {{program}}"
+        "statusWaiting": "waiting for {{program}}",
+        "dragHandle": "Drag {{name}} to change its priority",
+        "manualNameLabel": "Name of {{name}}",
+        "save": "Save"
       }
     }
   },

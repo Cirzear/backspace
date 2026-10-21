@@ -172,6 +172,30 @@ export function addManualGame(games: ManualGame[], name: string, process: string
   return next.slice(-MAX_MANUAL_GAMES);
 }
 
+/**
+ * Give a manual game another name, keeping its program and its place in the
+ * list. Null when nothing changes: a blank name, the same name, or a name
+ * another manual game already has.
+ */
+export function renameManualGame(games: ManualGame[], from: string, to: string): ManualGame[] | null {
+  const name = sanitizeGameName(to);
+  const fromKey = renameKey(from);
+  if (!name || !games.some((game) => renameKey(game.name) === fromKey)) return null;
+  const toKey = renameKey(name);
+  if (toKey !== fromKey && games.some((game) => renameKey(game.name) === toKey)) return null;
+  if (games.some((game) => renameKey(game.name) === fromKey && game.name === name)) return null;
+  return games.map((game) => (renameKey(game.name) === fromKey ? { ...game, name } : game));
+}
+
+/** Follow a renamed game in a list of name keys (hidden, order). */
+export function renameKeyIn(keys: string[], from: string, to: string): string[] {
+  const fromKey = renameKey(from);
+  const toKey = renameKey(to);
+  if (fromKey === toKey || !keys.includes(fromKey)) return keys;
+  const moved = keys.map((key) => (key === fromKey ? toKey : key));
+  return moved.filter((key, i) => moved.indexOf(key) === i);
+}
+
 export function removeManualGame(games: ManualGame[], name: string): ManualGame[] {
   const key = renameKey(name);
   return games.filter((game) => renameKey(game.name) !== key);
@@ -241,6 +265,16 @@ export function moveKey(keys: string[], key: string, direction: -1 | 1): string[
   if (at === -1 || to < 0 || to >= keys.length) return keys;
   const next = [...keys];
   [next[at], next[to]] = [next[to] as string, next[at] as string];
+  return next;
+}
+
+/** Move `key` to where `target` is, the others shifting along: what dropping a dragged row on another does. */
+export function moveKeyTo(keys: string[], key: string, target: string): string[] {
+  const from = keys.indexOf(key);
+  const to = keys.indexOf(target);
+  if (from === -1 || to === -1 || from === to) return keys;
+  const next = keys.filter((k) => k !== key);
+  next.splice(to, 0, key);
   return next;
 }
 

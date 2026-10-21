@@ -311,3 +311,44 @@ describe('icon renewal', () => {
     expect(mockUpload).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('renaming a manual game', () => {
+  const setBindings = vi.fn(() => Promise.resolve());
+  beforeEach(() => {
+    setBindings.mockClear();
+    (window as unknown as { backspace: unknown }).backspace = { getGameIcon, setManualGameBindings: setBindings };
+  });
+
+  it('keeps the program, moves hidden and order, and hands the new name to the desktop', () => {
+    const store = useActivityStore.getState();
+    store.addManualGame('Hades', 'Hades.exe');
+    store.addManualGame('Other', 'other.exe');
+    store.setGameHidden('Hades', true);
+    store.setGameOrder(['other', 'hades']);
+    setBindings.mockClear();
+
+    useActivityStore.getState().renameManualGame('Hades', 'Hades II');
+    const state = useActivityStore.getState();
+    expect(state.manualGames).toEqual([
+      { name: 'Hades II', process: 'Hades.exe' },
+      { name: 'Other', process: 'other.exe' },
+    ]);
+    expect(state.hiddenGames).toEqual(['hades ii']);
+    expect(state.gameOrder).toEqual(['other', 'hades ii']);
+    expect(setBindings).toHaveBeenLastCalledWith([
+      { name: 'Hades II', process: 'Hades.exe' },
+      { name: 'Other', process: 'other.exe' },
+    ]);
+    expect(JSON.parse(localStorage.getItem(GAME_OVERRIDES_KEY) ?? '{}').manualGames[0].name).toBe('Hades II');
+  });
+
+  it('ignores a blank, unchanged or colliding name', () => {
+    const store = useActivityStore.getState();
+    store.addManualGame('Hades', 'Hades.exe');
+    store.addManualGame('Other');
+    setBindings.mockClear();
+    for (const to of ['  ', 'Hades', 'other']) useActivityStore.getState().renameManualGame('Hades', to);
+    expect(useActivityStore.getState().manualGames.map((g) => g.name)).toEqual(['Hades', 'Other']);
+    expect(setBindings).not.toHaveBeenCalled();
+  });
+});

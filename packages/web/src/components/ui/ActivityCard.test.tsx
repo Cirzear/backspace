@@ -349,6 +349,20 @@ describe('profile popout and full profile with several games', () => {
     expect(screen.queryByText('Spotify')).not.toBeInTheDocument();
   });
 
+  it('shows each game\'s icon in the full profile, only for web addresses', () => {
+    const { container } = render(
+      <ProfileGamesList
+        activities={[
+          { type: 'playing', name: 'With icon', assets: { largeImage: 'https://cdn.example/a.png' } },
+          { type: 'playing', name: 'Odd icon', assets: { largeImage: 'javascript:alert(1)' } },
+        ]}
+      />,
+    );
+    const rows = container.querySelectorAll('li');
+    expect(rows[0]?.querySelector('img')).toHaveAttribute('src', 'https://cdn.example/a.png');
+    expect(rows[1]?.querySelector('img')).toBeNull();
+  });
+
   it('renders nothing without a game', () => {
     const { container } = render(<ProfileGamesList activities={[{ type: 'listening', name: 'Spotify' }]} />);
     expect(container).toBeEmptyDOMElement();

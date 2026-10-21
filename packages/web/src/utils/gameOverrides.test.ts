@@ -6,8 +6,11 @@ import {
   boundGames,
   loadOverrides,
   moveKey,
+  moveKeyTo,
   orderedKeys,
   removeManualGame,
+  renameKeyIn,
+  renameManualGame,
   sanitizeGameName,
   saveOverrides,
   setHidden,
@@ -149,5 +152,47 @@ describe('setRename', () => {
   it('removes the entry for a blank or unchanged name', () => {
     expect(setRename({ a: 'B' }, 'A', '  ')).toEqual({});
     expect(setRename({ a: 'B' }, 'A', 'A')).toEqual({});
+  });
+});
+
+describe('renameManualGame', () => {
+  const games = [{ name: 'Hades', process: 'Hades.exe' }, { name: 'Other', process: null }];
+
+  it('renames in place and keeps the program', () => {
+    expect(renameManualGame(games, 'hades', '  Hades   II ')).toEqual([{ name: 'Hades II', process: 'Hades.exe' }, games[1]]);
+  });
+
+  it('allows changing only the letter case', () => {
+    expect(renameManualGame(games, 'Hades', 'HADES')?.[0]?.name).toBe('HADES');
+  });
+
+  it('refuses blank, identical, unknown and colliding names', () => {
+    expect(renameManualGame(games, 'Hades', ' ')).toBeNull();
+    expect(renameManualGame(games, 'Hades', 'Hades')).toBeNull();
+    expect(renameManualGame(games, 'Nope', 'X')).toBeNull();
+    expect(renameManualGame(games, 'Hades', 'other')).toBeNull();
+  });
+});
+
+describe('renameKeyIn', () => {
+  it('follows the new name and keeps the place', () => {
+    expect(renameKeyIn(['a', 'hades', 'b'], 'Hades', 'Hades II')).toEqual(['a', 'hades ii', 'b']);
+  });
+  it('leaves lists without the game alone', () => {
+    const keys = ['a'];
+    expect(renameKeyIn(keys, 'Hades', 'X')).toBe(keys);
+  });
+});
+
+describe('moveKeyTo', () => {
+  const keys = ['a', 'b', 'c', 'd'];
+  it('puts the key where the target was, in both directions', () => {
+    expect(moveKeyTo(keys, 'd', 'b')).toEqual(['a', 'd', 'b', 'c']);
+    expect(moveKeyTo(keys, 'a', 'c')).toEqual(['b', 'c', 'a', 'd']);
+  });
+  it('ignores unknown keys and a drop on itself', () => {
+    expect(moveKeyTo(keys, 'a', 'a')).toBe(keys);
+    expect(moveKeyTo(keys, 'x', 'a')).toBe(keys);
+    expect(moveKeyTo(keys, 'a', 'x')).toBe(keys);
   });
 });

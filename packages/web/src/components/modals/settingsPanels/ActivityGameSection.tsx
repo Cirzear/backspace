@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ACTIVITY_LIMITS } from '@backspace/shared/src/activities';
 import { useActivityStore } from '../../../stores/activityStore';
-import { moveKey, orderedKeys, renameKey } from '../../../utils/gameOverrides';
+import { moveKey, moveKeyTo, orderedKeys, renameKey } from '../../../utils/gameOverrides';
 
 const PRIMARY_BUTTON =
   'px-3 py-1.5 bg-accent-primary hover:bg-accent-primary/80 text-white text-xs font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
@@ -25,6 +25,7 @@ export function ActivityGameSection() {
   const renames = useActivityStore((s) => s.gameRenames);
   const addManualGame = useActivityStore((s) => s.addManualGame);
   const removeManualGame = useActivityStore((s) => s.removeManualGame);
+  const renameManualGame = useActivityStore((s) => s.renameManualGame);
   const setGameHidden = useActivityStore((s) => s.setGameHidden);
   const setGameOrder = useActivityStore((s) => s.setGameOrder);
   const setGameRename = useActivityStore((s) => s.setGameRename);
@@ -36,6 +37,9 @@ export function ActivityGameSection() {
   const [program, setProgram] = useState('');
   const [unknown, setUnknown] = useState<Array<{ label: string; process: string }>>([]);
   const [renameDrafts, setRenameDrafts] = useState<Record<string, string>>({});
+  const [manualDrafts, setManualDrafts] = useState<Record<string, string>>({});
+  const [dragKey, setDragKey] = useState<string | null>(null);
+  const [overKey, setOverKey] = useState<string | null>(null);
 
   const refreshPrograms = useCallback(() => {
     window.backspace?.listRunningPrograms?.()
@@ -87,6 +91,11 @@ export function ActivityGameSection() {
   );
 
   const move = (key: string, direction: -1 | 1) => setGameOrder(moveKey(rows.keys, key, direction));
+  const endDrag = () => { setDragKey(null); setOverKey(null); };
+  const dropOn = (target: string) => {
+    if (dragKey !== null) setGameOrder(moveKeyTo(rows.keys, dragKey, target));
+    endDrag();
+  };
 
   return (
     <div className="mt-3 pt-3 border-t border-white/[0.06] space-y-4">
@@ -99,7 +108,46 @@ export function ActivityGameSection() {
               const name = rows.names.get(key) ?? key;
               const isHidden = hidden.includes(key);
               return (
-                <li key={key} className="flex items-center gap-2">
+                <li
+                  key={key}
+                  className={`flex items-center gap-2 rounded ${dragKey === key ? 'opacity-40' : ''} ${
+                    overKey === key && dragKey !== null && dragKey !== key
+                      ? (rows.keys.indexOf(dragKey) < index ? 'shadow-[0_2px_0_0_var(--accent-primary,#8b5cf6)]' : 'shadow-[0_-2px_0_0_var(--accent-primary,#8b5cf6)]')
+                      : ''
+                  }`}
+                  onDragOver={(event) => {
+                    if (dragKey === null) return;
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = 'move';
+                    if (overKey !== key) setOverKey(key);
+                  }}
+                  onDrop={(event) => {
+                    if (dragKey === null) return;
+                    event.preventDefault();
+                    dropOn(key);
+                  }}
+                >
+                  <span
+                    draggable
+                    role="img"
+                    aria-label={t('privacy.activity.game.dragHandle', { name })}
+                    title={t('privacy.activity.game.dragHandle', { name })}
+                    className="shrink-0 w-4 text-center text-txt-tertiary hover:text-txt-primary cursor-grab active:cursor-grabbing select-none leading-none"
+                    onDragStart={(event) => {
+                      setDragKey(key);
+                      event.dataTransfer.effectAllowed = 'move';
+                      try {
+                        event.dataTransfer.setData('text/plain', name);
+                        const row = (event.currentTarget as HTMLElement).closest('li');
+                        if (row) event.dataTransfer.setDragImage(row, 12, 12);
+                      } catch {
+                        // A drag without an image or payload still reorders
+                      }
+                    }}
+                    onDragEnd={endDrag}
+                  >
+                    ⋮⋮
+                  </span>
                   <span
                     className={`w-1.5 h-1.5 rounded-full shrink-0 ${runningKeys.has(key) ? 'bg-accent-mint' : 'bg-white/[0.15]'}`}
                     aria-hidden="true"
@@ -189,24 +237,52 @@ export function ActivityGameSection() {
         )}
         {manualGames.length > 0 && (
           <ul className="mt-2 space-y-1">
-            {manualGames.map((game) => (
-              <li key={renameKey(game.name)} className="flex items-center justify-between gap-3 text-xs text-txt-secondary">
-                <span className="truncate" title={game.name}>
-                  {game.name}
-                  <span className="text-txt-tertiary">
-                    {' · '}
+            {manualGames.map((game) => {
+              const key = renameKey(game.name);
+              const value = manualDrafts[key] ?? game.name;
+              const changed = value.trim() !== '' && value.trim() !== game.name;
+              const save = () => {
+                if (!changed) return;
+                renameManualGame(game.name, value);
+                setManualDrafts((drafts) => {
+                  const next = { ...drafts };
+                  delete next[key];
+                  return next;
+                });
+              };
+              return (
+                <li key={key} className="space-y-1">
+                  <form
+                    className="flex items-center gap-2"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      save();
+                    }}
+                  >
+                    <input
+                      className="input-standard flex-1 min-w-0 px-2.5 py-1.5 text-sm"
+                      value={value}
+                      maxLength={ACTIVITY_LIMITS.MAX_NAME_LENGTH}
+                      aria-label={t('privacy.activity.game.manualNameLabel', { name: game.name })}
+                      onChange={(event) => setManualDrafts((drafts) => ({ ...drafts, [key]: event.target.value }))}
+                    />
+                    <button type="submit" className={PRIMARY_BUTTON} disabled={!changed}>
+                      {t('privacy.activity.game.save')}
+                    </button>
+                    <button type="button" className={LINK_BUTTON} onClick={() => removeManualGame(game.name)}>
+                      {t('privacy.activity.game.remove')}
+                    </button>
+                  </form>
+                  <div className="text-[11px] text-txt-tertiary">
                     {game.process === null
                       ? t('privacy.activity.game.statusName')
-                      : runningKeys.has(renameKey(game.name))
+                      : runningKeys.has(key)
                         ? t('privacy.activity.game.statusRunning')
                         : t('privacy.activity.game.statusWaiting', { program: game.process })}
-                  </span>
-                </span>
-                <button type="button" className={LINK_BUTTON} onClick={() => removeManualGame(game.name)}>
-                  {t('privacy.activity.game.remove')}
-                </button>
-              </li>
-            ))}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

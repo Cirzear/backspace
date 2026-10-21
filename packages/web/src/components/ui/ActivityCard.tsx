@@ -60,6 +60,13 @@ interface ArtworkSize {
   single: string;
 }
 
+const PROFILE_ROW_ART: ArtworkSize = {
+  wrapper: 'relative shrink-0 w-10 h-10',
+  large: 'w-10 h-10 rounded-lg object-cover bg-white/[0.04]',
+  badge: 'absolute -bottom-1 -right-1 w-4 h-4 rounded-full object-cover bg-[#13131a] ring-2 ring-[rgba(20,20,26,0.85)]',
+  single: 'w-10 h-10 rounded-lg object-cover bg-white/[0.04]',
+};
+
 const POPOUT_ART: ArtworkSize = {
   wrapper: 'relative shrink-0 w-[60px] h-[60px]',
   large: 'w-[60px] h-[60px] rounded-[10px] object-cover bg-white/[0.04]',
@@ -268,8 +275,8 @@ export function ActivityDetailCard({ activities }: { activities: Activity[] }) {
 
 /**
  * The full profile's list of everything the person is playing: one row per
- * game, each with its own running time. Text only, in the order the person
- * set (the first is the one the lists show).
+ * game with its icon and its own running time, in the order the person set
+ * (the first is the one the lists show).
  */
 export function ProfileGamesList({ activities }: { activities: Activity[] }) {
   useEmojiShortcodeNames();
@@ -285,17 +292,26 @@ export function ProfileGamesList({ activities }: { activities: Activity[] }) {
       {games.map((game, index) => {
         const timeText = activityTimeText(game.timestamps ?? {}, now, t, formatDuration);
         return (
-          <li key={`${game.name}:${index}`} className="min-w-0">
-            <div className="text-[13px] font-medium leading-[1.3] text-txt-primary truncate">{game.name}</div>
-            {game.details && (
-              <div className="text-[12px] leading-[1.3] text-txt-secondary truncate">{replaceEmojiShortcodes(game.details)}</div>
-            )}
-            {game.state && (
-              <div className="text-[12px] leading-[1.3] text-txt-secondary truncate">{replaceEmojiShortcodes(game.state)}</div>
-            )}
-            {timeText && (
-              <div className="text-[11px] leading-[1.3] text-txt-tertiary tabular-nums">{timeText}</div>
-            )}
+          <li key={`${game.name}:${index}`} className="flex gap-3 items-center min-w-0">
+            <ActivityArtwork
+              largeImage={isRenderableActivityImage(game.assets?.largeImage) ? game.assets.largeImage : null}
+              smallImage={isRenderableActivityImage(game.assets?.smallImage) ? game.assets.smallImage : null}
+              largeAlt={game.assets?.largeText || game.name}
+              smallAlt={game.assets?.smallText}
+              size={PROFILE_ROW_ART}
+            />
+            <div className="min-w-0 flex-1">
+              <div className="text-[13px] font-medium leading-[1.3] text-txt-primary truncate">{game.name}</div>
+              {game.details && (
+                <div className="text-[12px] leading-[1.3] text-txt-secondary truncate">{replaceEmojiShortcodes(game.details)}</div>
+              )}
+              {game.state && (
+                <div className="text-[12px] leading-[1.3] text-txt-secondary truncate">{replaceEmojiShortcodes(game.state)}</div>
+              )}
+              {timeText && (
+                <div className="text-[11px] leading-[1.3] text-txt-tertiary tabular-nums">{timeText}</div>
+              )}
+            </div>
           </li>
         );
       })}
