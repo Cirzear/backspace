@@ -39,6 +39,7 @@ export function ActivityGameSection() {
   const [renameDrafts, setRenameDrafts] = useState<Record<string, string>>({});
   const [manualDrafts, setManualDrafts] = useState<Record<string, string>>({});
   const dragRef = useRef<string | null>(null);
+  const overRef = useRef<string | null>(null);
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [overKey, setOverKey] = useState<string | null>(null);
 
@@ -92,9 +93,10 @@ export function ActivityGameSection() {
   );
 
   const move = (key: string, direction: -1 | 1) => setGameOrder(moveKey(rows.keys, key, direction));
-  const endDrag = () => { dragRef.current = null; setDragKey(null); setOverKey(null); };
-  const dropOn = (target: string) => {
-    if (dragRef.current !== null) setGameOrder(moveKeyTo(rows.keys, dragRef.current, target));
+  const endDrag = () => { dragRef.current = null; overRef.current = null; setDragKey(null); setOverKey(null); };
+  const dropOn = (target: string | null) => {
+    const from = dragRef.current;
+    if (from !== null && target !== null) setGameOrder(moveKeyTo(rows.keys, from, target));
     endDrag();
   };
 
@@ -111,6 +113,28 @@ export function ActivityGameSection() {
               return (
                 <li
                   key={key}
+                  draggable
+                  onDragStart={(event) => {
+                    // The whole row is the drag source (Chromium starts no drag from a bare span),
+                    // but only a grab by the handle counts
+                    if (!(event.target instanceof Element) || !event.target.closest('[data-drag-handle]')) {
+                      event.preventDefault();
+                      return;
+                    }
+                    dragRef.current = key;
+                    overRef.current = null;
+                    event.dataTransfer.effectAllowed = 'move';
+                    try {
+                      event.dataTransfer.setData('text/plain', name);
+                      event.dataTransfer.setDragImage(event.currentTarget, 12, 12);
+                    } catch {
+                      // A drag without an image or payload still reorders
+                    }
+                    setDragKey(key);
+                  }}
+                  // An accepted drop whose own event never arrived still lands where the pointer last was;
+                  // a cancelled drag (Esc, dropped elsewhere) reports 'none' and changes nothing
+                  onDragEnd={(event) => dropOn(event.dataTransfer?.dropEffect === 'move' ? overRef.current : null)}
                   className={`flex items-center gap-2 rounded ${dragKey === key ? 'opacity-40' : ''} ${
                     overKey === key && dragKey !== null && dragKey !== key
                       ? (rows.keys.indexOf(dragKey) < index ? 'shadow-[0_2px_0_0_var(--accent-primary,#8b5cf6)]' : 'shadow-[0_-2px_0_0_var(--accent-primary,#8b5cf6)]')
@@ -120,6 +144,7 @@ export function ActivityGameSection() {
                     if (dragRef.current === null) return;
                     event.preventDefault();
                     event.dataTransfer.dropEffect = 'move';
+                    overRef.current = key;
                     if (overKey !== key) setOverKey(key);
                   }}
                   onDrop={(event) => {
@@ -129,25 +154,11 @@ export function ActivityGameSection() {
                   }}
                 >
                   <span
-                    draggable
+                    data-drag-handle=""
                     role="img"
                     aria-label={t('privacy.activity.game.dragHandle', { name })}
                     title={t('privacy.activity.game.dragHandle', { name })}
                     className="shrink-0 w-4 text-center text-txt-tertiary hover:text-txt-primary cursor-grab active:cursor-grabbing select-none leading-none"
-                    onDragStart={(event) => {
-                      dragRef.current = key;
-                      // Chromium cancels a drag whose source is re-rendered inside dragstart
-                      setTimeout(() => { if (dragRef.current === key) setDragKey(key); }, 0);
-                      event.dataTransfer.effectAllowed = 'move';
-                      try {
-                        event.dataTransfer.setData('text/plain', name);
-                        const row = (event.currentTarget as HTMLElement).closest('li');
-                        if (row) event.dataTransfer.setDragImage(row, 12, 12);
-                      } catch {
-                        // A drag without an image or payload still reorders
-                      }
-                    }}
-                    onDragEnd={endDrag}
                   >
                     ⋮
                   </span>
