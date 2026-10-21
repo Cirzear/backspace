@@ -363,6 +363,24 @@ describe('profile popout and full profile with several games', () => {
     expect(rows[1]?.querySelector('img')).toBeNull();
   });
 
+  it('draws a placeholder for a game without an icon, so the names stay aligned', () => {
+    const { container } = render(
+      <ProfileGamesList
+        activities={[
+          { type: 'playing', name: 'With icon', assets: { largeImage: 'https://cdn.example/a.png' } },
+          { type: 'playing', name: 'No icon' },
+          { type: 'playing', name: 'Broken icon', assets: { largeImage: 'https://cdn.example/broken.png' } },
+        ]}
+      />,
+    );
+    const rows = container.querySelectorAll('li');
+    expect(rows[0]?.querySelector('[data-testid="game-icon-placeholder"]')).toBeNull();
+    expect(rows[1]?.querySelector('[data-testid="game-icon-placeholder"]')).not.toBeNull();
+
+    fireEvent.error(rows[2]?.querySelector('img') as HTMLImageElement);
+    expect(rows[2]?.querySelector('[data-testid="game-icon-placeholder"]')).not.toBeNull();
+  });
+
   it('renders nothing without a game', () => {
     const { container } = render(<ProfileGamesList activities={[{ type: 'listening', name: 'Spotify' }]} />);
     expect(container).toBeEmptyDOMElement();

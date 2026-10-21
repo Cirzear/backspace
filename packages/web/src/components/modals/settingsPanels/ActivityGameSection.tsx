@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ACTIVITY_LIMITS } from '@backspace/shared/src/activities';
 import { useActivityStore } from '../../../stores/activityStore';
@@ -38,6 +38,7 @@ export function ActivityGameSection() {
   const [unknown, setUnknown] = useState<Array<{ label: string; process: string }>>([]);
   const [renameDrafts, setRenameDrafts] = useState<Record<string, string>>({});
   const [manualDrafts, setManualDrafts] = useState<Record<string, string>>({});
+  const dragRef = useRef<string | null>(null);
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [overKey, setOverKey] = useState<string | null>(null);
 
@@ -91,9 +92,9 @@ export function ActivityGameSection() {
   );
 
   const move = (key: string, direction: -1 | 1) => setGameOrder(moveKey(rows.keys, key, direction));
-  const endDrag = () => { setDragKey(null); setOverKey(null); };
+  const endDrag = () => { dragRef.current = null; setDragKey(null); setOverKey(null); };
   const dropOn = (target: string) => {
-    if (dragKey !== null) setGameOrder(moveKeyTo(rows.keys, dragKey, target));
+    if (dragRef.current !== null) setGameOrder(moveKeyTo(rows.keys, dragRef.current, target));
     endDrag();
   };
 
@@ -116,13 +117,13 @@ export function ActivityGameSection() {
                       : ''
                   }`}
                   onDragOver={(event) => {
-                    if (dragKey === null) return;
+                    if (dragRef.current === null) return;
                     event.preventDefault();
                     event.dataTransfer.dropEffect = 'move';
                     if (overKey !== key) setOverKey(key);
                   }}
                   onDrop={(event) => {
-                    if (dragKey === null) return;
+                    if (dragRef.current === null) return;
                     event.preventDefault();
                     dropOn(key);
                   }}
@@ -134,7 +135,9 @@ export function ActivityGameSection() {
                     title={t('privacy.activity.game.dragHandle', { name })}
                     className="shrink-0 w-4 text-center text-txt-tertiary hover:text-txt-primary cursor-grab active:cursor-grabbing select-none leading-none"
                     onDragStart={(event) => {
-                      setDragKey(key);
+                      dragRef.current = key;
+                      // Chromium cancels a drag whose source is re-rendered inside dragstart
+                      setTimeout(() => { if (dragRef.current === key) setDragKey(key); }, 0);
                       event.dataTransfer.effectAllowed = 'move';
                       try {
                         event.dataTransfer.setData('text/plain', name);
@@ -146,7 +149,7 @@ export function ActivityGameSection() {
                     }}
                     onDragEnd={endDrag}
                   >
-                    ⋮⋮
+                    ⋮
                   </span>
                   <span
                     className={`w-1.5 h-1.5 rounded-full shrink-0 ${runningKeys.has(key) ? 'bg-accent-mint' : 'bg-white/[0.15]'}`}

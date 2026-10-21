@@ -1,6 +1,6 @@
 import type { Activity } from '@backspace/shared';
 import { getPrimaryActivity } from '@backspace/shared/src/activities.js';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import { replaceEmojiShortcodes, useEmojiShortcodeNames } from '../../utils/emojiShortcodes';
@@ -67,6 +67,22 @@ const PROFILE_ROW_ART: ArtworkSize = {
   single: 'w-10 h-10 rounded-lg object-cover bg-white/[0.04]',
 };
 
+/** Stand-in for a game without an icon: keeps the rows' text aligned. It is only drawn, never cached or uploaded. */
+function GameIconPlaceholder() {
+  return (
+    <div
+      data-testid="game-icon-placeholder"
+      aria-hidden="true"
+      className="shrink-0 w-10 h-10 rounded-lg bg-white/[0.06] flex items-center justify-center text-txt-tertiary"
+    >
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M6 11h4M8 9v4M15 12h.01M18 10h.01" />
+        <path d="M17.3 5H6.7a4 4 0 0 0-3.9 3.1l-1.2 5.6A3 3 0 0 0 4.5 17.2c.8 0 1.5-.4 2-1l1.5-2h8l1.5 2c.5.6 1.2 1 2 1a3 3 0 0 0 2.9-3.5l-1.2-5.6A4 4 0 0 0 17.3 5Z" />
+      </svg>
+    </div>
+  );
+}
+
 const POPOUT_ART: ArtworkSize = {
   wrapper: 'relative shrink-0 w-[60px] h-[60px]',
   large: 'w-[60px] h-[60px] rounded-[10px] object-cover bg-white/[0.04]',
@@ -80,6 +96,8 @@ interface ActivityArtworkProps {
   largeAlt: string;
   smallAlt?: string;
   size: ArtworkSize;
+  /** Shown in place of the art when there is none, or none could be loaded. Never stored anywhere. */
+  placeholder?: ReactNode;
 }
 
 /**
@@ -89,13 +107,13 @@ interface ActivityArtworkProps {
  * image is promoted to the full-size image. With nothing left to show it
  * renders nothing at all.
  */
-function ActivityArtwork({ largeImage, smallImage, largeAlt, smallAlt, size }: ActivityArtworkProps) {
+function ActivityArtwork({ largeImage, smallImage, largeAlt, smallAlt, size, placeholder }: ActivityArtworkProps) {
   const [failed, setFailed] = useState<ReadonlySet<string>>(new Set());
   const markFailed = (src: string) => setFailed((prev) => new Set(prev).add(src));
 
   const large = largeImage && !failed.has(largeImage) ? largeImage : null;
   const small = smallImage && !failed.has(smallImage) ? smallImage : null;
-  if (!large && !small) return null;
+  if (!large && !small) return placeholder ? <>{placeholder}</> : null;
 
   return (
     <div className={size.wrapper}>
@@ -299,6 +317,7 @@ export function ProfileGamesList({ activities }: { activities: Activity[] }) {
               largeAlt={game.assets?.largeText || game.name}
               smallAlt={game.assets?.smallText}
               size={PROFILE_ROW_ART}
+              placeholder={<GameIconPlaceholder />}
             />
             <div className="min-w-0 flex-1">
               <div className="text-[13px] font-medium leading-[1.3] text-txt-primary truncate">{game.name}</div>
