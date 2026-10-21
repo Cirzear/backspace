@@ -6,6 +6,7 @@ import { userKey, type PresenceSubject } from '../utils/identity';
 import {
   addManualGame,
   boundGames,
+  renameKey,
   renameKeyIn,
   renameManualGame,
   clearOverrides,
@@ -424,7 +425,13 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
 
   removeManualGame: (name) => {
     const manualGames = removeManualGame(get().manualGames, name);
-    set({ manualGames });
+    // A hidden game kept only by the list the player just removed it from goes away with it; one still
+    // detected stays a row of its own, with its hidden state and place
+    const key = renameKey(name);
+    const stillDetected = get().detectedActivities.some((a) => a.type === 'playing' && renameKey(a.name) === key);
+    set(stillDetected
+      ? { manualGames }
+      : { manualGames, hiddenGames: get().hiddenGames.filter((k) => k !== key), gameOrder: get().gameOrder.filter((k) => k !== key) });
     persistChoices(get());
     syncManualBindings(boundGames(manualGames));
     get().republish();

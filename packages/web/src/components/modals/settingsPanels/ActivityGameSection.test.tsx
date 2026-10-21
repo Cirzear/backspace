@@ -259,3 +259,14 @@ describe('your games: drag to reorder', () => {
     expect(useActivityStore.getState().gameOrder).toEqual([]);
   });
 });
+
+describe('removing a hidden manual game', () => {
+  it('leaves no row behind to show again', () => {
+    useActivityStore.getState().addManualGame('Hades');
+    useActivityStore.getState().setGameHidden('Hades', true);
+    render(<ActivityGameSection />);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Remove' })[0] as HTMLElement);
+    expect(screen.queryByRole('button', { name: /^Show/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Drag Hades/)).not.toBeInTheDocument();
+  });
+});

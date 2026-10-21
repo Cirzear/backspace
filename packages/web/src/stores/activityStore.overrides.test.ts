@@ -352,3 +352,27 @@ describe('renaming a manual game', () => {
     expect(setBindings).not.toHaveBeenCalled();
   });
 });
+
+describe('removing a manual game', () => {
+  it('takes its hidden state and place with it, so it vanishes from the list at once', () => {
+    const store = useActivityStore.getState();
+    store.addManualGame('Hades');
+    store.addManualGame('Other');
+    store.setGameHidden('Hades', true);
+    store.setGameOrder(['other', 'hades']);
+    useActivityStore.getState().removeManualGame('Hades');
+    const state = useActivityStore.getState();
+    expect(state.manualGames.map((g) => g.name)).toEqual(['Other']);
+    expect(state.hiddenGames).toEqual([]);
+    expect(state.gameOrder).toEqual(['other']);
+  });
+
+  it('keeps the choices of a game that is still detected', () => {
+    const store = useActivityStore.getState();
+    store.addManualGame('Hades');
+    store.setGameHidden('Hades', true);
+    useActivityStore.setState({ detectedActivities: [{ type: 'playing', name: 'Hades' }] });
+    useActivityStore.getState().removeManualGame('Hades');
+    expect(useActivityStore.getState().hiddenGames).toEqual(['hades']);
+  });
+});
