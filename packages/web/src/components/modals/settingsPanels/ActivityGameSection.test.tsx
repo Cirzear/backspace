@@ -188,48 +188,74 @@ describe('your games: drag to reorder', () => {
     { type: 'playing', name: 'Game C' },
   ];
   const dataTransfer = () => ({ setData: vi.fn(), setDragImage: vi.fn(), effectAllowed: '', dropEffect: '' });
+  const handleOf = (name: string) => screen.getByLabelText(`Drag ${name} to change its priority`);
+  const rowOf = (name: string) => handleOf(name).closest('li') as HTMLElement;
 
-  it('drops a game onto another one by its left handle', () => {
+  /** jsdom has no layout: rows are 30px tall, stacked from the top. */
+  function layOut() {
+    ['Game A', 'Game B', 'Game C'].forEach((name, i) => {
+      rowOf(name).getBoundingClientRect = () => ({ top: i * 30, height: 30, bottom: i * 30 + 30, left: 0, right: 100, width: 100, x: 0, y: i * 30, toJSON: () => ({}) });
+    });
+  }
+
+  /** jsdom's drag events carry no coordinates: build them by hand. */
+  function pointer(type: 'dragover' | 'drop', clientY: number) {
+    const event = Object.assign(new Event(type, { bubbles: true, cancelable: true }), { clientY, dataTransfer: dataTransfer() });
+    act(() => { document.body.dispatchEvent(event); });
+  }
+
+  function grab(name: string) {
+    fireEvent.mouseDown(handleOf(name));
+    fireEvent.dragStart(rowOf(name), { dataTransfer: dataTransfer() });
+  }
+
+  it('pulls a game up to wherever the pointer is, even far above the list', () => {
     useActivityStore.setState({ detectedActivities: games });
     render(<ActivityGameSection />);
-    const handle = screen.getByLabelText('Drag Game C to change its priority');
-    const targetRow = screen.getByLabelText('Drag Game A to change its priority').closest('li') as HTMLElement;
-
-    fireEvent.dragStart(handle, { dataTransfer: dataTransfer() });
-    fireEvent.dragOver(targetRow, { dataTransfer: dataTransfer() });
-    fireEvent.drop(targetRow, { dataTransfer: dataTransfer() });
+    layOut();
+    grab('Game C');
+    pointer('dragover', -200);
+    pointer('drop', -200);
     expect(useActivityStore.getState().gameOrder).toEqual(['game c', 'game a', 'game b']);
   });
 
-  it('lands the game at the last row over when only dragend arrives', () => {
+  it('pulls a game down to the end from far below the list', () => {
     useActivityStore.setState({ detectedActivities: games });
     render(<ActivityGameSection />);
-    const handle = screen.getByLabelText('Drag Game C to change its priority');
-    const targetRow = screen.getByLabelText('Drag Game B to change its priority').closest('li') as HTMLElement;
-    fireEvent.dragStart(handle, { dataTransfer: dataTransfer() });
-    fireEvent.dragOver(targetRow, { dataTransfer: dataTransfer() });
-    fireEvent.dragEnd(handle, { dataTransfer: { ...dataTransfer(), dropEffect: 'move' } });
+    layOut();
+    grab('Game A');
+    pointer('dragover', 900);
+    pointer('drop', 900);
+    expect(useActivityStore.getState().gameOrder).toEqual(['game b', 'game c', 'game a']);
+  });
+
+  it('lands the game at the last place over when only dragend arrives', () => {
+    useActivityStore.setState({ detectedActivities: games });
+    render(<ActivityGameSection />);
+    layOut();
+    grab('Game C');
+    pointer('dragover', 35);
+    fireEvent.dragEnd(rowOf('Game C'), { dataTransfer: { ...dataTransfer(), dropEffect: 'move' } });
     expect(useActivityStore.getState().gameOrder).toEqual(['game a', 'game c', 'game b']);
   });
 
-  it('ignores a drag that does not start on the handle', () => {
+  it('does not start a drag that was not grabbed by the handle', () => {
     useActivityStore.setState({ detectedActivities: games });
     render(<ActivityGameSection />);
-    const row = screen.getByLabelText('Drag Game C to change its priority').closest('li') as HTMLElement;
-    const hide = row.querySelector('button:last-of-type') as HTMLElement;
-    const over = screen.getByLabelText('Drag Game A to change its priority').closest('li') as HTMLElement;
-    fireEvent.dragStart(hide, { dataTransfer: dataTransfer() });
-    fireEvent.dragOver(over, { dataTransfer: dataTransfer() });
-    fireEvent.drop(over, { dataTransfer: dataTransfer() });
+    layOut();
+    fireEvent.dragStart(rowOf('Game C'), { dataTransfer: dataTransfer() });
+    pointer('dragover', 0);
+    pointer('drop', 0);
     expect(useActivityStore.getState().gameOrder).toEqual([]);
   });
 
   it('does nothing when the drag is cancelled', () => {
     useActivityStore.setState({ detectedActivities: games });
     render(<ActivityGameSection />);
-    const handle = screen.getByLabelText('Drag Game C to change its priority');
-    fireEvent.dragStart(handle, { dataTransfer: dataTransfer() });
-    fireEvent.dragEnd(handle);
+    layOut();
+    grab('Game C');
+    pointer('dragover', 0);
+    fireEvent.dragEnd(rowOf('Game C'), { dataTransfer: { ...dataTransfer(), dropEffect: 'none' } });
     expect(useActivityStore.getState().gameOrder).toEqual([]);
   });
 });

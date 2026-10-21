@@ -40,6 +40,10 @@ export function ActivityGameSection() {
   const [manualDrafts, setManualDrafts] = useState<Record<string, string>>({});
   const dragRef = useRef<string | null>(null);
   const overRef = useRef<string | null>(null);
+  const armedRef = useRef(false);
+  const listRef = useRef<HTMLUListElement | null>(null);
+  const stopTracking = useRef<(() => void) | null>(null);
+  const keysRef = useRef<string[]>([]);
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [overKey, setOverKey] = useState<string | null>(null);
 
@@ -93,10 +97,58 @@ export function ActivityGameSection() {
   );
 
   const move = (key: string, direction: -1 | 1) => setGameOrder(moveKey(rows.keys, key, direction));
-  const endDrag = () => { dragRef.current = null; overRef.current = null; setDragKey(null); setOverKey(null); };
+  keysRef.current = rows.keys;
+  const endDrag = () => {
+    stopTracking.current?.();
+    stopTracking.current = null;
+    armedRef.current = false;
+    dragRef.current = null;
+    overRef.current = null;
+    setDragKey(null);
+    setOverKey(null);
+  };
+  useEffect(() => () => stopTracking.current?.(), []);
+
+  // While a game is dragged, the whole window follows the pointer: the row nearest to its height is the
+  // target, so the game can be pulled just up or just down without aiming at a row
+  const trackDrag = () => {
+    const rowAtHeight = (y: number): string | null => {
+      let best: string | null = null;
+      let bestDistance = Infinity;
+      for (const li of Array.from(listRef.current?.children ?? [])) {
+        const key = (li as HTMLElement).dataset.gameKey;
+        if (!key) continue;
+        const rect = li.getBoundingClientRect();
+        const distance = Math.abs(y - (rect.top + rect.height / 2));
+        if (distance < bestDistance) { best = key; bestDistance = distance; }
+      }
+      return best;
+    };
+    const onOver = (event: DragEvent) => {
+      if (dragRef.current === null) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      const target = rowAtHeight(event.clientY);
+      if (target !== overRef.current) {
+        overRef.current = target;
+        setOverKey(target);
+      }
+    };
+    const onDrop = (event: DragEvent) => {
+      if (dragRef.current === null) return;
+      event.preventDefault();
+      dropOn(overRef.current);
+    };
+    window.addEventListener('dragover', onOver);
+    window.addEventListener('drop', onDrop);
+    stopTracking.current = () => {
+      window.removeEventListener('dragover', onOver);
+      window.removeEventListener('drop', onDrop);
+    };
+  };
   const dropOn = (target: string | null) => {
     const from = dragRef.current;
-    if (from !== null && target !== null) setGameOrder(moveKeyTo(rows.keys, from, target));
+    if (from !== null && target !== null) setGameOrder(moveKeyTo(keysRef.current, from, target));
     endDrag();
   };
 
@@ -106,18 +158,19 @@ export function ActivityGameSection() {
         <div>
           <div className="text-sm text-txt-primary">{t('privacy.activity.game.gamesLabel')}</div>
           <div className="text-xs text-txt-tertiary mt-0.5">{t('privacy.activity.game.gamesDescription')}</div>
-          <ul className="mt-2 space-y-1">
+          <ul ref={listRef} className="mt-2 space-y-1">
             {rows.keys.map((key, index) => {
               const name = rows.names.get(key) ?? key;
               const isHidden = hidden.includes(key);
               return (
                 <li
                   key={key}
+                  data-game-key={key}
                   draggable
                   onDragStart={(event) => {
-                    // The whole row is the drag source (Chromium starts no drag from a bare span),
-                    // but only a grab by the handle counts
-                    if (!(event.target instanceof Element) || !event.target.closest('[data-drag-handle]')) {
+                    // The whole row is the drag source (Chromium starts no drag from a bare span), and the
+                    // event's target is the row itself, so a grab counts only if it began on the handle
+                    if (!armedRef.current) {
                       event.preventDefault();
                       return;
                     }
@@ -131,6 +184,7 @@ export function ActivityGameSection() {
                       // A drag without an image or payload still reorders
                     }
                     setDragKey(key);
+                    trackDrag();
                   }}
                   // An accepted drop whose own event never arrived still lands where the pointer last was;
                   // a cancelled drag (Esc, dropped elsewhere) reports 'none' and changes nothing
@@ -140,21 +194,14 @@ export function ActivityGameSection() {
                       ? (rows.keys.indexOf(dragKey) < index ? 'shadow-[0_2px_0_0_var(--accent-primary,#8b5cf6)]' : 'shadow-[0_-2px_0_0_var(--accent-primary,#8b5cf6)]')
                       : ''
                   }`}
-                  onDragOver={(event) => {
-                    if (dragRef.current === null) return;
-                    event.preventDefault();
-                    event.dataTransfer.dropEffect = 'move';
-                    overRef.current = key;
-                    if (overKey !== key) setOverKey(key);
-                  }}
-                  onDrop={(event) => {
-                    if (dragRef.current === null) return;
-                    event.preventDefault();
-                    dropOn(key);
-                  }}
                 >
                   <span
                     data-drag-handle=""
+                    onMouseDown={() => {
+                      armedRef.current = true;
+                      // A press that never turns into a drag must not leave the rows grabbable by anything
+                      window.addEventListener('mouseup', () => { if (dragRef.current === null) armedRef.current = false; }, { once: true });
+                    }}
                     role="img"
                     aria-label={t('privacy.activity.game.dragHandle', { name })}
                     title={t('privacy.activity.game.dragHandle', { name })}
