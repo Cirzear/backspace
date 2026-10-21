@@ -367,9 +367,20 @@ describe('removing a manual game', () => {
     expect(state.gameOrder).toEqual(['other']);
   });
 
+  it('forgets a hidden game tied to a running program even while the desktop still reports it', () => {
+    const store = useActivityStore.getState();
+    store.addManualGame('synochat', 'synochat');
+    store.setGameHidden('synochat', true);
+    useActivityStore.setState({ detectedActivities: [{ type: 'playing', name: 'synochat' }] });
+    useActivityStore.getState().removeManualGame('synochat');
+    const state = useActivityStore.getState();
+    expect(state.hiddenGames).toEqual([]);
+    expect(state.detectedActivities).toEqual([]);
+  });
+
   it('keeps the choices of a game that is still detected', () => {
     const store = useActivityStore.getState();
-    store.addManualGame('Hades');
+    store.addManualGame('Hades'); // by name only
     store.setGameHidden('Hades', true);
     useActivityStore.setState({ detectedActivities: [{ type: 'playing', name: 'Hades' }] });
     useActivityStore.getState().removeManualGame('Hades');

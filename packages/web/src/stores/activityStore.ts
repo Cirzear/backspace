@@ -424,14 +424,21 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
   },
 
   removeManualGame: (name) => {
+    const removed = get().manualGames.find((game) => renameKey(game.name) === renameKey(name));
     const manualGames = removeManualGame(get().manualGames, name);
-    // A hidden game kept only by the list the player just removed it from goes away with it; one still
-    // detected stays a row of its own, with its hidden state and place
+    // A hidden game kept in the list only by the entry the player just removed goes away with it. A game
+    // tied to a program is reported by the desktop for that very entry, so its detection is not a reason
+    // to stay; a name-only entry that is also detected on its own is a real game and keeps its choices.
     const key = renameKey(name);
-    const stillDetected = get().detectedActivities.some((a) => a.type === 'playing' && renameKey(a.name) === key);
-    set(stillDetected
+    const detectedOnItsOwn = removed?.process == null
+      && get().detectedActivities.some((a) => a.type === 'playing' && renameKey(a.name) === key);
+    // The tied entry's own report goes at once too, rather than at the desktop's next scan
+    const detectedActivities = removed?.process == null
+      ? get().detectedActivities
+      : get().detectedActivities.filter((a) => !(a.type === 'playing' && renameKey(a.name) === key));
+    set(detectedOnItsOwn
       ? { manualGames }
-      : { manualGames, hiddenGames: get().hiddenGames.filter((k) => k !== key), gameOrder: get().gameOrder.filter((k) => k !== key) });
+      : { manualGames, detectedActivities, hiddenGames: get().hiddenGames.filter((k) => k !== key), gameOrder: get().gameOrder.filter((k) => k !== key) });
     persistChoices(get());
     syncManualBindings(boundGames(manualGames));
     get().republish();

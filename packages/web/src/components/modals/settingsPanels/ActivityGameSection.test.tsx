@@ -270,3 +270,17 @@ describe('removing a hidden manual game', () => {
     expect(screen.queryByLabelText(/Drag Hades/)).not.toBeInTheDocument();
   });
 });
+
+describe('removing a hidden manual game tied to a running program', () => {
+  it('drops the row at once, with no Show button left', () => {
+    installDesktop();
+    useActivityStore.getState().addManualGame('synochat', 'synochat');
+    useActivityStore.getState().setGameHidden('synochat', true);
+    useActivityStore.setState({ detectedActivities: [{ type: 'playing', name: 'synochat' }] });
+    render(<ActivityGameSection />);
+    expect(screen.getByRole('button', { name: 'Show synochat' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    expect(screen.queryByRole('button', { name: /^Show/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/synochat/)).not.toBeInTheDocument();
+  });
+});
