@@ -3,7 +3,15 @@ import type { Activity } from '@backspace/shared';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { replaceEmojiShortcodes } from '../../utils/emojiShortcodes';
+import { useFormatters } from '../../i18n/formatters';
 import { AppIcon } from './AppIcon';
+import {
+  ActivityArtwork,
+  PROFILE_ROW_ART,
+  activityTimeText,
+  isRenderableActivityImage,
+  useNowTick,
+} from './ActivityCard';
 
 interface ProfileActivitiesProps {
   activities: Activity[];
@@ -83,8 +91,19 @@ function MusicProgress({ start, end }: { start: number; end: number }) {
 
 function MusicCard({ activity }: { activity: Activity }) {
   const { t } = useTranslation(['social', 'common']);
+  const { formatDuration } = useFormatters();
   const player = formatPlayerName(activity.assets?.smallText, t);
-  const hasCover = !!activity.assets?.largeImage && activity.assets.largeImage.startsWith('https://');
+  const hasCover = isRenderableActivityImage(activity.assets?.largeImage);
+
+  const hasTimer = typeof activity.timestamps?.start === 'number' || typeof activity.timestamps?.end === 'number';
+  const now = useNowTick(hasTimer);
+  const hasEndCountdown =
+    typeof activity.timestamps?.end === 'number' && activity.timestamps.end > now;
+  const timeText = hasEndCountdown
+    ? t('common:time.left', { duration: formatDuration((activity.timestamps!.end! - now) / 1000) })
+    : typeof activity.timestamps?.start === 'number' && activity.timestamps.start <= now
+      ? formatElapsed(activity.timestamps.start, t)
+      : null;
 
   return (
     <div className="rounded-lg p-3 bg-accent-sky/[0.08] border border-accent-sky/20 mb-2.5">
@@ -133,9 +152,9 @@ function MusicCard({ activity }: { activity: Activity }) {
         <MusicProgress start={activity.timestamps.start} end={activity.timestamps.end} />
       )}
 
-      {activity.timestamps?.start && !activity.timestamps?.end && (
-        <div className="text-[10px] text-txt-tertiary mt-2">
-          {formatElapsed(activity.timestamps.start, t)}
+      {activity.timestamps?.start && !activity.timestamps?.end && timeText && (
+        <div className="text-[10px] text-txt-tertiary mt-2 tabular-nums">
+          {timeText}
         </div>
       )}
 
@@ -166,7 +185,22 @@ function ProcessCard({
   icon: string;
 }) {
   const { t } = useTranslation(['social', 'common']);
-  const hasCover = !!activity.assets?.largeImage && activity.assets.largeImage.startsWith('https://');
+  const { formatDuration } = useFormatters();
+
+  const hasRemoteArt =
+    isRenderableActivityImage(activity.assets?.largeImage) ||
+    isRenderableActivityImage(activity.assets?.smallImage);
+
+  const hasTimer =
+    typeof activity.timestamps?.start === 'number' || typeof activity.timestamps?.end === 'number';
+  const now = useNowTick(hasTimer);
+  const hasEndCountdown =
+    typeof activity.timestamps?.end === 'number' && activity.timestamps.end > now;
+  const timeText = hasEndCountdown
+    ? t('common:time.left', { duration: formatDuration((activity.timestamps!.end! - now) / 1000) })
+    : typeof activity.timestamps?.start === 'number' && activity.timestamps.start <= now
+      ? formatElapsed(activity.timestamps.start, t)
+      : null;
 
   return (
     <div className={`rounded-lg p-3 ${accentClass} mb-2.5`}>
@@ -175,14 +209,29 @@ function ProcessCard({
         <span>{headerText}</span>
       </div>
       <div className="flex gap-2.5 items-center">
-        {hasCover ? (
-          <img
-            src={activity.assets!.largeImage}
-            alt=""
-            className="w-10 h-10 rounded object-cover flex-shrink-0 shadow-sm"
+        {hasRemoteArt ? (
+          <ActivityArtwork
+            largeImage={
+              isRenderableActivityImage(activity.assets?.largeImage)
+                ? activity.assets.largeImage
+                : null
+            }
+            smallImage={
+              isRenderableActivityImage(activity.assets?.smallImage)
+                ? activity.assets.smallImage
+                : null
+            }
+            largeAlt={activity.assets?.largeText || activity.name}
+            smallAlt={activity.assets?.smallText}
+            size={PROFILE_ROW_ART}
+            placeholder={
+              <div className="w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0 shadow-sm">
+                <AppIcon name={activity.name} type={activity.type} size={20} fallbackEmoji={icon} />
+              </div>
+            }
           />
         ) : (
-          <div className="w-9 h-9 rounded bg-white/10 flex items-center justify-center flex-shrink-0 shadow-sm">
+          <div className="w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0 shadow-sm">
             <AppIcon name={activity.name} type={activity.type} size={20} fallbackEmoji={icon} />
           </div>
         )}
@@ -191,13 +240,18 @@ function ProcessCard({
             {activity.name}
           </div>
           {activity.details && (
-            <div className="text-[12px] text-txt-secondary truncate mt-0.5" title={activity.details}>
-              {activity.details}
+            <div className="text-[12px] opacity-90 truncate mt-0.5" title={activity.details}>
+              {replaceEmojiShortcodes(activity.details)}
             </div>
           )}
-          {activity.timestamps?.start && (
-            <div className="text-[10px] text-txt-tertiary mt-1">
-              {formatElapsed(activity.timestamps.start, t)}
+          {activity.state && (
+            <div className="text-[11px] opacity-75 truncate mt-0.5" title={activity.state}>
+              {replaceEmojiShortcodes(activity.state)}
+            </div>
+          )}
+          {timeText && (
+            <div className="text-[10px] opacity-75 mt-1 tabular-nums">
+              {timeText}
             </div>
           )}
         </div>

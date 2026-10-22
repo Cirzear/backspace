@@ -63,6 +63,7 @@ Desktop.ini
 # IDE
 .idea/
 .vscode/
+.claude/
 *.code-workspace
 
 # Logs

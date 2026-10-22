@@ -276,12 +276,18 @@ export const ERROR_CODES = [
   'sticker_not_local',
   'sticker_not_found',
   'sticker_collection_full',
+  'sticker_name_invalid',
 
   // Federated Sticker Store
   'sticker_pack_not_found',
   'sticker_pack_invalid_state',
   'sticker_peer_blocked',
   'sticker_pack_limit_exceeded',
+
+  // Game icons
+  'game_icon_invalid_image',
+  'game_icon_not_found',
+  'game_icon_collection_full',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

@@ -23,10 +23,17 @@ import {
   startActivityDetection,
   stopActivityDetection,
   getCurrentActivity,
+  getCurrentActivities,
   getAllCurrentActivities,
-  getActivitySettings,
-  setActivitySettings,
+  applyIpcActivity,
+  listKnownGameNames,
+  listRunningPrograms,
+  getUnknownWinePrograms,
+  setManualBinding,
+  setManualBindings,
 } from './activityDetector';
+import { resolveGameIcon } from './gameIcons';
+import { startRichPresenceIpcServer, stopRichPresenceIpcServer } from './richPresenceIpc';
 import {
   startMediaDetection,
   stopMediaDetection,
@@ -1008,6 +1015,14 @@ if (!gotTheLock) {
       broadcastActivities();
     });
 
+    // Rich presence IPC server: games (osu!lazer & co.) push richer
+    // activity that overlays process detection
+    startRichPresenceIpcServer({
+      onActivity: (push) => applyIpcActivity(push),
+    }).catch((err) => {
+      console.warn('[main] Rich presence IPC server failed to start:', err);
+    });
+
     ipcMain.handle('get-current-activity', () => {
       if (latestProcessActivities.length > 0) return latestProcessActivities[0];
       return latestMediaActivity || null;
@@ -1021,10 +1036,20 @@ if (!gotTheLock) {
       if (latestMediaActivity) activities.push(latestMediaActivity);
       return activities;
     });
-    ipcMain.handle('get-activity-settings', () => getActivitySettings());
-    ipcMain.handle('set-activity-settings', (_event, settings: { enablePreemption?: boolean }) =>
-      setActivitySettings(settings),
-    );
+    ipcMain.handle('list-known-games', () => listKnownGameNames());
+    ipcMain.handle('list-running-programs', () => listRunningPrograms());
+    ipcMain.handle('get-unknown-wine-programs', () => getUnknownWinePrograms());
+    ipcMain.handle('set-manual-game-binding', (_event, binding: unknown) => { setManualBinding(binding); });
+    ipcMain.handle('set-manual-game-bindings', (_event, bindings: unknown) => { setManualBindings(bindings); });
+
+    // The renderer uploads the icon to the user's instance itself (it holds
+    // the session); main only hands over the bytes it extracted locally.
+    ipcMain.handle('get-game-icon', async (_event, name: unknown) => {
+      if (typeof name !== 'string' || name.length === 0 || name.length > 256) return null;
+      const icon = await resolveGameIcon(name);
+      if (!icon) return null;
+      return { data: icon.bytes.toString('base64'), mime: icon.mime };
+    });
 
     // Linux/AppImage path-refresh ONLY. On Windows and macOS the OS is the source
     // of truth for openAtLogin (Task 4) and we must not override user changes made
@@ -1084,6 +1109,7 @@ if (!gotTheLock) {
     systemAudio.stop();
     isQuitting = true;
     stopActivityDetection();
+    stopRichPresenceIpcServer();
     stopMediaDetection();
     keybindManager.stop();
   });

@@ -72,7 +72,8 @@
     "sendMessage": "Send Message",
     "editRoles": "Edit Roles",
     "viewFull": "View Full Profile",
-    "addFriend": "Add Friend"
+    "addFriend": "Add Friend",
+    "playingNow": "Playing now"
   },
   "activity": {
     "title": "Active Now",

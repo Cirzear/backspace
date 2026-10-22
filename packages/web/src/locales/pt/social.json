@@ -74,7 +74,8 @@
     "sendMessage": "Enviar mensagem",
     "editRoles": "Editar cargos",
     "viewFull": "Ver perfil completo",
-    "addFriend": "Adicionar amigo"
+    "addFriend": "Adicionar amigo",
+    "playingNow": "Jogando agora"
   },
   "activity": {
     "title": "Ativos agora",

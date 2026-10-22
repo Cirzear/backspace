@@ -21,6 +21,8 @@
     "./src/errors.js": "./src/errors.ts",
     "./src/stickers": "./src/stickers.ts",
     "./src/stickers.js": "./src/stickers.ts",
+    "./src/gameIcons": "./src/gameIcons.ts",
+    "./src/gameIcons.js": "./src/gameIcons.ts",
     "./src/dmSystemEvents": "./src/dmSystemEvents.ts",
     "./src/dmSystemEvents.js": "./src/dmSystemEvents.ts",
     "./src/channelSystemEvents": "./src/channelSystemEvents.ts",
