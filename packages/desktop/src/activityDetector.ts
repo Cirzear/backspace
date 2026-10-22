@@ -2,6 +2,7 @@ import { execFile } from 'child_process';
 import https from 'https';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { app } from 'electron';
 import { findSteamGameForLaunch, findSteamGameForProcess, loadSteamIndex, type SteamGame } from './steamGames';
 import { findFlatpakGameForProcess, loadFlatpakIndex } from './flatpakGames';
@@ -9,15 +10,16 @@ import { findGogGameForProcess, loadGogIndex } from './gogGames';
 import { findLauncherGameForProcess, loadLauncherIndex } from './launcherGames';
 import { warmGameIcon, warmGameIconForIpc } from './gameIcons';
 import type { IpcActivityPush } from './richPresenceIpc';
+import { decodeWin32Output } from './mediaDetector/win32Media';
 
 // ─── Local Activity type (structural match with @backspace/shared Activity) ─
 
-interface ActivityTimestamps {
+export interface ActivityTimestamps {
   start?: number;
   end?: number;
 }
 
-interface Activity {
+export interface Activity {
   type: string;
   name: string;
   details?: string;
@@ -403,7 +405,111 @@ const sourceDetectors: SourceDetector[] = [steamSourceDetector, flatpakSourceDet
  * - any cmdline pattern appearing in the process command line.
  * A Wine process is also matched by the Windows programs it may run (`winExes`).
  */
+/**
+ * Detects whether OBS Studio (or Streamlabs Desktop) is actively streaming.
+ * Checks the latest session log file for streaming start/stop markers.
+ */
+export function isObsStreaming(): boolean {
+  try {
+    const candidateDirs: string[] = [];
+    if (process.platform === 'win32') {
+      if (process.env.APPDATA) {
+        candidateDirs.push(path.join(process.env.APPDATA, 'obs-studio', 'logs'));
+        candidateDirs.push(path.join(process.env.APPDATA, 'slobs-client', 'node-obs', 'logs'));
+      }
+      const home = os.homedir();
+      candidateDirs.push(path.join(home, 'AppData', 'Roaming', 'obs-studio', 'logs'));
+      candidateDirs.push(path.join(home, 'AppData', 'Roaming', 'slobs-client', 'node-obs', 'logs'));
+    } else if (process.platform === 'darwin') {
+      const appSupport = path.join(os.homedir(), 'Library', 'Application Support');
+      candidateDirs.push(path.join(appSupport, 'obs-studio', 'logs'));
+      candidateDirs.push(path.join(appSupport, 'slobs-client', 'node-obs', 'logs'));
+    } else {
+      if (process.env.XDG_CONFIG_HOME) {
+        candidateDirs.push(path.join(process.env.XDG_CONFIG_HOME, 'obs-studio', 'logs'));
+      }
+      const home = os.homedir();
+      candidateDirs.push(path.join(home, '.config', 'obs-studio', 'logs'));
+      candidateDirs.push(path.join(home, '.var', 'app', 'com.obsproject.Studio', 'config', 'obs-studio', 'logs'));
+    }
+
+    for (const dir of candidateDirs) {
+      if (!dir || !fs.existsSync(dir)) continue;
+
+      let files: string[];
+      try {
+        files = fs.readdirSync(dir).filter((f) => f.endsWith('.txt') || f.endsWith('.log'));
+      } catch {
+        continue;
+      }
+      if (files.length === 0) continue;
+
+      // Find the most recently modified log file
+      let latestFile = '';
+      let latestMtime = 0;
+      for (const file of files) {
+        try {
+          const fullPath = path.join(dir, file);
+          const stat = fs.statSync(fullPath);
+          if (stat.mtimeMs > latestMtime) {
+            latestMtime = stat.mtimeMs;
+            latestFile = fullPath;
+          }
+        } catch {
+          // ignore stat errors on individual files
+        }
+      }
+
+      if (!latestFile) continue;
+
+      // Ignore stale logs not modified in the last 24 hours
+      if (Date.now() - latestMtime > 24 * 60 * 60 * 1000) {
+        continue;
+      }
+
+      let content = '';
+      try {
+        const stat = fs.statSync(latestFile);
+        if (stat.size <= 1024 * 1024) {
+          content = fs.readFileSync(latestFile, 'utf-8');
+        } else {
+          const bufferSize = 1024 * 1024;
+          const buffer = Buffer.alloc(bufferSize);
+          const fd = fs.openSync(latestFile, 'r');
+          try {
+            fs.readSync(fd, buffer, 0, bufferSize, stat.size - bufferSize);
+            content = buffer.toString('utf-8');
+          } finally {
+            fs.closeSync(fd);
+          }
+        }
+      } catch {
+        continue;
+      }
+
+      const startIdx = Math.max(
+        content.lastIndexOf('==== Streaming Start ='),
+        content.lastIndexOf('Stream output started'),
+      );
+      const stopIdx = Math.max(
+        content.lastIndexOf('==== Streaming Stop ='),
+        content.lastIndexOf('Stream output stopped'),
+      );
+
+      if (startIdx !== -1 && startIdx > stopIdx) {
+        return true;
+      }
+    }
+  } catch (err) {
+    console.warn('[ActivityDetector] Error checking OBS streaming status:', err);
+  }
+  return false;
+}
+
 export function matchesProcessName(entry: GameEntry, procName: string, cmdline: string, winExes?: readonly string[]): boolean {
+  if ((entry.id === 'obs' || entry.id === 'streamlabs') && !isObsStreaming()) {
+    return false;
+  }
   // A Wine process answers to the Windows programs it may run as well as to its loader
   for (const candidate of winExes ? [procName, ...winExes] : [procName]) {
     const nameLower = candidate.toLowerCase();
@@ -1178,7 +1284,7 @@ function poll(): void {
 function pollViaCommand(): void {
   const { executable, args } = getProcessCommand();
 
-  execFile(executable, args, { maxBuffer: 1024 * 1024 }, (error, stdout) => {
+  execFile(executable, args, { maxBuffer: 1024 * 1024, encoding: 'buffer' }, (error, stdout) => {
     isPolling = false;
 
     if (error) {
@@ -1190,7 +1296,8 @@ function pollViaCommand(): void {
       return;
     }
 
-    const infos = infosFromNames(parseProcessList(stdout));
+    const rawString = typeof stdout === 'string' ? stdout : decodeWin32Output(stdout);
+    const infos = infosFromNames(parseProcessList(rawString));
     applyDetectedGames(detectActivitiesWithInfo(infos, gameEntries, undefined, undefined, manualBindings), infos);
   });
 }
@@ -1278,3 +1385,32 @@ export function listKnownGameNames(): string[] {
     .sort((a, b) => a.localeCompare(b))
     .slice(0, MAX_KNOWN_GAME_NAMES);
 }
+
+export function getAllCurrentActivities(): Activity[] {
+  return getCurrentActivities();
+}
+
+export interface TrackedApp {
+  entry: GameEntry;
+  firstSeenAt: number;
+  lastStartedAt: number;
+}
+
+export function resolveActiveActivity(
+  tracked: Map<string, TrackedApp>,
+  enablePreemption: boolean,
+  currentId: string | null,
+): TrackedApp | null {
+  if (tracked.size === 0) return null;
+  const list = Array.from(tracked.values());
+  if (enablePreemption) {
+    list.sort((a, b) => b.lastStartedAt - a.lastStartedAt);
+    return list[0] ?? null;
+  }
+  if (currentId && tracked.has(currentId)) {
+    return tracked.get(currentId)!;
+  }
+  list.sort((a, b) => a.firstSeenAt - b.firstSeenAt);
+  return list[0] ?? null;
+}
+

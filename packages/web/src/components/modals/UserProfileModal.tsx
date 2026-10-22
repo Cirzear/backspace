@@ -1,11 +1,10 @@
 import { getFriendshipStatus, type FriendshipStatus } from '../../utils/friendshipStatus';
-import { ProfileSpaceNickname } from '../ui/ProfileSpaceNickname';
 import React, { useEffect, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useFormatters } from '../../i18n/formatters';
 import { describeError } from '../../i18n/errors';
 import { useNavigate } from 'react-router-dom';
-import type { User } from '@backspace/shared';
+import type { User, Activity } from '@backspace/shared';
 import { Avatar } from '../ui/Avatar';
 import { Username } from '../ui/Username';
 import { ProfileBio } from '../ui/ProfileBio';
@@ -25,8 +24,11 @@ import { replaceEmojiShortcodes, useEmojiShortcodeNames } from '../../utils/emoj
 import { getProfileMember, useProfileMemberRoles } from '../../hooks/useProfileMember';
 import { useShownStatus } from '../../hooks/useShownStatus';
 import { ProfileRoles } from '../ui/ProfileRoles';
-import { ProfileGamesList } from '../ui/ActivityCard';
+import { ProfileSpaceNickname } from '../ui/ProfileSpaceNickname';
 import { useActivityStore, activitiesFor } from '../../stores/activityStore';
+import { ProfileActivities } from '../ui/ProfileActivities';
+
+const EMPTY_ACTIVITIES: Activity[] = [];
 
 type Tab = 'about' | 'friends' | 'spaces';
 
@@ -55,8 +57,6 @@ export function UserProfileModal() {
   const [loadingMutuals, setLoadingMutuals] = useState(false);
   const [friendActionLoading, setFriendActionLoading] = useState(false);
 
-  const userActivities = useActivityStore((s) => s.userActivities);
-
   const isOpen = activeModal === 'userProfile';
   const userId = modalData?.userId as string | undefined;
   const passedUser = modalData?.user as User | undefined;
@@ -66,10 +66,18 @@ export function UserProfileModal() {
   const memberUserId = memberContext?.userId;
   const roles = useProfileMemberRoles(memberContext);
 
-  // Determine friendship status (federation-safe canonical matching)
   const friendship: FriendshipStatus = user
     ? getFriendshipStatus({ viewedUser: user, origin: userOrigin, self, friends, requests })
     : { state: 'none' };
+
+  const isYou = friendship.state === 'self';
+  const activities = useActivityStore((s) =>
+    user
+      ? isYou && s.myActivities
+        ? s.myActivities
+        : activitiesFor(s.userActivities, user, userOrigin)
+      : EMPTY_ACTIVITIES,
+  );
 
   const loadUser = useCallback(async (id: string, origin: string) => {
     try {
@@ -146,8 +154,6 @@ export function UserProfileModal() {
   const shownStatus = useShownStatus(user, userOrigin, user?.status);
 
   if (!isOpen || !user) return null;
-
-  const playingNow = activitiesFor(userActivities, user, userOrigin).filter((activity) => activity.type === 'playing');
 
   const { baseName, domain } = parseFederatedUsername(user.username);
   const displayName = user.displayName ?? baseName;
@@ -318,6 +324,8 @@ export function UserProfileModal() {
         <div className="flex-1 overflow-y-auto scrollbar-thin p-5 min-h-[200px]">
           {activeTab === 'about' && (
             <div className="space-y-4">
+              <ProfileActivities activities={activities} skipCustom={!!user.customStatus} />
+
               {/* Bio */}
               {user.bio && (
                 <div>
@@ -325,17 +333,6 @@ export function UserProfileModal() {
                     {t('social:profile.aboutMe')}
                   </span>
                   <ProfileBio bio={user.bio} />
-                </div>
-              )}
-
-              {playingNow.length > 0 && (
-                <div>
-                  <span className="text-[11px] uppercase tracking-wide font-semibold text-txt-tertiary">
-                    {t('social:profile.playingNow')}
-                  </span>
-                  <div className="mt-1">
-                    <ProfileGamesList activities={playingNow} />
-                  </div>
                 </div>
               )}
 

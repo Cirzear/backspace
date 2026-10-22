@@ -15,9 +15,27 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { pathToFileURL } from 'url';
-import { startActivityDetection, stopActivityDetection, getCurrentActivity, getCurrentActivities, applyIpcActivity, listKnownGameNames, listRunningPrograms, getUnknownWinePrograms, setManualBinding, setManualBindings } from './activityDetector';
+import {
+  startActivityDetection,
+  stopActivityDetection,
+  getCurrentActivity,
+  getCurrentActivities,
+  getAllCurrentActivities,
+  applyIpcActivity,
+  listKnownGameNames,
+  listRunningPrograms,
+  getUnknownWinePrograms,
+  setManualBinding,
+  setManualBindings,
+} from './activityDetector';
 import { resolveGameIcon } from './gameIcons';
 import { startRichPresenceIpcServer, stopRichPresenceIpcServer } from './richPresenceIpc';
+import {
+  startMediaDetection,
+  stopMediaDetection,
+  getCurrentMediaActivity,
+} from './mediaDetector';
+import { loadActivitySettings, saveActivitySettings } from './activitySettings';
 import { KeybindManager } from './keybindManager';
 import { deriveStartMinimizedFromArgs, parseExecPathFromDesktopFile, shouldReapplyAppImage } from './autoLaunch';
 import {
@@ -1478,15 +1496,38 @@ if (!gotTheLock) {
 
     initAutoUpdater();
 
-    // ─── Activity Detection ────────────────────────────────────────────────
+    // ─── Activity & Media Detection ────────────────────────────────────────
+    let latestProcessActivities: any[] = getAllCurrentActivities();
+    let latestMediaActivity = getCurrentMediaActivity();
+
+    const broadcastActivities = () => {
+      const activities: any[] = [];
+      for (const proc of latestProcessActivities) {
+        if (latestMediaActivity && proc.type === 'listening') continue;
+        activities.push(proc);
+      }
+      if (latestMediaActivity) {
+        activities.push(latestMediaActivity);
+      }
+
+      mainWindow?.webContents.send('activities-detected', activities);
+      mainWindow?.webContents.send('activity-detected', activities[0] || null);
+    };
+
     startActivityDetection(
-      (activity) => {
-        mainWindow?.webContents.send('activity-detected', activity);
+      (_activity) => {
+        // legacy single activity callback maintained
       },
       (activities) => {
-        mainWindow?.webContents.send('activities-detected', activities);
+        latestProcessActivities = activities;
+        broadcastActivities();
       },
     );
+
+    startMediaDetection((media) => {
+      latestMediaActivity = media;
+      broadcastActivities();
+    });
 
     // Rich presence IPC server: games (osu!lazer & co.) push richer
     // activity that overlays process detection
@@ -1496,8 +1537,21 @@ if (!gotTheLock) {
       console.warn('[main] Rich presence IPC server failed to start:', err);
     });
 
-    ipcMain.handle('get-current-activity', () => getCurrentActivity());
-    ipcMain.handle('get-current-activities', () => getCurrentActivities());
+    ipcMain.handle('get-current-activity', () => {
+      if (latestProcessActivities.length > 0) return latestProcessActivities[0];
+      return latestMediaActivity || null;
+    });
+    ipcMain.handle('get-current-activities', () => {
+      const activities: any[] = [];
+      for (const proc of latestProcessActivities) {
+        if (latestMediaActivity && proc.type === 'listening') continue;
+        activities.push(proc);
+      }
+      if (latestMediaActivity) activities.push(latestMediaActivity);
+      return activities;
+    });
+    ipcMain.handle('get-activity-settings', () => loadActivitySettings());
+    ipcMain.handle('set-activity-settings', (_event, settings: any) => { saveActivitySettings(settings); });
     ipcMain.handle('list-known-games', () => listKnownGameNames());
     ipcMain.handle('list-running-programs', () => listRunningPrograms());
     ipcMain.handle('get-unknown-wine-programs', () => getUnknownWinePrograms());
@@ -1574,6 +1628,7 @@ if (!gotTheLock) {
     isQuitting = true;
     stopActivityDetection();
     stopRichPresenceIpcServer();
+    stopMediaDetection();
     keybindManager.stop();
   });
 }

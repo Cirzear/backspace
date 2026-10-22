@@ -150,6 +150,9 @@ contextBridge.exposeInMainWorld('backspace', {
   // user's instance so the activity can carry an instance-hosted icon URL.
   getGameIcon: (name: string): Promise<{ data: string; mime: string } | null> =>
     ipcRenderer.invoke('get-game-icon', name),
+  getActivitySettings: () => ipcRenderer.invoke('get-activity-settings'),
+  setActivitySettings: (settings: { enablePreemption?: boolean }) =>
+    ipcRenderer.invoke('set-activity-settings', settings),
 
   // Keybind support
   getKeybindPortalStatus: () => ipcRenderer.invoke('keybind-portal-status'),
