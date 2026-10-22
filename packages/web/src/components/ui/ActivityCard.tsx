@@ -1,6 +1,6 @@
 import type { Activity } from '@backspace/shared';
 import { getPrimaryActivity } from '@backspace/shared/src/activities.js';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import { replaceEmojiShortcodes, useEmojiShortcodeNames } from '../../utils/emojiShortcodes';
@@ -151,8 +151,8 @@ export function ActivityArtwork({ largeImage, smallImage, largeAlt, smallAlt, si
   if (large && small) {
     return (
       <div className={size.wrapper} data-testid="activity-artwork">
-        <img src={large} alt={largeAlt} className={size.large} onError={() => markFailed(large)} />
-        <img src={small} alt={smallAlt ?? ''} className={size.badge} onError={() => markFailed(small)} />
+        <img key={large} src={large} alt={largeAlt} className={`${size.large} transition-opacity duration-300 animate-fade-in`} onError={() => markFailed(large)} />
+        <img key={small} src={small} alt={smallAlt ?? ''} className={`${size.badge} transition-opacity duration-300 animate-fade-in`} onError={() => markFailed(small)} />
       </div>
     );
   }
@@ -161,7 +161,7 @@ export function ActivityArtwork({ largeImage, smallImage, largeAlt, smallAlt, si
   const alt = large ? largeAlt : (smallAlt ?? largeAlt);
   return (
     <div className={size.wrapper} data-testid="activity-artwork">
-      <img src={lone} alt={alt} className={size.single} onError={() => markFailed(lone)} />
+      <img key={lone} src={lone} alt={alt} className={`${size.single} transition-opacity duration-300 animate-fade-in`} onError={() => markFailed(lone)} />
     </div>
   );
 }
@@ -199,21 +199,12 @@ export function ActivityCard({ activities, fallbackCustomStatus }: ActivityCardP
   const hasTimer = typeof activeStart === 'number' || typeof activeEnd === 'number';
   const now = useNowTick(hasTimer);
 
-  // No process or music activity
-  if (!processActivity && !music) {
-    const rawStatus = custom?.name || fallbackCustomStatus;
-    if (rawStatus) {
-      const statusText = replaceEmojiShortcodes(rawStatus);
-      return <div className="text-[11px] leading-[1.3] text-txt-tertiary truncate" title={statusText}>{statusText}</div>;
-    }
-    return null;
-  }
+  let content: ReactNode = null;
 
-  // Dual activity: Gaming/Streaming + Music
   if (processActivity && music) {
     const musicLine = `${music.name}${music.details ? ` · ${music.details}` : ''}`;
-    return (
-      <>
+    content = (
+      <div className="flex flex-col min-w-0">
         <div className="text-[11px] leading-[1.3] text-txt-secondary truncate flex items-center gap-1.5" title={processActivity.name}>
           <AppIcon name={processActivity.name} type={processActivity.type} size={11} className="flex-shrink-0" />
           <span className="truncate">{processActivity.name}</span>
@@ -225,20 +216,17 @@ export function ActivityCard({ activities, fallbackCustomStatus }: ActivityCardP
           <AppIcon name={music.assets?.smallText || music.name} type="listening" size={10} fallbackEmoji="🎵" className="flex-shrink-0" />
           <span className="truncate">{musicLine}</span>
         </div>
-      </>
+      </div>
     );
-  }
-
-  // Music only
-  if (music) {
+  } else if (music) {
     const musicLine = `${music.name}${music.details ? ` · ${music.details}` : ''}`;
     const musicTime = music.timestamps?.end && music.timestamps.end > now
       ? t('time.left', { duration: formatDuration((music.timestamps.end - now) / 1000) })
       : music.timestamps?.start
         ? formatElapsed(music.timestamps.start, t)
         : null;
-    return (
-      <>
+    content = (
+      <div className="flex flex-col min-w-0">
         <div className="text-[11px] leading-[1.3] text-txt-secondary truncate flex items-center gap-1.5" title={musicLine}>
           <AppIcon name={music.assets?.smallText || music.name} type="listening" size={11} fallbackEmoji="🎵" className="flex-shrink-0" />
           <span className="truncate">{musicLine}</span>
@@ -252,35 +240,78 @@ export function ActivityCard({ activities, fallbackCustomStatus }: ActivityCardP
             {formatPlayerName(music.assets.smallText, t)}
           </div>
         ) : null}
-      </>
+      </div>
     );
-  }
+  } else if (processActivity) {
+    const timeText = processActivity.timestamps?.end && processActivity.timestamps.end > now
+      ? t('time.left', { duration: formatDuration((processActivity.timestamps.end - now) / 1000) })
+      : processActivity.timestamps?.start
+        ? formatElapsed(processActivity.timestamps.start, t)
+        : null;
+    const moreGames = otherGamesCount(activities, processActivity);
 
-  // Process only (Playing / Streaming / Watching)
-  const timeText = processActivity!.timestamps?.end && processActivity!.timestamps.end > now
-    ? t('time.left', { duration: formatDuration((processActivity!.timestamps.end - now) / 1000) })
-    : processActivity!.timestamps?.start
-      ? formatElapsed(processActivity!.timestamps.start, t)
-      : null;
-  const moreGames = otherGamesCount(activities, processActivity!);
-
-  return (
-    <>
-      <div className="text-[11px] leading-[1.3] text-txt-secondary truncate flex items-center gap-1.5" title={processActivity!.name}>
-        <AppIcon name={processActivity!.name} type={processActivity!.type} size={11} className="flex-shrink-0" />
-        <span className="truncate" title={processActivity!.name}>{processActivity!.name}</span>
-        {moreGames > 0 && (
-          <span className="shrink-0 text-[10px] font-normal text-txt-tertiary tabular-nums" title={otherGameNames(activities, processActivity!)}>
-            +{moreGames}
-          </span>
+    content = (
+      <div className="flex flex-col min-w-0">
+        <div className="text-[11px] leading-[1.3] text-txt-secondary truncate flex items-center gap-1.5" title={processActivity.name}>
+          <AppIcon name={processActivity.name} type={processActivity.type} size={11} className="flex-shrink-0" />
+          <span className="truncate" title={processActivity.name}>{processActivity.name}</span>
+          {moreGames > 0 && (
+            <span className="shrink-0 text-[10px] font-normal text-txt-tertiary tabular-nums" title={otherGameNames(activities, processActivity)}>
+              +{moreGames}
+            </span>
+          )}
+        </div>
+        {timeText && (
+          <div className="text-[10px] leading-[1.3] text-txt-tertiary tabular-nums">
+            {timeText}
+          </div>
         )}
       </div>
-      {timeText && (
-        <div className="text-[10px] leading-[1.3] text-txt-tertiary tabular-nums">
-          {timeText}
+    );
+  } else {
+    const rawStatus = custom?.name || fallbackCustomStatus;
+    if (rawStatus) {
+      const statusText = replaceEmojiShortcodes(rawStatus);
+      content = (
+        <div className="text-[11px] leading-[1.3] text-txt-tertiary truncate" title={statusText}>
+          {statusText}
         </div>
-      )}
-    </>
+      );
+    }
+  }
+
+  const lastContentRef = useRef<ReactNode>(null);
+  if (content !== null) {
+    lastContentRef.current = content;
+  }
+
+  const [isExiting, setIsExiting] = useState(false);
+
+  useEffect(() => {
+    if (content === null && lastContentRef.current !== null) {
+      setIsExiting(true);
+      const timer = setTimeout(() => {
+        setIsExiting(false);
+        lastContentRef.current = null;
+      }, 220);
+      return () => clearTimeout(timer);
+    }
+    if (content !== null) {
+      setIsExiting(false);
+    }
+  }, [content]);
+
+  const activeNode = content ?? (isExiting ? lastContentRef.current : null);
+  if (!activeNode) return null;
+
+  const isOpen = content !== null;
+
+  return (
+    <div className="activity-card-expand" data-open={isOpen ? 'true' : 'false'}>
+      <div className="activity-card-expand-inner">
+        {activeNode}
+      </div>
+    </div>
   );
 }
 
@@ -310,7 +341,7 @@ export function ActivityDetailCard({ activities }: { activities: Activity[] }) {
   const moreGames = otherGamesCount(activities, primary);
 
   return (
-    <div className="flex gap-3 items-start">
+    <div className="flex gap-3 items-start transition-all duration-200">
       <ActivityArtwork
         largeImage={largeImage}
         smallImage={smallImage}

@@ -106,7 +106,7 @@ function MusicCard({ activity }: { activity: Activity }) {
       : null;
 
   return (
-    <div className="rounded-lg p-3 bg-accent-sky/[0.08] border border-accent-sky/20 mb-2.5">
+    <div className="rounded-lg p-3 bg-accent-sky/[0.08] border border-accent-sky/20 mb-2.5 transition-all duration-200 hover:border-accent-sky/35">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-accent-sky">
           <span>🎵</span>
@@ -122,12 +122,13 @@ function MusicCard({ activity }: { activity: Activity }) {
       <div className="flex gap-3 items-center">
         {hasCover ? (
           <img
+            key={activity.assets!.largeImage}
             src={activity.assets!.largeImage}
             alt=""
-            className="w-12 h-12 rounded object-cover flex-shrink-0 shadow-sm"
+            className="w-12 h-12 rounded object-cover flex-shrink-0 shadow-sm transition-opacity duration-300 animate-fade-in"
           />
         ) : (
-          <div className="w-12 h-12 rounded bg-accent-sky/20 flex items-center justify-center text-accent-sky flex-shrink-0 shadow-sm">
+          <div className="w-12 h-12 rounded bg-accent-sky/20 flex items-center justify-center text-accent-sky flex-shrink-0 shadow-sm transition-colors duration-300">
             <AppIcon name={activity.assets?.smallText || activity.name} type="listening" size={24} fallbackEmoji="🎵" />
           </div>
         )}
@@ -203,7 +204,7 @@ function ProcessCard({
       : null;
 
   return (
-    <div className={`rounded-lg p-3 ${accentClass} mb-2.5`}>
+    <div className={`rounded-lg p-3 ${accentClass} mb-2.5 transition-all duration-200 hover:brightness-105`}>
       <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider mb-2">
         <span>{icon}</span>
         <span>{headerText}</span>
@@ -278,7 +279,7 @@ export function ProfileActivities({ activities, skipCustom }: ProfileActivitiesP
     .sort((a, b) => (ACTIVITY_PRIORITY[b.type] ?? 0) - (ACTIVITY_PRIORITY[a.type] ?? 0));
 
   return (
-    <div className="mt-3">
+    <div className="mt-3 transition-opacity duration-200">
       {custom && (
         <div className="text-[13px] text-txt-secondary italic mb-2">
           {replaceEmojiShortcodes(custom.name)}
