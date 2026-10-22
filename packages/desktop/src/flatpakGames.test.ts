@@ -55,7 +55,7 @@ interface FlatpakSpec {
 }
 
 function makeFlatpakInstall(specs: FlatpakSpec[]): string {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'flatpak-home-'));
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'flatpak-home-')));
   const install = path.join(home, '.local', 'share', 'flatpak');
   for (const spec of specs) {
     const filesDir = path.join(install, 'app', spec.appId, 'x86_64', 'stable', 'active', 'files', 'bin');

@@ -70,7 +70,7 @@ interface ManifestSpec {
  * Extra manifests can be written by the caller into primaryApps(home).
  */
 function makeSteamTree(libs: Array<{ dir: string; manifests: ManifestSpec[] }>): string {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'steam-home-'));
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'steam-home-')));
   const steamRoot = path.join(home, '.local', 'share', 'Steam');
   fs.mkdirSync(path.join(steamRoot, 'steamapps'), { recursive: true });
 
@@ -176,7 +176,7 @@ describe('loadSteamIndex', () => {
   beforeEach(() => resetSteamIndexCache());
 
   it('indexes every installed game across all libraries', () => {
-    const extHome = fs.mkdtempSync(path.join(os.tmpdir(), 'steam-ext-'));
+    const extHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'steam-ext-')));
     const extLib = path.join(extHome, 'SteamLibrary');
     const steamHome = makeSteamTree([
       { dir: extLib, manifests: [{ appId: '570', name: 'Dota 2', installdir: 'dota 2 beta' }] },
@@ -195,7 +195,7 @@ describe('loadSteamIndex', () => {
   });
 
   it('skips manifests that are not fully installed', () => {
-    const extHome = fs.mkdtempSync(path.join(os.tmpdir(), 'steam-ext2-'));
+    const extHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'steam-ext2-')));
     const extLib = path.join(extHome, 'SteamLibrary');
     const steamHome = makeSteamTree([
       { dir: extLib, manifests: [
@@ -208,7 +208,7 @@ describe('loadSteamIndex', () => {
   });
 
   it('caches the index within the TTL and refreshes after a reset', () => {
-    const extHome = fs.mkdtempSync(path.join(os.tmpdir(), 'steam-ext3-'));
+    const extHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'steam-ext3-')));
     const extLib = path.join(extHome, 'SteamLibrary');
     const steamHome = makeSteamTree([
       { dir: extLib, manifests: [{ appId: '30', name: 'Half-Life', installdir: 'Half-Life' }] },

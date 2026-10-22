@@ -648,6 +648,36 @@
   transition: transform 200ms ease-out;
 }
 
+/* ── Activity Height & Content Smooth Transitions (Zero Visual Pollution) ── */
+@keyframes activityExpandIn {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+  to {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+}
+
+.activity-card-expand {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  animation: activityExpandIn 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.activity-card-expand-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-card-expand {
+    animation: none;
+  }
+}
+
 /* ── Electron window drag regions ── */
 .titlebar-drag { -webkit-app-region: drag; }
 .titlebar-no-drag { -webkit-app-region: no-drag; }

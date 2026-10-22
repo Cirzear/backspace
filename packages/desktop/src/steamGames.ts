@@ -237,7 +237,16 @@ export function loadSteamIndex(roots: string[] = getSteamRoots(), force = false)
 function isUnder(exe: string, dir: string): boolean {
   const e = exe.toLowerCase();
   const d = dir.toLowerCase();
-  return d.length > 0 && (e === d || e.startsWith(d.endsWith(path.sep) ? d : d + path.sep));
+  if (d.length > 0 && (e === d || e.startsWith(d.endsWith(path.sep) ? d : d + path.sep))) {
+    return true;
+  }
+  try {
+    const realExe = fs.realpathSync(exe).toLowerCase();
+    const realDir = fs.realpathSync(dir).toLowerCase();
+    return realDir.length > 0 && (realExe === realDir || realExe.startsWith(realDir.endsWith(path.sep) ? realDir : realDir + path.sep));
+  } catch {
+    return false;
+  }
 }
 
 /**

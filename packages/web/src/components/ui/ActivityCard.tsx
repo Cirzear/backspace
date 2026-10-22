@@ -118,14 +118,23 @@ function ActivityArtwork({ largeImage, smallImage, largeAlt, smallAlt, size, pla
   return (
     <div className={size.wrapper}>
       {large && (
-        <img src={large} alt={largeAlt} title={largeAlt} className={size.large} onError={() => markFailed(large)} loading="lazy" />
+        <img
+          key={large}
+          src={large}
+          alt={largeAlt}
+          title={largeAlt}
+          className={`${size.large} transition-opacity duration-300 animate-fade-in`}
+          onError={() => markFailed(large)}
+          loading="lazy"
+        />
       )}
       {small && (
         <img
+          key={small}
           src={small}
           alt={smallAlt ?? ''}
           title={smallAlt}
-          className={large ? size.badge : size.single}
+          className={`${large ? size.badge : size.single} transition-opacity duration-300 animate-fade-in`}
           onError={() => markFailed(small)}
           loading="lazy"
         />
@@ -178,47 +187,63 @@ export function ActivityCard({ activities, fallbackCustomStatus }: ActivityCardP
     (typeof primary.timestamps?.start === 'number' || typeof primary.timestamps?.end === 'number');
   const now = useNowTick(hasTimer);
 
+  let content: ReactNode = null;
+
   if (!primary) {
     if (fallbackCustomStatus) {
-      return <div className="text-[11px] leading-[1.3] text-txt-tertiary truncate">{replaceEmojiShortcodes(fallbackCustomStatus)}</div>;
+      content = (
+        <div className="text-[11px] leading-[1.3] text-txt-tertiary truncate">
+          {replaceEmojiShortcodes(fallbackCustomStatus)}
+        </div>
+      );
     }
-    return null;
-  }
+  } else if (primary.type === 'custom') {
+    content = (
+      <div className="text-[11px] leading-[1.3] text-txt-tertiary truncate">
+        {replaceEmojiShortcodes(primary.name)}
+      </div>
+    );
+  } else {
+    const timeText = activityTimeText(primary.timestamps ?? {}, now, t, formatDuration);
+    const moreGames = otherGamesCount(activities, primary);
 
-  // Custom status — plain text, no card treatment
-  if (primary.type === 'custom') {
-    return <div className="text-[11px] leading-[1.3] text-txt-tertiary truncate">{replaceEmojiShortcodes(primary.name)}</div>;
-  }
-
-  const timeText = activityTimeText(primary.timestamps ?? {}, now, t, formatDuration);
-  const moreGames = otherGamesCount(activities, primary);
-
-  // Rich activity — text only: name (+N more games), details/state and time
-  // (card wrapper is on the parent row). Art belongs to the profile view.
-  return (
-    <div className="flex items-center gap-1.5 min-w-0">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline gap-1 min-w-0 text-[11px] leading-[1.3] text-txt-secondary">
-          <span className="truncate">{primary.name}</span>
-          {moreGames > 0 && (
-            <span className="shrink-0 text-txt-tertiary tabular-nums" title={otherGameNames(activities, primary)}>+{moreGames}</span>
+    // Rich activity — text only: name (+N more games), details/state and time
+    // (card wrapper is on the parent row). Art belongs to the profile view.
+    content = (
+      <div className="flex items-center gap-1.5 min-w-0">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-1 min-w-0 text-[11px] leading-[1.3] text-txt-secondary">
+            <span className="truncate">{primary.name}</span>
+            {moreGames > 0 && (
+              <span className="shrink-0 text-txt-tertiary tabular-nums" title={otherGameNames(activities, primary)}>+{moreGames}</span>
+            )}
+          </div>
+          {primary.details && (
+            <div className="text-[10px] leading-[1.3] text-txt-tertiary truncate">
+              {replaceEmojiShortcodes(primary.details)}
+            </div>
+          )}
+          {primary.state && (
+            <div className="text-[10px] leading-[1.3] text-txt-tertiary truncate">
+              {replaceEmojiShortcodes(primary.state)}
+            </div>
+          )}
+          {timeText && (
+            <div className="text-[10px] leading-[1.3] text-txt-tertiary tabular-nums">
+              {timeText}
+            </div>
           )}
         </div>
-        {primary.details && (
-          <div className="text-[10px] leading-[1.3] text-txt-tertiary truncate">
-            {replaceEmojiShortcodes(primary.details)}
-          </div>
-        )}
-        {primary.state && (
-          <div className="text-[10px] leading-[1.3] text-txt-tertiary truncate">
-            {replaceEmojiShortcodes(primary.state)}
-          </div>
-        )}
-        {timeText && (
-          <div className="text-[10px] leading-[1.3] text-txt-tertiary tabular-nums">
-            {timeText}
-          </div>
-        )}
+      </div>
+    );
+  }
+
+  if (!content) return null;
+
+  return (
+    <div className="activity-card-expand" data-open="true">
+      <div className="activity-card-expand-inner">
+        {content}
       </div>
     </div>
   );
@@ -256,7 +281,7 @@ export function ActivityDetailCard({ activities }: { activities: Activity[] }) {
   const moreGames = otherGamesCount(activities, primary);
 
   return (
-    <div className="flex gap-3 items-start">
+    <div className="flex gap-3 items-start transition-all duration-200">
       <ActivityArtwork
         largeImage={largeImage}
         smallImage={smallImage}

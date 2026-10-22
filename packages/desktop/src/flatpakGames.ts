@@ -189,6 +189,13 @@ export function findFlatpakGameForProcess(exe: string | null, games: FlatpakGame
   for (const game of games) {
     const dir = game.filesDir.toLowerCase();
     if (lower === dir || lower.startsWith(dir.endsWith(path.sep) ? dir : dir + path.sep)) return game;
+    try {
+      const realExe = fs.realpathSync(exe).toLowerCase();
+      const realDir = fs.realpathSync(game.filesDir).toLowerCase();
+      if (realExe === realDir || realExe.startsWith(realDir.endsWith(path.sep) ? realDir : realDir + path.sep)) return game;
+    } catch {
+      // ignore
+    }
   }
   return null;
 }
