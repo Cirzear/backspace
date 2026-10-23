@@ -231,7 +231,7 @@ export function handleClientEvent(
       handleVoiceDisconnect(event, userId);
       break;
     case 'activity_update':
-      handleActivityUpdate(event, userId);
+      handleActivityUpdate(event, userId, ws);
       break;
     default:
       connectionManager.sendToUser(userId, {
@@ -478,7 +478,7 @@ function handlePresenceUpdate(event: Record<string, unknown>, userId: string): v
   applyChosenStatus(userId, event.status);
 }
 
-function handleActivityUpdate(event: Record<string, unknown>, userId: string): void {
+function handleActivityUpdate(event: Record<string, unknown>, userId: string, ws: WebSocket): void {
   if (!connectionManager.getUserShowActivity(userId)) return;
   if (!connectionManager.checkActivityRateLimit(userId)) {
     connectionManager.sendToUser(userId, { type: 'error', message: 'Activity update rate limited' });
@@ -491,7 +491,7 @@ function handleActivityUpdate(event: Record<string, unknown>, userId: string): v
     return;
   }
 
-  connectionManager.setUserActivities(userId, activities);
+  connectionManager.setUserActivities(userId, activities, ws);
   const status = connectionManager.getUserStatus(userId);
 
   const payload = presenceUpdateFor(userId, status, activities);

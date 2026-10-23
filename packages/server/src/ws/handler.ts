@@ -174,6 +174,8 @@ class ConnectionManager implements ReplicaSessionHost {
   private userStatuses: Map<string, string> = new Map();
   // userId → timestamp of last activity_update (rate limiting)
   private lastActivityUpdate: Map<string, number> = new Map();
+  // userId → the WebSocket that published the current userActivities
+  private activityWs: Map<string, WebSocket> = new Map();
 
   addConnection(userId: string, ws: WebSocket): void {
     if (!this.connections.has(userId)) {
@@ -200,6 +202,23 @@ class ConnectionManager implements ReplicaSessionHost {
       if (this.voiceWs.get(userId) === ws) {
         this.voiceWs.delete(userId);
         this.scheduleVoiceDisconnect(userId);
+      }
+
+      // If the socket that was publishing activities for this user disconnects (e.g. Desktop app exited),
+      // clear the activities immediately and broadcast to the user's remaining connections (e.g. Web) and friends.
+      if (this.activityWs.get(userId) === ws) {
+        this.activityWs.delete(userId);
+        this.userActivities.delete(userId);
+
+        const status = this.getUserStatus(userId);
+        const payload = presenceUpdateFor(userId, status, []);
+        const targets = collectProfileBroadcastTargetIds(userId);
+        for (const uid of targets) this.sendToUser(uid, payload);
+        this.sendToUser(userId, payload);
+
+        void import('../utils/federationPresence.js').then(({ queuePresenceRelay }) => {
+          try { queuePresenceRelay(userId, status as 'online' | 'idle' | 'dnd' | 'offline', []); } catch (e) { console.warn('[ws] queuePresenceRelay(clear) failed', e); }
+        });
       }
 
       if (userConnections.size === 0) {
@@ -393,11 +412,15 @@ class ConnectionManager implements ReplicaSessionHost {
 
   // ─── Activity accessors ─────────────────────────────────────────────────
 
-  setUserActivities(userId: string, activities: Activity[]): void {
+  setUserActivities(userId: string, activities: Activity[], ws?: WebSocket): void {
     if (activities.length === 0) {
       this.userActivities.delete(userId);
+      this.activityWs.delete(userId);
     } else {
       this.userActivities.set(userId, activities);
+      if (ws) {
+        this.activityWs.set(userId, ws);
+      }
     }
   }
 
@@ -407,6 +430,7 @@ class ConnectionManager implements ReplicaSessionHost {
 
   clearUserActivities(userId: string): void {
     this.userActivities.delete(userId);
+    this.activityWs.delete(userId);
   }
 
   setUserShowActivity(userId: string, show: boolean): void {
