@@ -3,6 +3,7 @@ import { DesktopUpdater } from './desktopUpdater';
 import { registerTranslationIpc } from './translation/ipc';
 import { loadTrayIcon } from './trayIcon';
 import { loadAutoLaunchSettings, saveAutoLaunchSettings, applyLoginItemSettings } from './autoLaunchSettings';
+import { loadActivitySettings, saveActivitySettings } from './activitySettings';
 import { loadWindowState, validateWindowBounds, saveWindowState } from './windowState';
 import {
   app,
@@ -743,6 +744,10 @@ if (process.platform === 'win32') {
  */
 export function requestQuit(): void {
   isQuitting = true;
+  stopMediaDetection();
+  stopActivityDetection();
+  mainWindow?.webContents.send('activities-detected', []);
+  mainWindow?.webContents.send('activity-detected', null);
   app.quit();
 }
 
@@ -986,16 +991,22 @@ if (!gotTheLock) {
     let latestProcessActivities: any[] = getAllCurrentActivities();
     let latestMediaActivity = getCurrentMediaActivity();
 
-    const broadcastActivities = () => {
+    const buildEffectiveActivities = (): any[] => {
       const activities: any[] = [];
       for (const proc of latestProcessActivities) {
-        if (latestMediaActivity && proc.type === 'listening') continue;
+        // Media players running in the background are not activities unless actively playing via mediaDetector.
+        // Prevent background processes (e.g. cloudmusic.exe in tray) from injecting fake listening activities.
+        if (proc.type === 'listening') continue;
         activities.push(proc);
       }
       if (latestMediaActivity) {
         activities.push(latestMediaActivity);
       }
+      return activities;
+    };
 
+    const broadcastActivities = () => {
+      const activities = buildEffectiveActivities();
       mainWindow?.webContents.send('activities-detected', activities);
       mainWindow?.webContents.send('activity-detected', activities[0] || null);
     };
@@ -1024,18 +1035,12 @@ if (!gotTheLock) {
     });
 
     ipcMain.handle('get-current-activity', () => {
-      if (latestProcessActivities.length > 0) return latestProcessActivities[0];
-      return latestMediaActivity || null;
+      const activities = buildEffectiveActivities();
+      return activities[0] || null;
     });
-    ipcMain.handle('get-current-activities', () => {
-      const activities: any[] = [];
-      for (const proc of latestProcessActivities) {
-        if (latestMediaActivity && proc.type === 'listening') continue;
-        activities.push(proc);
-      }
-      if (latestMediaActivity) activities.push(latestMediaActivity);
-      return activities;
-    });
+    ipcMain.handle('get-current-activities', () => buildEffectiveActivities());
+    ipcMain.handle('get-activity-settings', () => loadActivitySettings());
+    ipcMain.handle('set-activity-settings', (_event, settings: any) => { saveActivitySettings(settings); });
     ipcMain.handle('list-known-games', () => listKnownGameNames());
     ipcMain.handle('list-running-programs', () => listRunningPrograms());
     ipcMain.handle('get-unknown-wine-programs', () => getUnknownWinePrograms());
@@ -1112,5 +1117,7 @@ if (!gotTheLock) {
     stopRichPresenceIpcServer();
     stopMediaDetection();
     keybindManager.stop();
+    mainWindow?.webContents.send('activities-detected', []);
+    mainWindow?.webContents.send('activity-detected', null);
   });
 }

@@ -101,4 +101,29 @@ describe("ready payload: friends' activities (#340)", () => {
     const ready = await readyFor('viewer');
     expect(ready.userActivities?.['quiet-friend']).toEqual([{ type: 'custom', name: 'brb' }]);
   });
+
+  it('clears activities when the publishing socket disconnects, even if user has other connections', async () => {
+    const { connectionManager } = await import('./handler.js');
+    const wsDesktop = { send: vi.fn(), readyState: 1 } as any;
+    const wsWeb = { send: vi.fn(), readyState: 1 } as any;
+
+    connectionManager.addConnection('local-friend', wsDesktop);
+    connectionManager.addConnection('local-friend', wsWeb);
+
+    connectionManager.setUserActivities('local-friend', playing, wsDesktop);
+    expect(connectionManager.getUserActivities('local-friend')).toEqual(playing);
+
+    // Desktop app disconnects while Web client is still connected
+    connectionManager.removeConnection(wsDesktop);
+
+    // Activities must be immediately cleared!
+    expect(connectionManager.getUserActivities('local-friend')).toEqual([]);
+    // And wsWeb must receive presence_update with activities: []
+    expect(wsWeb.send).toHaveBeenCalled();
+    const sent = JSON.parse(wsWeb.send.mock.calls[0][0]);
+    expect(sent.type).toBe('presence_update');
+    expect(sent.activities).toEqual([]);
+
+    connectionManager.removeConnection(wsWeb);
+  });
 });

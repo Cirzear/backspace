@@ -32,6 +32,7 @@ class ConnectionManager {
   private federatedCalls = new FederatedCallRegistry();
   private voiceModeration = new SpaceVoiceModeration();
   private voiceWs: Map<string, WebSocket> = new Map();
+  private activityWs: Map<string, WebSocket> = new Map();
   private userRateLimiters: Map<string, WsRateLimiter> = new Map();
 
   // ─── Rich Presence & Activity ───────────────────────────────────────────
@@ -72,6 +73,23 @@ class ConnectionManager {
         this.scheduleVoiceDisconnect(userId);
       } else if (wasNativeVoice && !this.voiceWs.has(userId)) {
         this.scheduleVoiceDisconnect(userId);
+      }
+
+      // If the socket that was publishing activities for this user disconnects (e.g. Desktop app exited),
+      // clear the activities immediately and broadcast to the user's remaining connections (e.g. Web) and friends.
+      if (this.activityWs.get(userId) === ws) {
+        this.activityWs.delete(userId);
+        this.activityTracker.clearUserActivities(userId);
+
+        const status = this.getUserStatus(userId);
+        const payload = presenceUpdateFor(userId, status, []);
+        const targets = collectProfileBroadcastTargetIds(userId);
+        for (const uid of targets) this.sendToUser(uid, payload);
+        this.sendToUser(userId, payload);
+
+        void import('../utils/federationPresence.js').then(({ queuePresenceRelay }) => {
+          try { queuePresenceRelay(userId, status as 'online' | 'idle' | 'dnd' | 'offline', []); } catch (e) { console.warn('[ws] queuePresenceRelay(clear) failed', e); }
+        });
       }
 
       if (userConnections.size === 0) {
@@ -243,6 +261,7 @@ class ConnectionManager {
 
     // Clear activity state
     this.activityTracker.clearUser(userId);
+    this.activityWs.delete(userId);
 
     const offlinePayload = presenceUpdateFor(userId, 'offline', []);
     const offlineTargets = collectProfileBroadcastTargetIds(userId);
@@ -282,8 +301,13 @@ class ConnectionManager {
 
   // ─── Activity accessors ─────────────────────────────────────────────────
 
-  setUserActivities(userId: string, activities: Activity[]): void {
+  setUserActivities(userId: string, activities: Activity[], ws?: WebSocket): void {
     this.activityTracker.setUserActivities(userId, activities);
+    if (activities.length === 0) {
+      this.activityWs.delete(userId);
+    } else if (ws) {
+      this.activityWs.set(userId, ws);
+    }
   }
 
   getUserActivities(userId: string): Activity[] {
@@ -292,6 +316,7 @@ class ConnectionManager {
 
   clearUserActivities(userId: string): void {
     this.activityTracker.clearUserActivities(userId);
+    this.activityWs.delete(userId);
   }
 
   setUserShowActivity(userId: string, show: boolean): void {
@@ -947,6 +972,7 @@ class ConnectionManager {
 
     // Clear activity state
     this.activityTracker.clearUser(userId);
+    this.activityWs.delete(userId);
 
     // Close all WebSocket connections
     const connections = this.connections.get(userId);
