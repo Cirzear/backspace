@@ -30,7 +30,7 @@ import { collectProfileBroadcastTargetIds } from '../utils/userDeletion.js';
 import { statusOnConnect, type StatusSourceRow } from '../utils/presenceStatus.js';
 import { ownsChosenStatus, type ChosenUserStatus } from '@backspace/shared';
 import { attachReplicaSessionHost, showReplicaStatusOnConnect, showReplicaStatusOnDisconnect, type ReplicaSessionHost } from './replicaPresence.js';
-import { presenceIdentityOf, presenceUpdateFor, snapshotActivities } from './presenceEvent.js';
+import { presenceIdentityOf, presenceUpdateFor, projectActivityPlayback, snapshotActivities } from './presenceEvent.js';
 import { touchUserActivity, parseClientKind } from '../telemetry/activity.js';
 import { isGroupConversation } from '../utils/dmConversation.js';
 import { normalizeOriginForCompare } from '../utils/federationAuth.js';
@@ -168,6 +168,7 @@ class ConnectionManager implements ReplicaSessionHost {
   // ─── Rich Presence ──────────────────────────────────────────────────────
   // userId → Activity[] (ephemeral, same lifecycle as voiceUserStates)
   private userActivities: Map<string, Activity[]> = new Map();
+  private activityObservedAt: Map<string, number> = new Map();
   // userId → boolean (cached from DB at auth time, updated via REST)
   private userShowActivity: Map<string, boolean> = new Map();
   // userId → status string (cached at auth, updated on presence_update)
@@ -384,6 +385,9 @@ class ConnectionManager implements ReplicaSessionHost {
 
   /** The per-session state a user's last disconnect drops. */
   private forgetSessionState(userId: string): void {
+    this.userActivities.delete(userId);
+    this.activityObservedAt.delete(userId);
+    this.activityWs.delete(userId);
     this.userShowActivity.delete(userId);
     this.userStatuses.delete(userId);
     this.lastActivityUpdate.delete(userId);
@@ -415,9 +419,11 @@ class ConnectionManager implements ReplicaSessionHost {
   setUserActivities(userId: string, activities: Activity[], ws?: WebSocket): void {
     if (activities.length === 0) {
       this.userActivities.delete(userId);
+      this.activityObservedAt.delete(userId);
       this.activityWs.delete(userId);
     } else {
       this.userActivities.set(userId, activities);
+      this.activityObservedAt.set(userId, Date.now());
       if (ws) {
         this.activityWs.set(userId, ws);
       }
@@ -425,11 +431,15 @@ class ConnectionManager implements ReplicaSessionHost {
   }
 
   getUserActivities(userId: string): Activity[] {
-    return this.userActivities.get(userId) ?? [];
+    const activities = this.userActivities.get(userId) ?? [];
+    const observedAt = this.activityObservedAt.get(userId);
+    if (observedAt === undefined) return activities;
+    return projectActivityPlayback(activities, Math.max(0, Date.now() - observedAt));
   }
 
   clearUserActivities(userId: string): void {
     this.userActivities.delete(userId);
+    this.activityObservedAt.delete(userId);
     this.activityWs.delete(userId);
   }
 
@@ -449,10 +459,15 @@ class ConnectionManager implements ReplicaSessionHost {
     return this.userStatuses.get(userId) ?? 'offline';
   }
 
-  checkActivityRateLimit(userId: string): boolean {
+  /**
+   * Removing an already-published activity is accepted even inside the normal
+   * update window. Without this exception a pause immediately after a track
+   * change is dropped and the old "listening" state remains on other clients.
+   */
+  checkActivityRateLimit(userId: string, removingPublishedActivities = false): boolean {
     const now = Date.now();
     const last = this.lastActivityUpdate.get(userId) ?? 0;
-    if (now - last < 3000) return false;
+    if (!removingPublishedActivities && now - last < 3000) return false;
     this.lastActivityUpdate.set(userId, now);
     return true;
   }

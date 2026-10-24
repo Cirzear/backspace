@@ -153,6 +153,12 @@ contextBridge.exposeInMainWorld('backspace', {
   getActivitySettings: () => ipcRenderer.invoke('get-activity-settings'),
   setActivitySettings: (settings: { enablePreemption?: boolean }) =>
     ipcRenderer.invoke('set-activity-settings', settings),
+  getMediaSetupHint: () => ipcRenderer.invoke('get-media-setup-hint'),
+  onMediaSetupHint: (callback: (hint: unknown) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, hint: unknown) => callback(hint);
+    ipcRenderer.on('media-setup-hint', handler);
+    return () => { ipcRenderer.removeListener('media-setup-hint', handler); };
+  },
 
   // Keybind support
   getKeybindPortalStatus: () => ipcRenderer.invoke('keybind-portal-status'),

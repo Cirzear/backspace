@@ -79,8 +79,8 @@ export function activityTimeText(
   if (typeof end === 'number' && end > now) {
     return t('time.left', { duration: formatDuration((end - now) / 1000) });
   }
-  if (typeof start === 'number' && start <= now) {
-    return t('time.elapsed', { duration: formatDuration((now - start) / 1000) });
+  if (typeof start === 'number') {
+    return t('time.elapsed', { duration: formatDuration(Math.max(0, now - start) / 1000) });
   }
   return null;
 }
@@ -148,30 +148,20 @@ export function ActivityArtwork({ largeImage, smallImage, largeAlt, smallAlt, si
   const small = smallImage && !failed.has(smallImage) ? smallImage : null;
   if (!large && !small) return placeholder ? <>{placeholder}</> : null;
 
+  if (large && small) {
+    return (
+      <div className={size.wrapper} data-testid="activity-artwork">
+        <img key={large} src={large} alt={largeAlt} className={`${size.large} transition-opacity duration-300 animate-fade-in`} onError={() => markFailed(large)} />
+        <img key={small} src={small} alt={smallAlt ?? ''} className={`${size.badge} transition-opacity duration-300 animate-fade-in`} onError={() => markFailed(small)} />
+      </div>
+    );
+  }
+
+  const lone = (large ?? small)!;
+  const alt = large ? largeAlt : (smallAlt ?? largeAlt);
   return (
     <div className={size.wrapper} data-testid="activity-artwork">
-      {large && (
-        <img
-          key={large}
-          src={large}
-          alt={largeAlt}
-          title={largeAlt}
-          className={`${large && small ? size.large : size.single} transition-opacity duration-300 animate-fade-in`}
-          onError={() => markFailed(large)}
-          loading="lazy"
-        />
-      )}
-      {small && (
-        <img
-          key={small}
-          src={small}
-          alt={smallAlt ?? ''}
-          title={smallAlt}
-          className={`${large ? size.badge : size.single} transition-opacity duration-300 animate-fade-in`}
-          onError={() => markFailed(small)}
-          loading="lazy"
-        />
-      )}
+      <img key={lone} src={lone} alt={alt} className={`${size.single} transition-opacity duration-300 animate-fade-in`} onError={() => markFailed(lone)} />
     </div>
   );
 }
@@ -203,7 +193,8 @@ export function ActivityCard({ activities, fallbackCustomStatus }: ActivityCardP
     activities.find((a) => a.type === 'watching');
   const custom = activities.find((a) => a.type === 'custom');
 
-  // Timer check
+  // Music players can provide a live position even when they expose no duration,
+  // so either activity needs to keep the shared clock ticking.
   const activeStart = processActivity?.timestamps?.start ?? music?.timestamps?.start;
   const activeEnd = processActivity?.timestamps?.end ?? music?.timestamps?.end;
   const hasTimer = typeof activeStart === 'number' || typeof activeEnd === 'number';
@@ -230,7 +221,10 @@ export function ActivityCard({ activities, fallbackCustomStatus }: ActivityCardP
     );
   } else if (music) {
     const musicLine = `${music.name}${music.details ? ` · ${music.details}` : ''}`;
-    const musicTime = activityTimeText(music.timestamps ?? {}, now, t, formatDuration);
+    const musicTime = activityTimeText(music.timestamps ?? {}, now, t, formatDuration)
+      ?? (typeof music.playback?.positionMs === 'number'
+        ? t('time.elapsed', { duration: formatDuration(Math.max(0, music.playback.positionMs) / 1000) })
+        : null);
     content = (
       <div className="flex flex-col min-w-0">
         <div className="text-[11px] leading-[1.3] text-txt-secondary truncate flex items-center gap-1.5" title={musicLine}>
@@ -249,7 +243,11 @@ export function ActivityCard({ activities, fallbackCustomStatus }: ActivityCardP
       </div>
     );
   } else if (processActivity) {
-    const timeText = activityTimeText(processActivity.timestamps ?? {}, now, t, formatDuration);
+    const timeText = processActivity.timestamps?.end && processActivity.timestamps.end > now
+      ? t('time.left', { duration: formatDuration((processActivity.timestamps.end - now) / 1000) })
+      : processActivity.timestamps?.start
+        ? formatElapsed(processActivity.timestamps.start, t)
+        : null;
     const moreGames = otherGamesCount(activities, processActivity);
 
     content = (
@@ -263,16 +261,6 @@ export function ActivityCard({ activities, fallbackCustomStatus }: ActivityCardP
             </span>
           )}
         </div>
-        {processActivity.details && (
-          <div className="text-[10px] leading-[1.3] text-txt-tertiary truncate" title={replaceEmojiShortcodes(processActivity.details)}>
-            {replaceEmojiShortcodes(processActivity.details)}
-          </div>
-        )}
-        {processActivity.state && (
-          <div className="text-[10px] leading-[1.3] text-txt-tertiary truncate" title={replaceEmojiShortcodes(processActivity.state)}>
-            {replaceEmojiShortcodes(processActivity.state)}
-          </div>
-        )}
         {timeText && (
           <div className="text-[10px] leading-[1.3] text-txt-tertiary tabular-nums">
             {timeText}
@@ -292,12 +280,34 @@ export function ActivityCard({ activities, fallbackCustomStatus }: ActivityCardP
     }
   }
 
-  if (!content) return null;
+  const lastContentRef = useRef<ReactNode>(null);
+  if (content !== null) {
+    lastContentRef.current = content;
+  }
+
+  const [isExiting, setIsExiting] = useState(false);
+
+  useEffect(() => {
+    if (content === null && lastContentRef.current !== null) {
+      setIsExiting(true);
+      const timer = setTimeout(() => {
+        setIsExiting(false);
+        lastContentRef.current = null;
+      }, 220);
+      return () => clearTimeout(timer);
+    }
+    if (content !== null) {
+      setIsExiting(false);
+    }
+  }, [content]);
+
+  const activeNode = content ?? (isExiting ? lastContentRef.current : null);
+  const isOpen = content !== null;
 
   return (
-    <div className="activity-card-expand" data-open="true">
+    <div className="activity-card-expand" data-open={isOpen ? 'true' : 'false'}>
       <div className="activity-card-expand-inner">
-        {content}
+        {activeNode}
       </div>
     </div>
   );
@@ -336,6 +346,11 @@ export function ActivityDetailCard({ activities }: { activities: Activity[] }) {
         largeAlt={assets?.largeText || headline}
         smallAlt={assets?.smallText}
         size={POPOUT_ART}
+        placeholder={
+          <div className="w-[60px] h-[60px] rounded-[10px] bg-white/[0.06] flex items-center justify-center text-txt-secondary">
+            <AppIcon name={headline} type={primary.type} size={28} />
+          </div>
+        }
       />
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-1.5 min-w-0 text-[13px] font-medium leading-[1.3] text-txt-primary">

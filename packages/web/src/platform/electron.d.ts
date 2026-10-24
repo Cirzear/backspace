@@ -194,6 +194,8 @@ interface BackspaceElectronAPI {
   getGameIcon?: (name: string) => Promise<{ data: string; mime: string } | null>;
   getActivitySettings?: () => Promise<{ enablePreemption: boolean }>;
   setActivitySettings?: (settings: { enablePreemption?: boolean }) => Promise<{ enablePreemption: boolean }>;
+  getMediaSetupHint?: () => Promise<string | null>;
+  onMediaSetupHint?: (callback: (hint: string) => void) => (() => void);
 
   // Keybind support
   getKeybindPortalStatus?: () => Promise<KeybindPortalStatus | null>;

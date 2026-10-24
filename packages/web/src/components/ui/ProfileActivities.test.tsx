@@ -85,6 +85,28 @@ describe('ProfileActivities', () => {
     await setLanguage('en');
   });
 
+  it('renders rich Watching card with progress bar for media videos (e.g. Chrome video)', () => {
+    const now = Date.now();
+    const video: Activity = {
+      type: 'watching',
+      name: 'Rick Astley - Never Gonna Give You Up',
+      details: 'YouTube',
+      timestamps: {
+        start: now - 60 * 1000,
+        end: now + 152 * 1000,
+      },
+      url: 'https://youtube.com/watch?v=dQw4w9WgXcQ',
+    };
+
+    render(<ProfileActivities activities={[video]} />);
+    expect(screen.getByText('Watching')).toBeInTheDocument();
+    expect(screen.getByText('Rick Astley - Never Gonna Give You Up')).toBeInTheDocument();
+    expect(screen.getByText('YouTube')).toBeInTheDocument();
+    expect(screen.getByText('01:00')).toBeInTheDocument();
+    expect(screen.getByText('03:32')).toBeInTheDocument();
+    expect(screen.getByText('Open Track').closest('a')).toHaveAttribute('href', 'https://youtube.com/watch?v=dQw4w9WgXcQ');
+  });
+
   it('renders all concurrent activities: streaming, multiple games, and music', () => {
     const stream: Activity = {
       type: 'streaming',
@@ -128,5 +150,31 @@ describe('ProfileActivities', () => {
 
     rerender(<ProfileActivities activities={[custom]} skipCustom={false} />);
     expect(screen.getByText('coding hard 🚀')).toBeInTheDocument();
+  });
+
+  it('renders elapsed time text only without progress bar or live badge for music without end duration', () => {
+    const now = Date.now();
+    const music: Activity = {
+      type: 'listening',
+      name: '晴天',
+      details: '周杰伦',
+      assets: {
+        smallText: 'NetEase Cloud Music',
+      },
+      timestamps: {
+        start: now - 35 * 1000,
+      },
+      playback: {
+        positionMs: 35 * 1000,
+      },
+    };
+
+    render(<ProfileActivities activities={[music]} />);
+    expect(screen.getByText('晴天')).toBeInTheDocument();
+    expect(screen.getByText('周杰伦')).toBeInTheDocument();
+    expect(screen.getByText('NetEase Cloud Music')).toBeInTheDocument();
+    expect(screen.getByText('00:35 elapsed')).toBeInTheDocument();
+    expect(screen.queryByText('LIVE')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('media-progress-bar')).not.toBeInTheDocument();
   });
 });

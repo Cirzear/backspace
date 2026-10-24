@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { sanitizeTrackUrl } from './trackUrl';
 import { isAppIdleTitle, parsePlayerWindowTitle } from './titleParser';
-import { convertTrackToActivity } from './index';
+import { convertTrackToActivity, nextMediaTimeline } from './index';
 import {
-  parseTasklistCsvLine,
-  parseWin32TasklistOutput,
   decodeWin32Output,
   parseSmtcOutput,
+  selectSmtcTrack,
+  selectNetEaseFallbackTrack,
   resolvePlayerFromAppId,
+  isBrowserPlayer,
+  shouldRequestNetEaseSetup,
+  type SmtcProbeResult,
 } from './win32Media';
 import { parseMprisMetadata, getPlayerDisplayName } from './linuxMpris';
 
@@ -116,32 +119,7 @@ describe('Media Detector - Window Title Parser', () => {
   });
 });
 
-describe('Media Detector - Win32 Tasklist Parser', () => {
-  it('parses tasklist CSV row with quotes', () => {
-    const line = '"cloudmusic.exe","1234","Console","1","50,000 K","Unknown","User","0:01:23","海阔天空 - Beyond"';
-    expect(parseTasklistCsvLine(line)).toEqual({
-      imageName: 'cloudmusic.exe',
-      windowTitle: '海阔天空 - Beyond',
-    });
-  });
-
-  it('extracts track from tasklist output and ignores child processes with N/A or 暂缺', () => {
-    const stdout = [
-      '"explorer.exe","100","Console","1","10 K","Running","User","0:00:01","Desktop"',
-      '"foobar2000.exe","101","Console","1","20 K","Running","User","0:00:01","N/A"',
-      '"foobar2000.exe","102","Console","1","15 K","Running","User","0:00:01","暂缺"',
-      '"foobar2000.exe","200","Console","1","50 K","Running","User","0:00:10","海阔天空 - Beyond"',
-    ].join('\n');
-
-    const result = parseWin32TasklistOutput(stdout);
-    expect(result).toEqual({
-      title: '海阔天空',
-      artist: 'Beyond',
-      isPlaying: true,
-      player: 'foobar2000',
-    });
-  });
-
+describe('Media Detector - Win32 Output Decoding', () => {
   it('correctly decodes GBK/CP936 bytes to prevent Chinese mojibake', () => {
     // "海阔天空" in GBK hex: ba a3 c0 ab cc ec bf d5
     const gbkBytes = Buffer.concat([
@@ -151,9 +129,6 @@ describe('Media Detector - Win32 Tasklist Parser', () => {
     ]);
     const decoded = decodeWin32Output(gbkBytes);
     expect(decoded).toContain('海阔天空 - Beyond');
-    const parsed = parseWin32TasklistOutput(decoded);
-    expect(parsed?.title).toBe('海阔天空');
-    expect(parsed?.artist).toBe('Beyond');
   });
 });
 
@@ -214,54 +189,375 @@ describe('Media Detector - Activity Conversion', () => {
     // Timestamps check: start should be roughly now - 60s, end should be start + 300s
     expect(activity?.timestamps?.start).toBeCloseTo(now - 60000, -2);
     expect(activity?.timestamps?.end).toBeCloseTo(now - 60000 + 300000, -2);
+    expect(activity?.playback).toEqual({ positionMs: 60000, durationMs: 300000 });
   });
 
-  it('preserves continuous listening session start time across track changes and omits end', () => {
-    const fixedSessionStart = 1700000000000;
-
+  it('calculates single-track start and end timestamps from position and duration, resetting on track change', () => {
+    const now = Date.now();
     const trackA = {
       title: 'Song A',
       artist: 'Artist A',
+      durationMs: 200000,
+      positionMs: 50000,
       isPlaying: true,
       player: 'NetEase Cloud Music',
     };
-    const activityA = convertTrackToActivity(trackA, fixedSessionStart);
-    expect(activityA?.timestamps?.start).toBe(fixedSessionStart);
-    expect(activityA?.timestamps?.end).toBeUndefined();
+    const activityA = convertTrackToActivity(trackA);
+    expect(activityA?.name).toBe('Song A');
+    expect(activityA?.timestamps?.start).toBeCloseTo(now - 50000, -2);
+    expect(activityA?.timestamps?.end).toBeCloseTo(now - 50000 + 200000, -2);
 
     const trackB = {
       title: 'Song B',
       artist: 'Artist B',
+      durationMs: 180000,
+      positionMs: 0,
       isPlaying: true,
       player: 'NetEase Cloud Music',
     };
-    const activityB = convertTrackToActivity(trackB, fixedSessionStart);
+    const activityB = convertTrackToActivity(trackB);
     expect(activityB?.name).toBe('Song B');
-    // Session start must NOT reset to 0:00, must remain fixedSessionStart!
-    expect(activityB?.timestamps?.start).toBe(fixedSessionStart);
-    expect(activityB?.timestamps?.end).toBeUndefined();
+    expect(activityB?.timestamps?.start).toBeCloseTo(now, -2);
+    expect(activityB?.timestamps?.end).toBeCloseTo(now + 180000, -2);
+  });
+
+  it('keeps a stable start when Chrome repeats a zero timeline snapshot', () => {
+    const track = {
+      title: 'Video',
+      artist: 'Creator',
+      positionMs: 0,
+      durationMs: 300000,
+      isPlaying: true,
+      player: 'Chrome',
+      mediaType: 'video' as const,
+    };
+
+    const first = nextMediaTimeline(null, track, 1_000);
+    const repeated = nextMediaTimeline(first, track, 6_000);
+    const advanced = nextMediaTimeline(repeated, { ...track, positionMs: 6_000 }, 7_000);
+    const sought = nextMediaTimeline(advanced, { ...track, positionMs: 60_000 }, 8_000);
+
+    expect(repeated.start).toBe(1_000);
+    expect(advanced.start).toBe(1_000);
+    expect(sought.start).toBe(-52_000);
+  });
+
+  it('keeps the same Chrome timeline when SMTC changes its media type', () => {
+    const track = {
+      title: 'Video',
+      artist: 'Creator',
+      positionMs: 0,
+      durationMs: 300000,
+      isPlaying: true,
+      player: 'Chrome',
+      mediaType: 'music' as const,
+    };
+
+    const first = nextMediaTimeline(null, track, 1_000);
+    const changedType = nextMediaTimeline(first, {
+      ...track,
+      mediaType: 'video',
+    }, 8_000);
+    const repeatedZero = nextMediaTimeline(changedType, {
+      ...track,
+      mediaType: 'music',
+    }, 16_000);
+
+    expect(changedType.start).toBe(1_000);
+    expect(repeatedZero.start).toBe(1_000);
+  });
+
+  it('does not re-anchor a normally advancing Chrome timeline', () => {
+    const track = {
+      title: 'Video',
+      artist: 'Creator',
+      positionMs: 0,
+      durationMs: 300000,
+      isPlaying: true,
+      player: 'Chrome',
+      mediaType: 'video' as const,
+    };
+
+    const first = nextMediaTimeline(null, track, 1_000);
+    const advanced = nextMediaTimeline(first, { ...track, positionMs: 8_000 }, 9_000);
+
+    expect(advanced.start).toBe(1_000);
+  });
+
+  it('uses a stable timeline start when converting later track snapshots', () => {
+    const timelineStart = Date.now() - 60000;
+    const activity = convertTrackToActivity({
+      title: 'Video',
+      artist: 'Creator',
+      positionMs: 0,
+      durationMs: 300000,
+      isPlaying: true,
+      player: 'Chrome',
+      mediaType: 'video',
+    }, timelineStart);
+
+    expect(activity?.timestamps?.start).toBe(timelineStart);
+    expect(activity?.timestamps?.end).toBe(timelineStart + 300000);
+    expect(activity?.playback).toEqual({ positionMs: 60000, durationMs: 300000 });
+  });
+
+  it('converts track with mediaType video to watching activity', () => {
+    const track = {
+      title: 'Never Gonna Give You Up',
+      artist: 'Rick Astley',
+      isPlaying: true,
+      player: 'Chrome',
+      mediaType: 'video' as const,
+    };
+    const activity = convertTrackToActivity(track);
+    expect(activity).not.toBeNull();
+    expect(activity?.type).toBe('watching');
+    expect(activity?.name).toBe('Never Gonna Give You Up');
+    expect(activity?.details).toBe('Rick Astley');
+    expect(activity?.assets?.smallText).toBe('Chrome');
   });
 });
 
 describe('Media Detector - Win32 SMTC Parser', () => {
-  it('parses PLAYING output with appId, title, and artist', () => {
-    const res = parseSmtcOutput('PLAYING|cloudmusic.exe|七里香|周杰伦');
+  const smtcResult = (overrides: Partial<SmtcProbeResult> = {}): SmtcProbeResult => ({
+    ok: true,
+    sessions: [],
+    netEase: {
+      running: true,
+      windowTitle: '七里香 - 周杰伦',
+    },
+    ...overrides,
+  });
+
+  it('parses every SMTC session with its playback status and metadata', () => {
+    const res = parseSmtcOutput(JSON.stringify({
+      ok: true,
+      sessions: [
+        {
+          appId: 'cloudmusic.exe',
+          status: 4,
+          title: '七里香',
+          artist: '周杰伦',
+          mediaType: 'music',
+          positionMs: 83000,
+          durationMs: 240000,
+          timelineUpdatedAtMs: 1760000000000,
+        },
+        {
+          appId: 'chrome.exe',
+          status: 5,
+          title: 'Paused video',
+          artist: '',
+          mediaType: 'video',
+        },
+      ],
+    }));
+
     expect(res).toEqual({
-      status: 'playing',
-      player: 'NetEase Cloud Music',
-      title: '七里香',
-      artist: '周杰伦',
+      ok: true,
+      sessions: [
+        {
+          appId: 'cloudmusic.exe',
+          player: 'NetEase Cloud Music',
+          status: 'playing',
+          title: '七里香',
+          artist: '周杰伦',
+          positionMs: 83000,
+          durationMs: 240000,
+          timelineUpdatedAtMs: 1760000000000,
+          mediaType: 'music',
+        },
+        {
+          appId: 'chrome.exe',
+          player: 'Chrome',
+          status: 'paused',
+          title: 'Paused video',
+          artist: '',
+          positionMs: undefined,
+          durationMs: undefined,
+          mediaType: 'video',
+        },
+      ],
     });
   });
 
-  it('parses PAUSED and NO_SESSIONS status', () => {
-    expect(parseSmtcOutput('PAUSED')).toEqual({ status: 'paused' });
-    expect(parseSmtcOutput('NO_SESSIONS')).toEqual({ status: 'no_sessions' });
-    expect(parseSmtcOutput('IDLE')).toEqual({ status: 'idle' });
+  it('selects only playing sessions and prefers a dedicated player over a browser', () => {
+    const res = parseSmtcOutput(JSON.stringify({
+      ok: true,
+      sessions: [
+        {
+          appId: 'chrome.exe',
+          status: 4,
+          title: 'Browser video',
+          artist: 'Creator',
+          mediaType: 'video',
+        },
+        {
+          appId: 'cloudmusic.exe',
+          status: 4,
+          title: '海阔天空',
+          artist: 'Beyond',
+          mediaType: 'music',
+        },
+      ],
+    }));
+
+    expect(selectSmtcTrack(res)).toMatchObject({
+      title: '海阔天空',
+      artist: 'Beyond',
+      player: 'NetEase Cloud Music',
+      isPlaying: true,
+      mediaType: 'music',
+    });
+
+    const paused = parseSmtcOutput(JSON.stringify({
+      ok: true,
+      sessions: [{
+        appId: 'cloudmusic.exe',
+        status: 5,
+        title: '海阔天空',
+        artist: 'Beyond',
+        mediaType: 'music',
+      }],
+    }));
+    expect(selectSmtcTrack(paused)).toBeNull();
+  });
+
+  it('extrapolates the SMTC timeline snapshot to the current playback position', () => {
+    const res = parseSmtcOutput(JSON.stringify({
+      ok: true,
+      sessions: [{
+        appId: 'cloudmusic.exe',
+        status: 4,
+        title: '七里香',
+        artist: '周杰伦',
+        mediaType: 'music',
+        positionMs: 83000,
+        durationMs: 240000,
+        timelineUpdatedAtMs: 1000,
+      }],
+    }));
+
+    expect(selectSmtcTrack(res, 6000)?.positionMs).toBe(88000);
+  });
+
+  it('clamps extrapolated playback position to the track duration', () => {
+    const res = parseSmtcOutput(JSON.stringify({
+      ok: true,
+      sessions: [{
+        appId: 'cloudmusic.exe',
+        status: 4,
+        title: '七里香',
+        artist: '周杰伦',
+        mediaType: 'music',
+        positionMs: 238000,
+        durationMs: 240000,
+        timelineUpdatedAtMs: 1000,
+      }],
+    }));
+
+    expect(selectSmtcTrack(res, 6000)?.positionMs).toBe(240000);
+  });
+
+  it('reports monitor failures instead of treating them as paused', () => {
+    expect(parseSmtcOutput('not json')).toEqual({
+      ok: false,
+      sessions: [],
+      error: 'SMTC monitor returned no JSON',
+    });
+    expect(parseSmtcOutput(JSON.stringify({
+      ok: false,
+      sessions: [],
+      error: 'WinRT unavailable',
+    }))).toEqual({
+      ok: false,
+      sessions: [],
+      error: 'WinRT unavailable',
+    });
+  });
+
+  it('parses NetEase process and window-title diagnostics', () => {
+    const res = parseSmtcOutput(JSON.stringify({
+      ok: true,
+      sessions: [],
+      netEase: {
+        running: true,
+        windowTitle: '七里香 - 周杰伦',
+      },
+    }));
+
+    expect(res).toEqual({
+      ok: true,
+      sessions: [],
+      netEase: {
+        running: true,
+        windowTitle: '七里香 - 周杰伦',
+      },
+    });
+  });
+
+  it('requests SMTC setup only when NetEase is running with a song title and no SMTC session', () => {
+    expect(shouldRequestNetEaseSetup(smtcResult())).toBe(true);
+    expect(shouldRequestNetEaseSetup(smtcResult({
+      sessions: [{
+        appId: 'cloudmusic.exe',
+        player: 'NetEase Cloud Music',
+        status: 'paused',
+        title: '七里香',
+        artist: '周杰伦',
+        mediaType: 'music',
+      }],
+    }))).toBe(false);
+    expect(shouldRequestNetEaseSetup(smtcResult({
+      netEase: { running: true, windowTitle: '网易云音乐' },
+    }))).toBe(false);
+    expect(shouldRequestNetEaseSetup(smtcResult({
+      netEase: { running: false, windowTitle: '七里香 - 周杰伦' },
+    }))).toBe(false);
+    expect(shouldRequestNetEaseSetup(smtcResult({ ok: false }))).toBe(false);
+  });
+
+  it('keeps a degraded NetEase listening status when SMTC is off', () => {
+    expect(selectNetEaseFallbackTrack(smtcResult())).toEqual({
+      title: '七里香',
+      artist: '周杰伦',
+      isPlaying: true,
+      player: 'NetEase Cloud Music',
+    });
+    expect(selectNetEaseFallbackTrack(smtcResult({
+      sessions: [{
+        appId: 'cloudmusic.exe',
+        player: 'NetEase Cloud Music',
+        status: 'paused',
+        title: '',
+        artist: '',
+        mediaType: 'music',
+      }],
+    }))).toBeNull();
+    expect(selectNetEaseFallbackTrack(smtcResult({
+      netEase: { running: true, windowTitle: '网易云音乐' },
+    }))).toBeNull();
+  });
+
+  it('correctly classifies browser players vs dedicated music players', () => {
+    expect(isBrowserPlayer('Chrome')).toBe(true);
+    expect(isBrowserPlayer('Edge')).toBe(true);
+    expect(isBrowserPlayer('Firefox')).toBe(true);
+    expect(isBrowserPlayer('Brave')).toBe(true);
+    expect(isBrowserPlayer('Opera')).toBe(true);
+    expect(isBrowserPlayer('Vivaldi')).toBe(true);
+
+    expect(isBrowserPlayer('NetEase Cloud Music')).toBe(false);
+    expect(isBrowserPlayer('QQ Music')).toBe(false);
+    expect(isBrowserPlayer('Spotify')).toBe(false);
+    expect(isBrowserPlayer('Apple Music')).toBe(false);
+    expect(isBrowserPlayer('foobar2000')).toBe(false);
+    expect(isBrowserPlayer(undefined)).toBe(false);
   });
 
   it('resolves player names from AppUserModelId', () => {
     expect(resolvePlayerFromAppId('cloudmusic.exe')).toBe('NetEase Cloud Music');
+    expect(resolvePlayerFromAppId('Netease.163Music_abc')).toBe('NetEase Cloud Music');
     expect(resolvePlayerFromAppId('QQMusic.exe')).toBe('QQ Music');
     expect(resolvePlayerFromAppId('Spotify.exe')).toBe('Spotify');
     expect(resolvePlayerFromAppId('AppleMusic_abc123')).toBe('Apple Music');

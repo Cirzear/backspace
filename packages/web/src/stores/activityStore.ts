@@ -27,6 +27,114 @@ import { syncManualBindings } from '../platform/manualGameBinding';
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
 /** Monotonic push generation: a debounce that fired but is still enriching must not send after a newer push arrived. */
 let pushSeq = 0;
+/** Activities already converted from transport progress to this client's clock. */
+let locallyAnchoredActivities = new WeakSet<Activity>();
+const ACTIVITY_PUSH_DELAY_MS = 5_000;
+const MEDIA_ACTIVITY_PUSH_DELAY_MS = 500;
+const PLAYBACK_SYNC_TOLERANCE_MS = 2_000;
+
+function anchoredPlaybackPosition(activity: Activity): number | null {
+  const playback = activity.playback;
+  if (!playback) return null;
+  const positionMs = Math.max(0, playback.positionMs);
+  return playback.durationMs === undefined
+    ? positionMs
+    : Math.min(playback.durationMs, positionMs);
+}
+
+/**
+ * Convert the sender's clock-independent playback position into a timeline on
+ * this client's clock. This is what makes remote progress immune to skew
+ * between the Windows machine and the device showing the Web client.
+ */
+function anchorActivityPlayback(
+  activity: Activity,
+  now: number,
+  existingList?: Activity[],
+): Activity {
+  if (locallyAnchoredActivities.has(activity)) {
+    return refreshActivityPlayback(activity, now);
+  }
+
+  const positionMs = anchoredPlaybackPosition(activity);
+  if (positionMs === null) return activity;
+
+  const existing = existingList?.find((a) => a.type === activity.type && a.name === activity.name);
+  const existingStart = existing?.timestamps?.start;
+
+  let start: number;
+  if (typeof existingStart === 'number') {
+    const elapsed = now - existingStart;
+    // If incoming position is 0 (typical Chrome SMTC stale snapshot), or
+    // within tolerance of current progress, preserve existing timeline.
+    if (positionMs === 0 || Math.abs(positionMs - elapsed) <= PLAYBACK_SYNC_TOLERANCE_MS) {
+      start = existingStart;
+    } else {
+      start = now - positionMs;
+    }
+  } else if (
+    typeof activity.timestamps?.start === 'number' &&
+    activity.timestamps.start > 0 &&
+    (positionMs === 0 || Math.abs((now - positionMs) - activity.timestamps.start) <= PLAYBACK_SYNC_TOLERANCE_MS)
+  ) {
+    // Preserve valid start timestamp from reporter when within clock tolerance
+    start = activity.timestamps.start;
+  } else {
+    start = now - positionMs;
+  }
+
+  const durationMs = activity.playback?.durationMs;
+  const anchored = {
+    ...activity,
+    timestamps: {
+      ...activity.timestamps,
+      start,
+      ...(durationMs === undefined ? {} : { end: start + durationMs }),
+    },
+    playback: {
+      ...activity.playback!,
+      positionMs: durationMs === undefined
+        ? Math.max(0, now - start)
+        : Math.min(durationMs, Math.max(0, now - start)),
+    },
+  };
+  locallyAnchoredActivities.add(anchored);
+  return anchored;
+}
+
+function anchorActivitiesPlayback(
+  activities: Activity[],
+  now: number,
+  existingList?: Activity[],
+): Activity[] {
+  return activities.map((activity) => anchorActivityPlayback(activity, now, existingList));
+}
+
+function refreshActivityPlayback(activity: Activity, now: number): Activity {
+  const start = activity.timestamps?.start;
+  const playback = activity.playback;
+  if (typeof start !== 'number' || !playback) return activity;
+
+  const durationMs = playback.durationMs;
+  const positionMs = durationMs === undefined
+    ? Math.max(0, now - start)
+    : Math.min(durationMs, Math.max(0, now - start));
+
+  const refreshed = {
+    ...activity,
+    playback: {
+      ...playback,
+      positionMs,
+    },
+  };
+  locallyAnchoredActivities.add(refreshed);
+  return refreshed;
+}
+
+/** Keep the transport position current when a debounced send happens. */
+function refreshActivitiesPlayback(activities: Activity[], now: number): Activity[] {
+  return activities.map((activity) => refreshActivityPlayback(activity, now));
+}
 
 // ─── Game icon enrichment ─────────────────────────────────────────────────
 
@@ -37,7 +145,7 @@ let pushSeq = 0;
  * game carries the URL without another upload.
  */
 const GAME_ICON_CACHE_KEY = 'backspace_game_icons';
-const GAME_ICON_TYPES = new Set(['playing', 'listening', 'watching', 'streaming']);
+const GAME_ICON_TYPES = new Set(['playing']);
 const GAME_ICON_ENRICH_TIMEOUT_MS = 4000;
 /** A name that failed to resolve is not retried for this long (the desktop warms its cache in the background). */
 const GAME_ICON_RETRY_MS = 60_000;
@@ -189,6 +297,8 @@ export interface ActivityEntry {
   activities: Activity[];
 }
 
+export const EMPTY_ACTIVITIES: Activity[] = [];
+
 /**
  * The activities held for `subject` as delivered or listed by `origin`.
  * Every reader goes through this, so all views of one person agree.
@@ -198,7 +308,7 @@ export function activitiesFor(
   subject: PresenceSubject,
   origin: string,
 ): Activity[] {
-  return userActivities.get(userKey(subject, origin)) ?? [];
+  return userActivities.get(userKey(subject, origin)) ?? EMPTY_ACTIVITIES;
 }
 
 interface ActivityState {
@@ -303,14 +413,16 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
 
   setUserActivities: (subject, origin, activities) => {
     const key = userKey(subject, origin);
+    const existing = get().userActivities.get(key);
+    const anchored = anchorActivitiesPlayback(activities, Date.now(), existing);
     set((state) => {
       const next = new Map(state.userActivities);
       const writers = new Map(state.activityWriters);
-      if (activities.length === 0) {
+      if (anchored.length === 0) {
         next.delete(key);
         writers.delete(key);
       } else {
-        next.set(key, activities);
+        next.set(key, anchored);
         writers.set(key, origin);
       }
       return { userActivities: next, activityWriters: writers };
@@ -329,6 +441,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
   },
 
   initActivities: (entries, origin, coveredRows) => {
+    const now = Date.now();
     set((state) => {
       const next = new Map(state.userActivities);
       const writers = new Map(state.activityWriters);
@@ -343,8 +456,11 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
         next.delete(key);
         writers.delete(key);
       }
-      for (const { subject, activities } of entries) {
+      for (const entry of entries) {
+        const { subject } = entry;
         const key = userKey(subject, origin);
+        const existing = state.userActivities.get(key);
+        const activities = anchorActivitiesPlayback(entry.activities, now, existing);
         if (activities.length > 0) {
           next.set(key, activities);
           writers.set(key, origin);
@@ -381,17 +497,34 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
   },
 
   pushActivities: (activities) => {
-    set({ detectedActivities: activities });
+    const now = Date.now();
+    const anchored = anchorActivitiesPlayback(activities, now, get().detectedActivities);
+    set({ detectedActivities: anchored });
     if (!get().showActivity) return;
     const effective = (list: Activity[]) => withRenames(applyChoices(list, get()), get().gameRenames);
-    set({ myActivities: effective(activities) });
-    if (pushTimer) clearTimeout(pushTimer);
+    const eff = effective(anchored);
+    set({ myActivities: eff });
+    if (pushTimer) {
+      clearTimeout(pushTimer);
+      pushTimer = null;
+    }
+    // When activities are cleared (e.g. music paused / stopped), broadcast immediately without 5s debounce
+    if (eff.length === 0) {
+      pushSeq++;
+      wsSendAll({ type: 'activity_update', activities: [] });
+      return;
+    }
     const seq = ++pushSeq;
+    // Media should appear promptly. Games keep the longer debounce because a
+    // scan can briefly report the same process with different metadata.
+    const pushDelay = anchored.some((activity) => activity.playback)
+      ? MEDIA_ACTIVITY_PUSH_DELAY_MS
+      : ACTIVITY_PUSH_DELAY_MS;
     pushTimer = setTimeout(() => {
       pushTimer = null;
       // Icons are looked up by the name the machine knows the game by, so the
       // player's rename is applied after they are attached, not before.
-      const base = applyChoices(activities, get());
+      const base = applyChoices(refreshActivitiesPlayback(anchored, Date.now()), get());
       // Cached icons attach synchronously, so a push that needs no upload
       // sends exactly as it did before icons existed.
       const withCached = attachCachedIcons(base);
@@ -411,7 +544,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
         set({ myActivities: final });
         wsSendAll({ type: 'activity_update', activities: final });
       });
-    }, 5000);
+    }, pushDelay);
   },
 
   addManualGame: (name, process = null) => {
@@ -489,6 +622,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
   reset: () => {
     if (pushTimer) { clearTimeout(pushTimer); pushTimer = null; }
     pushSeq++;
+    locallyAnchoredActivities = new WeakSet();
     iconMissAges.clear();
     set({
       userActivities: new Map(),

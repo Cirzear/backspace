@@ -58,16 +58,22 @@ export function formatPlayerName(player: string | undefined, t: TFunction<any, a
 function formatSeconds(totalSeconds: number): string {
   const m = Math.floor(Math.max(0, totalSeconds) / 60);
   const s = Math.floor(Math.max(0, totalSeconds) % 60);
-  return `${m}:${s < 10 ? '0' : ''}${s}`;
+  return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
-function MusicProgress({ start, end }: { start: number; end: number }) {
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
+function MediaProgress({
+  start,
+  end,
+  now: propNow,
+  barColorClass = 'bg-accent-sky',
+}: {
+  start: number;
+  end: number;
+  now?: number;
+  barColorClass?: string;
+}) {
+  const localNow = useNowTick(propNow === undefined);
+  const now = propNow ?? localNow;
 
   const total = Math.max(1, end - start);
   const elapsed = Math.min(total, Math.max(0, now - start));
@@ -77,7 +83,7 @@ function MusicProgress({ start, end }: { start: number; end: number }) {
     <div className="mt-2.5">
       <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
         <div
-          className="h-full bg-accent-sky rounded-full transition-all duration-300"
+          className={`h-full ${barColorClass} rounded-full transition-all duration-300`}
           style={{ width: `${percent}%` }}
         />
       </div>
@@ -95,14 +101,20 @@ function MusicCard({ activity }: { activity: Activity }) {
   const player = formatPlayerName(activity.assets?.smallText, t);
   const hasCover = isRenderableActivityImage(activity.assets?.largeImage);
 
-  const hasTimer = typeof activity.timestamps?.start === 'number' || typeof activity.timestamps?.end === 'number';
+  const effectiveStart = typeof activity.timestamps?.start === 'number'
+    ? activity.timestamps.start
+    : (typeof activity.playback?.positionMs === 'number'
+      ? Date.now() - activity.playback.positionMs
+      : undefined);
+
+  const hasTimer = typeof effectiveStart === 'number' || typeof activity.timestamps?.end === 'number';
   const now = useNowTick(hasTimer);
   const hasEndCountdown =
     typeof activity.timestamps?.end === 'number' && activity.timestamps.end > now;
   const timeText = hasEndCountdown
     ? t('common:time.left', { duration: formatDuration((activity.timestamps!.end! - now) / 1000) })
-    : typeof activity.timestamps?.start === 'number' && activity.timestamps.start <= now
-      ? formatElapsed(activity.timestamps.start, t)
+    : typeof effectiveStart === 'number'
+      ? t('common:time.elapsed', { duration: formatDuration(Math.max(0, now - effectiveStart) / 1000) })
       : null;
 
   return (
@@ -149,11 +161,16 @@ function MusicCard({ activity }: { activity: Activity }) {
         </div>
       </div>
 
-      {activity.timestamps?.start && activity.timestamps?.end && (
-        <MusicProgress start={activity.timestamps.start} end={activity.timestamps.end} />
+      {effectiveStart !== undefined && activity.timestamps?.end && (
+        <MediaProgress
+          start={effectiveStart}
+          end={activity.timestamps.end}
+          now={now}
+          barColorClass="bg-accent-sky"
+        />
       )}
 
-      {activity.timestamps?.start && !activity.timestamps?.end && timeText && (
+      {effectiveStart !== undefined && !activity.timestamps?.end && timeText && (
         <div className="text-[10px] text-txt-tertiary mt-2 tabular-nums">
           {timeText}
         </div>
@@ -203,6 +220,13 @@ function ProcessCard({
       ? formatElapsed(activity.timestamps.start, t)
       : null;
 
+  const barColorClass =
+    activity.type === 'watching'
+      ? 'bg-accent-lavender'
+      : activity.type === 'streaming'
+        ? 'bg-accent-rose'
+        : 'bg-accent-mint';
+
   return (
     <div className={`rounded-lg p-3 ${accentClass} mb-2.5 transition-all duration-200 hover:brightness-105`}>
       <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider mb-2">
@@ -250,13 +274,29 @@ function ProcessCard({
               {replaceEmojiShortcodes(activity.state)}
             </div>
           )}
-          {timeText && (
+          {timeText && !activity.timestamps?.end && (
             <div className="text-[10px] opacity-75 mt-1 tabular-nums">
               {timeText}
             </div>
           )}
         </div>
       </div>
+
+      {activity.timestamps?.start && activity.timestamps?.end && (
+        <MediaProgress start={activity.timestamps.start} end={activity.timestamps.end} now={now} barColorClass={barColorClass} />
+      )}
+
+      {activity.url && (
+        <a
+          href={activity.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-[11px] opacity-90 hover:underline mt-2 font-medium"
+        >
+          <span>{t('social:activity.openTrack', { defaultValue: 'Open' })}</span>
+          <span>↗</span>
+        </a>
+      )}
     </div>
   );
 }

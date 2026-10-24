@@ -126,4 +126,46 @@ describe("ready payload: friends' activities (#340)", () => {
 
     connectionManager.removeConnection(wsWeb);
   });
+
+  it('projects media playback position by the time held on the server', async () => {
+    const { connectionManager } = await import('./handler.js');
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+
+    const media: Activity = {
+      type: 'listening',
+      name: 'Song',
+      playback: { positionMs: 10_000, durationMs: 60_000 },
+    };
+    connectionManager.setUserActivities('local-friend', [media]);
+
+    vi.advanceTimersByTime(5_000);
+    const ready = await readyFor('viewer');
+    expect(ready.userActivities?.['local-friend']).toEqual([{
+      type: 'listening',
+      name: 'Song',
+      playback: { positionMs: 15_000, durationMs: 60_000 },
+    }]);
+
+    connectionManager.clearUserActivities('local-friend');
+    vi.useRealTimers();
+  });
+
+  it('allows immediate activity clearing even inside the 3s rate limit window', async () => {
+    const { connectionManager } = await import('./handler.js');
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+
+    // Initial update consumes rate limit
+    expect(connectionManager.checkActivityRateLimit('local-friend')).toBe(true);
+
+    // 1 second later: normal update is rate-limited
+    vi.advanceTimersByTime(1_000);
+    expect(connectionManager.checkActivityRateLimit('local-friend', false)).toBe(false);
+
+    // But clearing/reducing activities is permitted immediately
+    expect(connectionManager.checkActivityRateLimit('local-friend', true)).toBe(true);
+
+    vi.useRealTimers();
+  });
 });
