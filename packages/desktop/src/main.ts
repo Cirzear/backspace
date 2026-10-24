@@ -39,6 +39,7 @@ import {
   startMediaDetection,
   stopMediaDetection,
   getCurrentMediaActivity,
+  type MediaSetupHint,
 } from './mediaDetector';
 import { KeybindManager } from './keybindManager';
 import { deriveStartMinimizedFromArgs, parseExecPathFromDesktopFile, shouldReapplyAppImage } from './autoLaunch';
@@ -990,17 +991,34 @@ if (!gotTheLock) {
     // ─── Activity & Media Detection ────────────────────────────────────────
     let latestProcessActivities: any[] = getAllCurrentActivities();
     let latestMediaActivity = getCurrentMediaActivity();
+    let currentMediaSetupHint: MediaSetupHint | null = null;
 
     const buildEffectiveActivities = (): any[] => {
       const activities: any[] = [];
       for (const proc of latestProcessActivities) {
         // Media players running in the background are not activities unless actively playing via mediaDetector.
-        // Prevent background processes (e.g. cloudmusic.exe in tray) from injecting fake listening activities.
-        if (proc.type === 'listening') continue;
+        // Prevent background processes (e.g. cloudmusic.exe in tray) from injecting fake media activities.
+        if (proc.type === 'listening' || proc.type === 'watching') continue;
         activities.push(proc);
       }
       if (latestMediaActivity) {
-        activities.push(latestMediaActivity);
+        const now = Date.now();
+        const start = latestMediaActivity.timestamps?.start;
+        const durationMs = latestMediaActivity.playback?.durationMs;
+        if (typeof start === 'number' && latestMediaActivity.playback) {
+          const positionMs = durationMs !== undefined
+            ? Math.min(durationMs, Math.max(0, now - start))
+            : Math.max(0, now - start);
+          activities.push({
+            ...latestMediaActivity,
+            playback: {
+              ...latestMediaActivity.playback,
+              positionMs,
+            },
+          });
+        } else {
+          activities.push(latestMediaActivity);
+        }
       }
       return activities;
     };
@@ -1021,10 +1039,16 @@ if (!gotTheLock) {
       },
     );
 
-    startMediaDetection((media) => {
-      latestMediaActivity = media;
-      broadcastActivities();
-    });
+    startMediaDetection(
+      (media) => {
+        latestMediaActivity = media;
+        broadcastActivities();
+      },
+      (hint) => {
+        currentMediaSetupHint = hint;
+        mainWindow?.webContents.send('media-setup-hint', hint);
+      },
+    );
 
     // Rich presence IPC server: games (osu!lazer & co.) push richer
     // activity that overlays process detection
@@ -1039,6 +1063,7 @@ if (!gotTheLock) {
       return activities[0] || null;
     });
     ipcMain.handle('get-current-activities', () => buildEffectiveActivities());
+    ipcMain.handle('get-media-setup-hint', () => currentMediaSetupHint);
     ipcMain.handle('get-activity-settings', () => loadActivitySettings());
     ipcMain.handle('set-activity-settings', (_event, settings: any) => { saveActivitySettings(settings); });
     ipcMain.handle('list-known-games', () => listKnownGameNames());

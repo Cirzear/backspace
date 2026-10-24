@@ -177,6 +177,9 @@ interface BackspaceElectronAPI {
   onActivitiesDetected?: (callback: (activities: unknown[]) => void) => (() => void);
   getCurrentActivity: () => Promise<unknown>;
   getCurrentActivities?: () => Promise<unknown[]>;
+  /** One-time Windows setup guidance; absent on older desktops and other platforms. */
+  getMediaSetupHint?: () => Promise<'netease-smtc' | null>;
+  onMediaSetupHint?: (callback: (hint: 'netease-smtc') => void) => () => void;
   /** Game names for the manual-game picker (dictionary + installed games); absent on older desktops. */
   listKnownGames?: () => Promise<string[]>;
   /** Programs the player can tie their game to. Absent in desktop builds that predate the binding. */

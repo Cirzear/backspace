@@ -8,16 +8,21 @@ export interface MediaTrackInfo {
   isPlaying: boolean;
   player: string;
   sourceUrl?: string;
+  mediaType?: 'music' | 'video';
 }
 
 export interface MediaActivity {
-  type: 'listening';
+  type: 'listening' | 'watching';
   name: string;
   details?: string;
   state?: string;
   timestamps?: {
     start?: number;
     end?: number;
+  };
+  playback?: {
+    positionMs: number;
+    durationMs?: number;
   };
   assets?: {
     largeImage?: string;

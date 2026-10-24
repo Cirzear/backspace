@@ -141,6 +141,12 @@ contextBridge.exposeInMainWorld('backspace', {
   },
   getCurrentActivity: () => ipcRenderer.invoke('get-current-activity'),
   getCurrentActivities: () => ipcRenderer.invoke('get-current-activities'),
+  getMediaSetupHint: (): Promise<string | null> => ipcRenderer.invoke('get-media-setup-hint'),
+  onMediaSetupHint: (callback: (hint: string) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, hint: string) => callback(hint);
+    ipcRenderer.on('media-setup-hint', handler);
+    return () => { ipcRenderer.removeListener('media-setup-hint', handler); };
+  },
   listKnownGames: (): Promise<string[]> => ipcRenderer.invoke('list-known-games'),
   // Programs the player can tie their game to, and the tie itself
   listRunningPrograms: (): Promise<Array<{ label: string; process: string }>> => ipcRenderer.invoke('list-running-programs'),

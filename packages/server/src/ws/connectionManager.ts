@@ -335,8 +335,8 @@ class ConnectionManager {
     return this.activityTracker.getUserStatus(userId);
   }
 
-  checkActivityRateLimit(userId: string): boolean {
-    return this.activityTracker.checkActivityRateLimit(userId);
+  checkActivityRateLimit(userId: string, removingPublishedActivities = false): boolean {
+    return this.activityTracker.checkActivityRateLimit(userId, removingPublishedActivities);
   }
 
   setUserSpaces(userId: string, spaceIds: string[]): void {

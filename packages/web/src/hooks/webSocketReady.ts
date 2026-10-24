@@ -216,12 +216,20 @@ function hydrateReadyActivities(origin: string, event: ReadyEvent): void {
   // Re-push local Electron activities after reconnect (sleep/wake, network blip, etc.)
   // The process scanner keeps running but onActivityDetected only fires on change,
   // so if the same app was active before and after sleep, nothing would re-push.
-  if (isHome && window.backspace?.getCurrentActivity) {
-    window.backspace.getCurrentActivity().then((activity: unknown) => {
-      if (activity) {
-        useActivityStore.getState().pushActivities([activity as Activity]);
-      }
-    }).catch(() => { });
+  if (isHome) {
+    if (window.backspace?.getCurrentActivities) {
+      window.backspace.getCurrentActivities().then((activities: unknown) => {
+        if (Array.isArray(activities) && activities.length > 0) {
+          useActivityStore.getState().pushActivities(activities as Activity[]);
+        }
+      }).catch(() => { });
+    } else if (window.backspace?.getCurrentActivity) {
+      window.backspace.getCurrentActivity().then((activity: unknown) => {
+        if (activity) {
+          useActivityStore.getState().pushActivities([activity as Activity]);
+        }
+      }).catch(() => { });
+    }
   }
 
   // Re-push current activities to newly connected instances so their

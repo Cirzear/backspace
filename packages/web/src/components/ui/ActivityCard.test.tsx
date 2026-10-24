@@ -77,4 +77,58 @@ describe('ActivityCard', () => {
     expect(screen.getByText('Cyberpunk 2077')).toBeInTheDocument();
     expect(screen.getByText('Easy On Me · Adele')).toBeInTheDocument();
   });
+
+  it('renders music progress time without requiring a duration', () => {
+    const now = Date.now();
+    const musicActivity: Activity = {
+      type: 'listening',
+      name: '晴天',
+      details: '周杰伦',
+      assets: { smallText: '网易云音乐' },
+      timestamps: {
+        start: now - 83 * 1000,
+      },
+    };
+
+    render(<ActivityCard activities={[musicActivity]} />);
+    expect(screen.getByText('晴天 · 周杰伦')).toBeInTheDocument();
+    expect(screen.getByText('01:23 elapsed')).toBeInTheDocument();
+  });
+
+  it('renders a countdown for music when SMTC provides its duration', () => {
+    const now = Date.now();
+    const musicActivity: Activity = {
+      type: 'listening',
+      name: '晴天',
+      details: '周杰伦',
+      assets: { smallText: '网易云音乐' },
+      timestamps: {
+        start: now - 83 * 1000,
+        end: now - 83 * 1000 + 225 * 1000,
+      },
+    };
+
+    render(<ActivityCard activities={[musicActivity]} />);
+    expect(screen.getByText('02:22 left')).toBeInTheDocument();
+  });
+
+  it('renders progress time stably even if start is slightly ahead due to clock skew', () => {
+    const now = Date.now();
+    const musicActivity: Activity = {
+      type: 'listening',
+      name: '晴天',
+      details: '周杰伦',
+      assets: { smallText: 'NetEase Cloud Music' },
+      timestamps: {
+        // Reporter machine clock is 200ms ahead of viewer
+        start: now + 200,
+      },
+    };
+
+    render(<ActivityCard activities={[musicActivity]} />);
+    expect(screen.getByText('晴天 · 周杰伦')).toBeInTheDocument();
+    expect(screen.getByText('00:00 elapsed')).toBeInTheDocument();
+    // Does not fall back to smallText "NetEase Cloud Music"
+    expect(screen.queryByText('NetEase Cloud Music')).not.toBeInTheDocument();
+  });
 });

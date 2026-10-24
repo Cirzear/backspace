@@ -458,10 +458,6 @@ function handlePresenceUpdate(event: Record<string, unknown>, userId: string): v
 
 function handleActivityUpdate(event: Record<string, unknown>, userId: string, ws: WebSocket): void {
   if (!connectionManager.getUserShowActivity(userId)) return;
-  if (!connectionManager.checkActivityRateLimit(userId)) {
-    connectionManager.sendToUser(userId, { type: 'error', message: 'Activity update rate limited' });
-    return;
-  }
 
   const activities = validateActivities(event.activities);
   if (!activities) {
@@ -469,17 +465,25 @@ function handleActivityUpdate(event: Record<string, unknown>, userId: string, ws
     return;
   }
 
+  const removingPublishedActivities =
+    activities.length < connectionManager.getUserActivities(userId).length;
+  if (!connectionManager.checkActivityRateLimit(userId, removingPublishedActivities)) {
+    connectionManager.sendToUser(userId, { type: 'error', message: 'Activity update rate limited' });
+    return;
+  }
+
   connectionManager.setUserActivities(userId, activities, ws);
+  const publishedActivities = connectionManager.getUserActivities(userId);
   const status = connectionManager.getUserStatus(userId);
 
-  const payload = presenceUpdateFor(userId, status, activities);
+  const payload = presenceUpdateFor(userId, status, publishedActivities);
   const targets = collectProfileBroadcastTargetIds(userId);
   for (const uid of targets) connectionManager.sendToUser(uid, payload);
   connectionManager.sendToUser(userId, payload);
 
   // S2S: broadcast to peers (activities + current status); see queueOutboxEvent.
   void import('../utils/federationPresence.js').then(({ queuePresenceRelay }) => {
-    try { queuePresenceRelay(userId, status as 'online' | 'idle' | 'dnd' | 'offline', activities); } catch (e) { console.warn('[ws] queuePresenceRelay(activity) failed', e); }
+    try { queuePresenceRelay(userId, status as 'online' | 'idle' | 'dnd' | 'offline', publishedActivities); } catch (e) { console.warn('[ws] queuePresenceRelay(activity) failed', e); }
   });
 }
 
