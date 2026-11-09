@@ -14,6 +14,8 @@ export function rowToSpace(row: typeof schema.spaces.$inferSelect): Space {
     visibility: (row.visibility ?? 'private') as Space['visibility'],
     directoryListed: row.directoryListed === 1,
     description: row.description ?? null,
+    systemChannelId: row.systemChannelId ?? null,
+    welcomeMessage: row.welcomeMessage ?? null,
     createdAt: row.createdAt,
   };
 }

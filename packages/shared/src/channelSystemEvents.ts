@@ -1,22 +1,19 @@
 /**
  * The content of a space channel system message (`messages.type = 'system'`),
- * stored as JSON by the instance hosting the space. The only one so far is a
- * poke; docs/systems/websocket.md, "Channel pokes", holds the rules.
+ * stored as JSON by the instance hosting the space.
  *
+ * Supported events:
+ * - channel_poke: an actor pokes another member (docs/systems/websocket.md)
+ * - member_join: a member joins the space (invite code, public explore, or join request)
+ *
+ * Rules:
  * - The instance hosting the space writes the row; no client sends content
  *   for it, and it is never relayed to a peer.
- * - The actor is the row's author (`userId`), named like any author. The
- *   target is `targetUserId`, that instance's id for the member who was poked,
- *   the id its member list and messages carry.
- * - `targetDisplayName` is a snapshot of the target's name in the space when
- *   the row was written (their nickname, else their account name). A client
- *   names the target from the space's roster while they are in it, as every
- *   other surface of the space does, and uses the snapshot only for someone
- *   who is no longer there.
  * - System messages cannot be edited.
  */
 export type ChannelSystemEvent =
-  | { event: 'channel_poke'; targetUserId: string; targetDisplayName: string };
+  | { event: 'channel_poke'; targetUserId: string; targetDisplayName: string }
+  | { event: 'member_join'; userId: string; displayName: string; customMessage?: string | null };
 
 type Fields = Record<string, unknown>;
 
@@ -52,6 +49,13 @@ export function parseChannelSystemEvent(content: string | null | undefined): Cha
     const targetDisplayName = text(value.targetDisplayName);
     if (!targetUserId || !targetDisplayName) return null;
     return { event: 'channel_poke', targetUserId, targetDisplayName };
+  }
+  if (value.event === 'member_join') {
+    const userId = text(value.userId);
+    const displayName = text(value.displayName);
+    if (!userId || !displayName) return null;
+    const customMessage = typeof value.customMessage === 'string' && value.customMessage.length > 0 ? value.customMessage : null;
+    return { event: 'member_join', userId, displayName, customMessage };
   }
   return null;
 }

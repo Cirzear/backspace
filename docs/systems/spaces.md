@@ -83,7 +83,7 @@ Cross-references: [database.md](database.md) (table schemas), [permissions.md](p
 **Endpoint:** `PATCH /api/spaces/:id`
 **Permission:** `MANAGE_SPACE`; `ownerTitle` the owner only
 
-**Updatable fields:** name (1-100 chars), icon, banner, avatarColor (validated against AVATAR_COLORS), visibility (public/request/private), description (max 200 chars), directoryListed (boolean), ownerTitle (see "Owner title" below).
+**Updatable fields:** name (1-100 chars), icon, banner, avatarColor (validated against AVATAR_COLORS), visibility (public/request/private), description (max 200 chars), directoryListed (boolean), systemChannelId (channel ID string or null), welcomeMessage (custom welcome template string or null), ownerTitle (see "Owner title" below).
 
 Every field is checked before anything is written. A body with `ownerTitle` from anyone but the owner is refused with `403 space_owner_only` as a whole, so a member with `MANAGE_SPACE` cannot rename the space in the same request either.
 

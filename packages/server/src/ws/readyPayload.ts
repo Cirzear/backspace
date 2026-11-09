@@ -220,6 +220,8 @@ function buildReadySpaces(userId: string) {
         visibility: (spaceRow.visibility ?? 'private') as SpaceWithChannelsAndMembers['visibility'],
         directoryListed: spaceRow.directoryListed === 1,
         description: spaceRow.description ?? null,
+        systemChannelId: spaceRow.systemChannelId ?? null,
+        welcomeMessage: spaceRow.welcomeMessage ?? null,
         createdAt: spaceRow.createdAt,
         channels: visibleChannels,
         categories: categoriesBySpace.get(spaceRow.id) ?? [],

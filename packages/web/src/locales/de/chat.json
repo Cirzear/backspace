@@ -162,6 +162,9 @@
     "unknownSender": "Jemand",
     "attachmentOnly": "Hat einen Anhang gesendet"
   },
+  "welcome": {
+    "joined": "Willkommen <name>{{name}}</name>! Schön, dass du da bist."
+  },
   "poke": {
     "action": "Anstupsen",
     "received": "{{actor}} hat {{target}} angestupst",

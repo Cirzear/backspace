@@ -8,6 +8,7 @@ import { connectionManager } from '../ws/handler.js';
 import { sanitizeUser } from '../utils/sanitize.js';
 import { sendError } from '../utils/httpErrors.js';
 import { memberRolesView, rolesForViewer } from '../utils/permissionDataView.js';
+import { sendSpaceJoinNotification } from '../utils/spaceJoinNotification.js';
 import type {
   ExploreSpace,
   JoinRequest,
@@ -158,6 +159,8 @@ function buildFullSpace(spaceId: string, forUserId: string): SpaceWithChannelsAn
     visibility: (space.visibility ?? 'private') as SpaceWithChannelsAndMembers['visibility'],
     directoryListed: space.directoryListed === 1,
     description: space.description ?? null,
+    systemChannelId: space.systemChannelId ?? null,
+    welcomeMessage: space.welcomeMessage ?? null,
     createdAt: space.createdAt,
     channels: visibleChannels,
     categories,
@@ -300,6 +303,7 @@ export async function exploreRoutes(app: FastifyInstance): Promise<void> {
         spaceId: id,
         member: memberPayload,
       });
+      sendSpaceJoinNotification(id, joiningUser);
     }
 
     // Return full space data
@@ -491,6 +495,7 @@ export async function exploreRoutes(app: FastifyInstance): Promise<void> {
           spaceId: id,
           member: memberPayload,
         });
+        sendSpaceJoinNotification(id, joiningUser);
       }
 
       // Build full space for the accepted user

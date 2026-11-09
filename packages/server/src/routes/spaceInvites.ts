@@ -11,6 +11,7 @@ import { sanitizeUser } from '../utils/sanitize.js';
 import { getLocalInvitePreview } from '../utils/spaceInviteSnapshot.js';
 import { connectionManager } from '../ws/handler.js';
 import { rowToSpace } from './spaceSerialization.js';
+import { sendSpaceJoinNotification } from '../utils/spaceJoinNotification.js';
 
 interface InviteJoinRefusal {
   status: number;
@@ -86,6 +87,7 @@ function admitByInvite(spaceId: string, userId: string): void {
       spaceId,
       member: memberPayload,
     });
+    sendSpaceJoinNotification(spaceId, joiningUser);
   }
 }
 

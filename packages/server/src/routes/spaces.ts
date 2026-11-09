@@ -99,6 +99,8 @@ export function createSpaceRoutes(app: FastifyInstance): void {
         inviteCode,
         visibility: safeVisibility,
         description: safeDescription,
+        systemChannelId: generalChannelId,
+        welcomeMessage: null,
         createdAt: now,
       }).run();
 

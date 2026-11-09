@@ -1,7 +1,7 @@
 import type { UpdateSpaceRequest } from '@backspace/shared';
 import { AVATAR_COLORS } from '@backspace/shared';
 import { MAX_OWNER_TITLE_LENGTH, normalizeOwnerTitle } from '@backspace/shared/src/constants.js';
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import path from 'path';
 import { config } from '../config.js';
@@ -29,7 +29,7 @@ export function updateSpaceRoutes(app: FastifyInstance): void {
     preHandler: authenticate,
   }, async (request, reply) => {
     const { id } = request.params;
-    const { name, icon, banner, avatarColor, visibility, description, directoryListed, ownerTitle } = request.body;
+    const { name, icon, banner, avatarColor, visibility, description, directoryListed, ownerTitle, systemChannelId, welcomeMessage } = request.body;
     const db = getDb();
 
     const server = db.select().from(schema.spaces).where(eq(schema.spaces.id, id)).get();
@@ -97,6 +97,32 @@ export function updateSpaceRoutes(app: FastifyInstance): void {
     if (description !== undefined) {
       const trimmed = description.trim().slice(0, 200);
       updates.description = trimmed || null;
+    }
+
+    if (systemChannelId !== undefined) {
+      if (systemChannelId === null || systemChannelId === '') {
+        updates.systemChannelId = null;
+      } else {
+        const channel = db.select({ id: schema.channels.id })
+          .from(schema.channels)
+          .where(and(
+            eq(schema.channels.id, systemChannelId),
+            eq(schema.channels.spaceId, id),
+            eq(schema.channels.type, 'text'),
+          )).get();
+        if (!channel) {
+          return sendError(reply, 400, 'channel_not_found');
+        }
+        updates.systemChannelId = systemChannelId;
+      }
+    }
+
+    if (welcomeMessage !== undefined) {
+      if (welcomeMessage === null || welcomeMessage === '') {
+        updates.welcomeMessage = null;
+      } else {
+        updates.welcomeMessage = welcomeMessage.trim().slice(0, 500) || null;
+      }
     }
 
     // Directory listing follows the same MANAGE_SPACE rule as visibility. A

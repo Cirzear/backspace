@@ -162,6 +162,9 @@
     "unknownSender": "Someone",
     "attachmentOnly": "Sent an attachment"
   },
+  "welcome": {
+    "joined": "Welcome <name>{{name}}</name>! Glad you're here."
+  },
   "poke": {
     "action": "Poke",
     "received": "{{actor}} poked {{target}}",

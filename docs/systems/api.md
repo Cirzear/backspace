@@ -117,7 +117,7 @@ GET    /users/:id/mutuals     ?homeUserId=               → { mutualFriends[], 
 GET    /spaces                                                                 → { spaces[] }
 POST   /spaces                { name, icon?, description? }                    → { space }
 GET    /spaces/:id                                                             → { space, channels[], members[], roles[] }
-PATCH  /spaces/:id            { name?, icon?, banner?, description?, visibility?, avatarColor?, directoryListed?, ownerTitle? } → { space }   [MANAGE_SPACE; ownerTitle: owner]
+PATCH  /spaces/:id            { name?, icon?, banner?, description?, visibility?, avatarColor?, directoryListed?, systemChannelId?, welcomeMessage?, ownerTitle? } → { space }   [MANAGE_SPACE; ownerTitle: owner]
 DELETE /spaces/:id                                                             → { success }  [owner]
 POST   /spaces/:id/invite                                                      → { inviteCode }  [CREATE_INVITE]
 POST   /spaces/:id/join       { inviteCode }                                   → { space }
@@ -200,7 +200,7 @@ DELETE /messages/:id                                      → { success }  [auth
 
 Content with `@everyone`, `@here` or a role token (`<@&roleId>`) outside code needs MENTION_EVERYONE on the channel: without it POST answers `403 missing_permission` (`details.permission` = `MENTION_EVERYONE`) and nothing is stored. PATCH refuses the same way only when the edit adds a mass mention the stored message did not have. Every channel message the server returns or broadcasts carries `mentionEveryone: boolean` and `mentionRoleIds: string[]`, read from its content; a system message carries `false` and `[]` whatever its content holds. See permissions.md, "Mass mentions".
 
-Every channel message also carries `type`: `user`, or `system` for a row the instance wrote (a poke; websocket.md, "Channel pokes"). History and messages-around return system rows in place; a 1.10.0 or older server sends no `type` and has no channel system rows. A system row is never created over REST. PATCH on one answers `403 system_message_immutable`, its author included, before the author check. A POST whose `replyToId` names a system row is `400 reply_target_invalid`. Channel search (below) leaves system rows out of its results and its count.
+Every channel message also carries `type`: `user`, or `system` for a row the instance wrote (a poke or a member join welcome notification; websocket.md, "Channel pokes"). History and messages-around return system rows in place; a 1.10.0 or older server sends no `type` and has no channel system rows. A system row is never created over REST. PATCH on one answers `403 system_message_immutable`, its author included, before the author check. A POST whose `replyToId` names a system row is `400 reply_target_invalid`. Channel search (below) leaves system rows out of its results and its count.
 
 ### Message history paging
 

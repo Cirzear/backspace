@@ -10,7 +10,6 @@ import { useSelfIdentity } from '../../../stores/authStore';
 import { useSpaceOrigin } from '../../../hooks/useSpaceOrigin';
 import { useUIStore } from '../../../stores/uiStore';
 import { useNavigate } from 'react-router-dom';
-import { api } from '../../../api/client';
 import { useTransferStore } from '../../../stores/transferStore';
 import { waitForTransferAttachment } from '../../../utils/waitForTransfer';
 import { hasPermissionBit, PermissionBits } from '../../../utils/permissions';
@@ -56,6 +55,8 @@ export function OverviewPanel({ spaceId }: OverviewPanelProps) {
   const bannerFileInputRef = useRef<HTMLInputElement>(null);
 
   const [avatarColorState, setAvatarColorState] = useState<AvatarColor | null>(space?.avatarColor ?? null);
+  const [systemChannelIdState, setSystemChannelIdState] = useState<string>(space?.systemChannelId ?? '');
+  const [welcomeMessageState, setWelcomeMessageState] = useState<string>(space?.welcomeMessage ?? '');
 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
@@ -64,6 +65,7 @@ export function OverviewPanel({ spaceId }: OverviewPanelProps) {
 
   // Transfer ownership state
   const members = useSpaceStore((s) => s.members);
+  const channels = useSpaceStore((s) => s.channels);
   const transferOwnership = useSpaceStore((s) => s.transferOwnership);
   const addToast = useUIStore((s) => s.addToast);
   const [showTransfer, setShowTransfer] = useState(false);
@@ -75,6 +77,8 @@ export function OverviewPanel({ spaceId }: OverviewPanelProps) {
     if (space) {
       setSpaceName(space.name);
       setAvatarColorState(space.avatarColor ?? null);
+      setSystemChannelIdState(space.systemChannelId ?? '');
+      setWelcomeMessageState(space.welcomeMessage ?? '');
       setIconFilename(null);
       if (iconPreview) {
         URL.revokeObjectURL(iconPreview);
@@ -86,7 +90,7 @@ export function OverviewPanel({ spaceId }: OverviewPanelProps) {
         setBannerPreview(null);
       }
     }
-  }, [space?.name, space?.icon, space?.banner, space?.avatarColor]);
+  }, [space?.name, space?.icon, space?.banner, space?.avatarColor, space?.systemChannelId, space?.welcomeMessage]);
 
   // Kept above the `!space` guard. The guard is reachable while this panel
   // stays mounted: the WebSocket handler calls spaceStore.removeSpace on
@@ -107,13 +111,17 @@ export function OverviewPanel({ spaceId }: OverviewPanelProps) {
     );
   }, [members, myIdHere, transferSearch]);
 
+  const textChannels = useMemo(() => channels.filter((c) => c.spaceId === spaceId && c.type === 'text'), [channels, spaceId]);
+
   if (!space) return null;
 
   const hasNameChange = spaceName.trim() !== space.name;
   const hasIconChange = iconFilename !== null;
   const hasBannerChange = bannerFilename !== null;
   const hasAvatarColorChange = avatarColorState !== (space.avatarColor ?? null);
-  const hasChanges = hasNameChange || hasIconChange || hasBannerChange || hasAvatarColorChange;
+  const hasSystemChannelChange = systemChannelIdState !== (space.systemChannelId ?? '');
+  const hasWelcomeMessageChange = welcomeMessageState !== (space.welcomeMessage ?? '');
+  const hasChanges = hasNameChange || hasIconChange || hasBannerChange || hasAvatarColorChange || hasSystemChannelChange || hasWelcomeMessageChange;
 
   const currentIconUrl = space.icon
     ? getUploadUrl(space.icon, space._instanceOrigin)
@@ -211,7 +219,14 @@ export function OverviewPanel({ spaceId }: OverviewPanelProps) {
     setSaving(true);
     setSaveError('');
     try {
-      const updates: { name?: string; icon?: string; banner?: string; avatarColor?: string } = {};
+      const updates: {
+        name?: string;
+        icon?: string;
+        banner?: string;
+        avatarColor?: string;
+        systemChannelId?: string | null;
+        welcomeMessage?: string | null;
+      } = {};
       if (hasNameChange) updates.name = spaceName.trim();
       if (hasIconChange) {
         updates.icon = iconFilename === '' ? '' : iconFilename!;
@@ -221,6 +236,12 @@ export function OverviewPanel({ spaceId }: OverviewPanelProps) {
       }
       if (hasAvatarColorChange) {
         updates.avatarColor = avatarColorState ?? '';
+      }
+      if (hasSystemChannelChange) {
+        updates.systemChannelId = systemChannelIdState || null;
+      }
+      if (hasWelcomeMessageChange) {
+        updates.welcomeMessage = welcomeMessageState.trim() || null;
       }
       await updateSpace(spaceId, updates);
       setIconFilename(null);
@@ -244,6 +265,8 @@ export function OverviewPanel({ spaceId }: OverviewPanelProps) {
   const handleDiscard = () => {
     setSpaceName(space.name);
     setAvatarColorState(space.avatarColor ?? null);
+    setSystemChannelIdState(space.systemChannelId ?? '');
+    setWelcomeMessageState(space.welcomeMessage ?? '');
     setIconFilename(null);
     if (iconPreview) {
       URL.revokeObjectURL(iconPreview);
@@ -469,6 +492,50 @@ export function OverviewPanel({ spaceId }: OverviewPanelProps) {
             disabled={!canManageSpace}
           />
         </div>
+
+        {/* System Notification Channel */}
+        <div>
+          <label className="block text-xs text-txt-secondary mb-1.5">
+            {t('spaces:settings.overview.systemChannelLabel')}
+          </label>
+          <select
+            value={systemChannelIdState}
+            onChange={(e) => setSystemChannelIdState(e.target.value)}
+            disabled={!canManageSpace}
+            className="input-standard w-full"
+          >
+            <option value="">{t('spaces:settings.overview.noSystemChannel')}</option>
+            {textChannels.map((ch) => (
+              <option key={ch.id} value={ch.id}>
+                # {ch.name}
+              </option>
+            ))}
+          </select>
+          <p className="text-[11px] text-txt-tertiary mt-1">
+            {t('spaces:settings.overview.systemChannelHint')}
+          </p>
+        </div>
+
+        {/* Welcome Message Template */}
+        {systemChannelIdState && (
+          <div>
+            <label className="block text-xs text-txt-secondary mb-1.5">
+              {t('spaces:settings.overview.welcomeMessageLabel')}
+            </label>
+            <input
+              type="text"
+              value={welcomeMessageState}
+              onChange={(e) => setWelcomeMessageState(e.target.value)}
+              placeholder={t('spaces:settings.overview.welcomeMessagePlaceholder')}
+              maxLength={200}
+              className="input-standard w-full"
+              disabled={!canManageSpace}
+            />
+            <p className="text-[11px] text-txt-tertiary mt-1">
+              {t('spaces:settings.overview.welcomeMessageHint')}
+            </p>
+          </div>
+        )}
           </div>
         </div>
 

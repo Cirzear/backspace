@@ -170,6 +170,12 @@ export function healLegacyColumns(db: Database.Database): void {
     if (!cols.some((c) => c.name === 'owner_title')) {
       db.exec("ALTER TABLE `spaces` ADD `owner_title` text DEFAULT NULL");
     }
+    if (!cols.some((c) => c.name === 'system_channel_id')) {
+      db.exec("ALTER TABLE `spaces` ADD `system_channel_id` text DEFAULT NULL");
+    }
+    if (!cols.some((c) => c.name === 'welcome_message')) {
+      db.exec("ALTER TABLE `spaces` ADD `welcome_message` text DEFAULT NULL");
+    }
   }
 }
 

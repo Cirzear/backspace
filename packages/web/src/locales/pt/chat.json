@@ -166,6 +166,9 @@
     "unknownSender": "Alguém",
     "attachmentOnly": "Enviou um anexo"
   },
+  "welcome": {
+    "joined": "Boas-vindas, <name>{{name}}</name>! Que bom que você está aqui."
+  },
   "embed": {
     "loadAction": "Clique para carregar",
     "loadNamed": "Carregar {{name}}",

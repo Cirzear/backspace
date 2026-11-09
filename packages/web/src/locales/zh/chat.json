@@ -158,6 +158,9 @@
     "unknownSender": "有人",
     "attachmentOnly": "发送了一个附件"
   },
+  "welcome": {
+    "joined": "欢迎 <name>{{name}}</name> 加入了服务器！"
+  },
   "poke": {
     "action": "戳一戳",
     "received": "{{actor}} 戳了戳 {{target}}",

@@ -76,6 +76,8 @@ export const spaces = sqliteTable('spaces', {
   visibility: text('visibility').default('private'),
   directoryListed: integer('directory_listed').notNull().default(0),
   description: text('description'),
+  systemChannelId: text('system_channel_id'),
+  welcomeMessage: text('welcome_message'),
   createdAt: integer('created_at').notNull(),
 });
 

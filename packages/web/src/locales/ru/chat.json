@@ -170,6 +170,9 @@
     "unknownSender": "Кто-то",
     "attachmentOnly": "Отправлено вложение"
   },
+  "welcome": {
+    "joined": "Добро пожаловать, <name>{{name}}</name>!"
+  },
   "poke": {
     "action": "Толкнуть",
     "received": "{{actor}} толкнул(а) {{target}}",

@@ -63,6 +63,8 @@ Adds `detached_home_instance`, `detached_home_user_id` and their index. The data
 | visibility | text | `'private'` | public/request/private |
 | description | text | | |
 | directoryListed | integer NOT NULL | 0 | The owner asked for this space to be listed in the space directory. Refused on a private space (`400 directory_private_space`) and cleared in the same write when a listed space goes private. Served on `GET /api/directory/spaces` only while `instance_settings.directoryEnabled` and `discoveryEnabled` are both 1. See [directory.md](directory.md). |
+| systemChannelId | text | NULL | The text channel where system welcome notifications are sent when a member joins the space (migration `0037_space_system_channel_and_welcome`). Null disables notifications. |
+| welcomeMessage | text | NULL | Custom welcome message template (max 500 chars, migration `0037_space_system_channel_and_welcome`). Supports `{username}` / `{user}` variable replacement. Null uses the default localized welcome string. |
 | createdAt | integer NOT NULL | | |
 
 ### space_members

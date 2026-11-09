@@ -143,6 +143,10 @@ export interface Space {
   visibility: SpaceVisibility;
   directoryListed: boolean;
   description: string | null;
+  /** The channel where member join notifications are posted, null or absent for none. */
+  systemChannelId?: string | null;
+  /** Custom welcome message template, null or absent for default. Supports {username} / {user} variable. */
+  welcomeMessage?: string | null;
   createdAt: number;
 }
 
@@ -925,6 +929,8 @@ export interface UpdateSpaceRequest {
   visibility?: SpaceVisibility;
   directoryListed?: boolean;
   description?: string;
+  systemChannelId?: string | null;
+  welcomeMessage?: string | null;
 }
 
 export interface UpdateUserRequest {

@@ -138,4 +138,27 @@ describe('OverviewPanel ownership transfer candidates', () => {
     expect(screen.getByText('Member')).toBeInTheDocument();
     expect(screen.queryByText('Owner')).not.toBeInTheDocument();
   });
+
+  it('renders system channel dropdown with text channels and allows changing system channel', async () => {
+    useSpaceStore.setState({
+      spaces: [{ ...space, systemChannelId: 'chan-1', welcomeMessage: 'Hello {username}' }],
+      channels: [
+        { id: 'chan-1', spaceId: 'space-1', name: 'general', type: 'text', position: 0, categoryId: null, createdAt: 1 },
+        { id: 'chan-2', spaceId: 'space-1', name: 'voice', type: 'voice', position: 1, categoryId: null, createdAt: 1 },
+      ],
+    });
+
+    renderPanel();
+
+    const select = screen.getByRole('combobox');
+    expect(select).toBeInTheDocument();
+    expect(screen.getByText('# general')).toBeInTheDocument();
+    expect(screen.queryByText('# voice')).not.toBeInTheDocument();
+
+    const welcomeInput = screen.getByDisplayValue('Hello {username}');
+    expect(welcomeInput).toBeInTheDocument();
+
+    fireEvent.change(welcomeInput, { target: { value: 'Welcome {username} to our server!' } });
+    expect(screen.getByDisplayValue('Welcome {username} to our server!')).toBeInTheDocument();
+  });
 });

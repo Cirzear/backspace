@@ -524,6 +524,12 @@ export async function channelRoutes(app: FastifyInstance): Promise<void> {
     db.delete(schema.messages).where(eq(schema.messages.channelId, id)).run();
     db.delete(schema.channels).where(eq(schema.channels.id, id)).run();
 
+    // If the space used this channel as its system channel, clear it
+    db.update(schema.spaces)
+      .set({ systemChannelId: null })
+      .where(and(eq(schema.spaces.id, spaceId), eq(schema.spaces.systemChannelId, id)))
+      .run();
+
     // Delete attachment files from disk
     deleteAttachmentFiles(attachmentRows);
 

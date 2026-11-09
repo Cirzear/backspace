@@ -63,4 +63,37 @@ describe('ChannelSystemMessage', () => {
     const text = render(<ChannelSystemMessage message={poke('Actor poked someone')} />);
     expect(text.container.textContent).toBe('System message');
   });
+
+  it('renders default welcome message for member_join event', () => {
+    useSpaceStore.setState({ members: [member(actor, 'StarCaptain')] });
+    const joinMsg = poke({ event: 'member_join', userId: 'actor', displayName: 'Actor' });
+    const { container } = render(<ChannelSystemMessage message={joinMsg} />);
+    expect(container.textContent).toContain('StarCaptain');
+    expect(container.textContent).toContain('Glad you\'re here');
+  });
+
+  it('renders custom welcome message with {username} placeholder replaced', () => {
+    useSpaceStore.setState({ members: [member(actor, 'StarCaptain')] });
+    const joinMsg = poke({
+      event: 'member_join',
+      userId: 'actor',
+      displayName: 'Actor',
+      customMessage: 'Hey {username}, welcome to our guild!',
+    });
+    const { container } = render(<ChannelSystemMessage message={joinMsg} />);
+    expect(container.textContent).toBe('Hey StarCaptain, welcome to our guild!');
+  });
+
+  it('renders custom welcome message appended when no placeholder provided', () => {
+    useSpaceStore.setState({ members: [member(actor, 'StarCaptain')] });
+    const joinMsg = poke({
+      event: 'member_join',
+      userId: 'actor',
+      displayName: 'Actor',
+      customMessage: 'Enjoy your stay!',
+    });
+    const { container } = render(<ChannelSystemMessage message={joinMsg} />);
+    expect(container.textContent).toContain('StarCaptain');
+    expect(container.textContent).toContain('Enjoy your stay!');
+  });
 });
