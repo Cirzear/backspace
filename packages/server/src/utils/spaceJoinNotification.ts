@@ -2,7 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import { getDb, schema } from '../db/index.js';
 import { generateSnowflake } from './snowflake.js';
 import { buildMessageWithUser } from '../routes/messages.js';
-import { channelSystemContent } from '@backspace/shared/src/channelSystemEvents.js';
+import { SYSTEM_JOIN_VARIANTS_COUNT, channelSystemContent } from '@backspace/shared/src/channelSystemEvents.js';
 import { connectionManager } from '../ws/handler.js';
 import { dmSystemName } from './dmSystemMessages.js';
 
@@ -45,11 +45,33 @@ export function sendSpaceJoinNotification(
   const now = Date.now();
   const messageId = generateSnowflake();
 
+  let customMessage: string | null = null;
+  let variantIndex: number | null = null;
+
+  if (space.welcomeMessage && space.welcomeMessage.trim().length > 0) {
+    const lines = space.welcomeMessage
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
+    if (lines.length === 1) {
+      customMessage = lines[0]!;
+    } else if (lines.length > 1) {
+      const randomIndex = Math.floor(Math.random() * lines.length);
+      customMessage = lines[randomIndex]!;
+    }
+  }
+
+  if (!customMessage) {
+    variantIndex = Math.floor(Math.random() * SYSTEM_JOIN_VARIANTS_COUNT);
+  }
+
   const content = channelSystemContent({
     event: 'member_join',
     userId: joiningUser.id,
     displayName,
-    customMessage: space.welcomeMessage ?? null,
+    customMessage,
+    variantIndex,
   });
 
   const row = db.insert(schema.messages).values({

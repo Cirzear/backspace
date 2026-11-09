@@ -1,10 +1,11 @@
 import type { MessageWithUser, User } from '@backspace/shared';
-import { parseChannelSystemEvent } from '@backspace/shared/src/channelSystemEvents';
+import { SYSTEM_JOIN_VARIANTS_COUNT, parseChannelSystemEvent } from '@backspace/shared/src/channelSystemEvents';
 import React from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { useSpaceStore } from '../../stores/spaceStore';
 import { spaceMemberName } from '../../utils/identity';
 import { useCanonicalUserView } from '../../utils/userViewLookup';
+import { MentionBadge } from './MentionBadge';
 
 interface ChannelSystemMessageProps {
   message: MessageWithUser;
@@ -12,6 +13,17 @@ interface ChannelSystemMessageProps {
 
 /** Stands in for the roster row's user when the target is not in the roster; its name is never shown. */
 const NO_USER = { id: '', username: '', createdAt: 0, isAdmin: false, replicatedInstances: [] } as unknown as User;
+
+const VARIANT_KEYS = [
+  'chat:welcome.variant0',
+  'chat:welcome.variant1',
+  'chat:welcome.variant2',
+  'chat:welcome.variant3',
+  'chat:welcome.variant4',
+  'chat:welcome.variant5',
+  'chat:welcome.variant6',
+  'chat:welcome.variant7',
+] as const;
 
 /**
  * Timeline row for a space channel system message (`channelSystemEvents.ts`).
@@ -48,18 +60,29 @@ export function ChannelSystemMessage({ message }: ChannelSystemMessageProps) {
 
   if (event?.event === 'member_join') {
     const name = actorMember ? spaceMemberName(actorMember, actorUser) : event.displayName;
+    const mentionBadge = (
+      <MentionBadge
+        userId={event.userId}
+        channelId={message.channelId}
+        fallbackName={name}
+        fallbackUser={actorUser}
+      />
+    );
 
     let content: React.ReactNode;
     if (event.customMessage) {
-      if (event.customMessage.includes('{username}') || event.customMessage.includes('{user}')) {
-        const parts = event.customMessage.split(/(\{username\}|\{user\})/g);
+      if (
+        event.customMessage.includes('{username}') ||
+        event.customMessage.includes('@{username}') ||
+        event.customMessage.includes('{user}') ||
+        event.customMessage.includes('@{user}')
+      ) {
+        const parts = event.customMessage.split(/(@?\{username\}|@?\{user\})/g);
         content = (
           <span>
             {parts.map((part, i) =>
-              part === '{username}' || part === '{user}' ? (
-                <span key={i} className="font-semibold text-txt-primary">
-                  {name}
-                </span>
+              part === '{username}' || part === '@{username}' || part === '{user}' || part === '@{user}' ? (
+                <React.Fragment key={i}>{mentionBadge}</React.Fragment>
               ) : (
                 <span key={i}>{part}</span>
               ),
@@ -69,26 +92,24 @@ export function ChannelSystemMessage({ message }: ChannelSystemMessageProps) {
       } else {
         content = (
           <span>
-            <Trans
-              t={t}
-              i18nKey="chat:welcome.joined"
-              values={{ name }}
-              components={{
-                name: <span className="font-semibold text-txt-primary" />,
-              }}
-            />{' '}
-            — {event.customMessage}
+            {mentionBadge} — {event.customMessage}
           </span>
         );
       }
     } else {
+      const variantIndex =
+        typeof event.variantIndex === 'number' && event.variantIndex >= 0
+          ? event.variantIndex % SYSTEM_JOIN_VARIANTS_COUNT
+          : 0;
+      const variantKey = VARIANT_KEYS[variantIndex] ?? 'chat:welcome.variant0';
+
       content = (
         <Trans
           t={t}
-          i18nKey="chat:welcome.joined"
+          i18nKey={variantKey}
           values={{ name }}
           components={{
-            name: <span className="font-semibold text-txt-primary" />,
+            name: mentionBadge,
           }}
         />
       );

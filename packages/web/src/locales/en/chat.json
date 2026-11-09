@@ -163,7 +163,15 @@
     "attachmentOnly": "Sent an attachment"
   },
   "welcome": {
-    "joined": "Welcome <name>{{name}}</name>! Glad you're here."
+    "joined": "Welcome <name>{{name}}</name>! Glad you're here.",
+    "variant0": "Welcome <name>{{name}}</name> to the space!",
+    "variant1": "Everyone welcome <name>{{name}}</name>!",
+    "variant2": "A wild <name>{{name}}</name> appeared!",
+    "variant3": "<name>{{name}}</name> just hopped into the space, say hello!",
+    "variant4": "Good to see you, <name>{{name}}</name>.",
+    "variant5": "Welcome <name>{{name}}</name>, hope you brought pizza!",
+    "variant6": "<name>{{name}}</name> has arrived. Party's over! (Just kidding)",
+    "variant7": "Look! <name>{{name}}</name> is here!"
   },
   "poke": {
     "action": "Poke",

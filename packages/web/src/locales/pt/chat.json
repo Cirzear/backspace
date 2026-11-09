@@ -167,7 +167,15 @@
     "attachmentOnly": "Enviou um anexo"
   },
   "welcome": {
-    "joined": "Boas-vindas, <name>{{name}}</name>! Que bom que você está aqui."
+    "joined": "Boas-vindas, <name>{{name}}</name>! Que bom que você está aqui.",
+    "variant0": "Boas-vindas a <name>{{name}}</name> ao espaço!",
+    "variant1": "Todos deem as boas-vindas a <name>{{name}}</name>!",
+    "variant2": "Um <name>{{name}}</name> selvagem apareceu!",
+    "variant3": "<name>{{name}}</name> acabou de entrar no espaço, dê um olá!",
+    "variant4": "Bom ver você, <name>{{name}}</name>.",
+    "variant5": "Boas-vindas, <name>{{name}}</name>, esperamos que tenha trazido pizza!",
+    "variant6": "<name>{{name}}</name> chegou, preparem-se!",
+    "variant7": "Olhem! <name>{{name}}</name> está aqui!"
   },
   "embed": {
     "loadAction": "Clique para carregar",

@@ -1,5 +1,6 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
+import type { User } from '@backspace/shared';
 import { useUIStore } from '../../stores/uiStore';
 import { useChannelUser } from '../../utils/channelUser';
 import { spaceMemberName } from '../../utils/identity';
@@ -24,24 +25,40 @@ interface MentionBadgeProps {
    * interactive content in that control.
    */
   interactive?: boolean;
+  /** Fallback display name if channel member lookup has not resolved. */
+  fallbackName?: string;
+  /** Fallback user object if channel member lookup has not resolved. */
+  fallbackUser?: User;
+  children?: React.ReactNode;
 }
 
-export const MentionBadge = React.memo(function MentionBadge({ userId, channelId, interactive = true }: MentionBadgeProps) {
+export const MentionBadge = React.memo(function MentionBadge({
+  userId,
+  channelId,
+  interactive = true,
+  fallbackName,
+  fallbackUser,
+  children,
+}: MentionBadgeProps) {
   const { t } = useTranslation('chat');
   const openUserProfile = useUIStore((s) => s.openUserProfile);
   const resolved = useChannelUser(channelId, userId);
 
-  const displayName = resolved ? spaceMemberName(resolved.member, resolved.user) : t('message.mention.unknownUser');
+  const user = resolved?.user ?? fallbackUser;
+  const fallbackFromChildren = typeof children === 'string' && children.trim().length > 0 ? children.trim() : undefined;
+  const displayName = resolved
+    ? spaceMemberName(resolved.member, resolved.user)
+    : (fallbackName ?? fallbackFromChildren ?? t('message.mention.unknownUser'));
   // Role colour and owner rose exist only in space channels (nameColor is null in a DM).
   const color = resolved ? resolved.nameColor ?? ACCENT_COLOR : UNRESOLVED_COLOR;
 
   const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
-    if (!resolved) return;
+    if (!user) return;
     e.stopPropagation();
-    const memberContext = resolved.member
+    const memberContext = resolved?.member
       ? { spaceId: resolved.member.spaceId, userId: resolved.member.userId }
       : undefined;
-    openUserProfile(resolved.user, resolved.origin, e.currentTarget.getBoundingClientRect(), undefined, memberContext);
+    openUserProfile(user, resolved?.origin ?? '', e.currentTarget.getBoundingClientRect(), undefined, memberContext);
   };
 
   // Build inline styles: role-colored text with tinted background
@@ -49,7 +66,7 @@ export const MentionBadge = React.memo(function MentionBadge({ userId, channelId
   const baseClass = 'inline-flex items-center rounded-[3px] px-[2px] font-medium';
 
   // Plain text inside another control, and when there is no profile to open.
-  if (!interactive || !resolved) {
+  if (!interactive || !user) {
     return (
       <span className={baseClass} style={{ color, backgroundColor: bgColor }}>
         @{displayName}

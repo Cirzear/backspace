@@ -121,7 +121,7 @@ export function updateSpaceRoutes(app: FastifyInstance): void {
       if (welcomeMessage === null || welcomeMessage === '') {
         updates.welcomeMessage = null;
       } else {
-        updates.welcomeMessage = welcomeMessage.trim().slice(0, 500) || null;
+        updates.welcomeMessage = welcomeMessage.trim().slice(0, 2000) || null;
       }
     }
 

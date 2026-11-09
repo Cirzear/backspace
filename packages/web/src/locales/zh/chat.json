@@ -159,7 +159,15 @@
     "attachmentOnly": "发送了一个附件"
   },
   "welcome": {
-    "joined": "欢迎 <name>{{name}}</name> 加入了服务器！"
+    "joined": "欢迎 <name>{{name}}</name> 加入了服务器！",
+    "variant0": "欢迎 <name>{{name}}</name> 加入了空间！",
+    "variant1": "大家快来欢迎 <name>{{name}}</name>！",
+    "variant2": "野生的 <name>{{name}}</name> 出现了！",
+    "variant3": "<name>{{name}}</name> 刚刚跳进了空间，快打个招呼吧~",
+    "variant4": "很高兴见到你，<name>{{name}}</name>。",
+    "variant5": "欢迎 <name>{{name}}</name>，希望你带了披萨来！",
+    "variant6": "<name>{{name}}</name> 来了，大家做好准备！",
+    "variant7": "快看！是 <name>{{name}}</name> 来了！"
   },
   "poke": {
     "action": "戳一戳",

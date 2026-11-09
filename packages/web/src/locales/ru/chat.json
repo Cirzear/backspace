@@ -171,7 +171,15 @@
     "attachmentOnly": "Отправлено вложение"
   },
   "welcome": {
-    "joined": "Добро пожаловать, <name>{{name}}</name>!"
+    "joined": "Добро пожаловать, <name>{{name}}</name>!",
+    "variant0": "Добро пожаловать в пространство, <name>{{name}}</name>!",
+    "variant1": "Все приветствуют <name>{{name}}</name>!",
+    "variant2": "Появился дикий <name>{{name}}</name>!",
+    "variant3": "<name>{{name}}</name> только что запрыгнул(а) в пространство, поздоровайтесь!",
+    "variant4": "Рады видеть вас, <name>{{name}}</name>.",
+    "variant5": "Добро пожаловать, <name>{{name}}</name>, надеемся, пицца с вами!",
+    "variant6": "<name>{{name}}</name> прибыл(а), приготовьтесь!",
+    "variant7": "Смотрите! <name>{{name}}</name> здесь!"
   },
   "poke": {
     "action": "Толкнуть",

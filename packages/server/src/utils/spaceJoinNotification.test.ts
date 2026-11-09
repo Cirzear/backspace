@@ -98,12 +98,18 @@ describe('sendSpaceJoinNotification', () => {
     expect(msgs[0]!.userId).toBe('joiner');
 
     const event = parseChannelSystemEvent(msgs[0]!.content);
-    expect(event).toEqual({
+    expect(event?.event).toBe('member_join');
+    if (event?.event !== 'member_join') throw new Error('Expected member_join');
+
+    expect(event).toMatchObject({
       event: 'member_join',
       userId: 'joiner',
       displayName: 'New Friend',
       customMessage: null,
     });
+    expect(typeof event.variantIndex).toBe('number');
+    expect(event.variantIndex!).toBeGreaterThanOrEqual(0);
+    expect(event.variantIndex!).toBeLessThan(8);
 
     expect(sendToChannel).toHaveBeenCalledTimes(1);
     expect(sendToChannel).toHaveBeenCalledWith(
@@ -135,7 +141,26 @@ describe('sendSpaceJoinNotification', () => {
       userId: 'joiner',
       displayName: 'New Friend',
       customMessage: 'Welcome {username} to the server!',
+      variantIndex: null,
     });
+  });
+
+  it('randomly selects one line when multi-line welcomeMessage is configured', () => {
+    testDb.update(schema.spaces)
+      .set({ welcomeMessage: 'Option 1\nOption 2\nOption 3' })
+      .where(eq(schema.spaces.id, SPACE))
+      .run();
+
+    const user = testDb.select().from(schema.users).where(eq(schema.users.id, 'joiner')).get()!;
+    sendSpaceJoinNotification(SPACE, user);
+
+    const msg = testDb.select().from(schema.messages).where(eq(schema.messages.channelId, CHANNEL)).get()!;
+    const event = parseChannelSystemEvent(msg.content);
+    expect(event?.event).toBe('member_join');
+    if (event?.event !== 'member_join') throw new Error('Expected member_join');
+
+    expect(event.variantIndex).toBeNull();
+    expect(['Option 1', 'Option 2', 'Option 3']).toContain(event.customMessage);
   });
 
   it('does nothing when space has no systemChannelId configured', () => {

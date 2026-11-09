@@ -160,5 +160,18 @@ describe('OverviewPanel ownership transfer candidates', () => {
 
     fireEvent.change(welcomeInput, { target: { value: 'Welcome {username} to our server!' } });
     expect(screen.getByDisplayValue('Welcome {username} to our server!')).toBeInTheDocument();
+
+    // Add a second welcome message row
+    const addButton = screen.getByText('Add welcome message');
+    fireEvent.click(addButton);
+
+    const inputs = screen.getAllByRole('textbox');
+    // Name input is inputs[0], welcome message inputs follow
+    expect(inputs.length).toBeGreaterThanOrEqual(3);
+
+    // Remove the first custom welcome message
+    const removeButtons = screen.getAllByLabelText('Remove');
+    fireEvent.click(removeButtons[0]!);
+    expect(screen.queryByDisplayValue('Welcome {username} to our server!')).not.toBeInTheDocument();
   });
 });

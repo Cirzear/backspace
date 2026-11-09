@@ -11,9 +11,17 @@
  *   for it, and it is never relayed to a peer.
  * - System messages cannot be edited.
  */
+export const SYSTEM_JOIN_VARIANTS_COUNT = 8;
+
 export type ChannelSystemEvent =
   | { event: 'channel_poke'; targetUserId: string; targetDisplayName: string }
-  | { event: 'member_join'; userId: string; displayName: string; customMessage?: string | null };
+  | {
+      event: 'member_join';
+      userId: string;
+      displayName: string;
+      customMessage?: string | null;
+      variantIndex?: number | null;
+    };
 
 type Fields = Record<string, unknown>;
 
@@ -55,7 +63,10 @@ export function parseChannelSystemEvent(content: string | null | undefined): Cha
     const displayName = text(value.displayName);
     if (!userId || !displayName) return null;
     const customMessage = typeof value.customMessage === 'string' && value.customMessage.length > 0 ? value.customMessage : null;
-    return { event: 'member_join', userId, displayName, customMessage };
+    const variantIndex = typeof value.variantIndex === 'number' && Number.isInteger(value.variantIndex) && value.variantIndex >= 0
+      ? value.variantIndex
+      : null;
+    return { event: 'member_join', userId, displayName, customMessage, variantIndex };
   }
   return null;
 }

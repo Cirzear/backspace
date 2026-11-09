@@ -163,7 +163,15 @@
     "attachmentOnly": "Hat einen Anhang gesendet"
   },
   "welcome": {
-    "joined": "Willkommen <name>{{name}}</name>! Schön, dass du da bist."
+    "joined": "Willkommen <name>{{name}}</name>! Schön, dass du da bist.",
+    "variant0": "Willkommen im Space, <name>{{name}}</name>!",
+    "variant1": "Heißt alle <name>{{name}}</name> willkommen!",
+    "variant2": "Ein wildes <name>{{name}}</name> ist aufgetaucht!",
+    "variant3": "<name>{{name}}</name> ist gerade in den Space gehüpft, sag Hallo!",
+    "variant4": "Schön dich zu sehen, <name>{{name}}</name>.",
+    "variant5": "Willkommen <name>{{name}}</name>, hoffentlich hast du Pizza mitgebracht!",
+    "variant6": "<name>{{name}}</name> ist da, macht euch bereit!",
+    "variant7": "Schaut mal! <name>{{name}}</name> ist hier!"
   },
   "poke": {
     "action": "Anstupsen",

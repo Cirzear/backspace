@@ -20,6 +20,16 @@ interface OverviewPanelProps {
   spaceId: string;
 }
 
+function parseWelcomeMessages(raw?: string | null): string[] {
+  if (!raw) return [];
+  return raw.split('\n').map((s) => s.trim()).filter((s) => s.length > 0);
+}
+
+function serializeWelcomeMessages(list: string[]): string | null {
+  const cleaned = list.map((s) => s.trim()).filter((s) => s.length > 0);
+  return cleaned.length > 0 ? cleaned.join('\n') : null;
+}
+
 export function OverviewPanel({ spaceId }: OverviewPanelProps) {
   const { t } = useTranslation(['spaces', 'common']);
   const colorNames = useAvatarColorNames();
@@ -56,7 +66,7 @@ export function OverviewPanel({ spaceId }: OverviewPanelProps) {
 
   const [avatarColorState, setAvatarColorState] = useState<AvatarColor | null>(space?.avatarColor ?? null);
   const [systemChannelIdState, setSystemChannelIdState] = useState<string>(space?.systemChannelId ?? '');
-  const [welcomeMessageState, setWelcomeMessageState] = useState<string>(space?.welcomeMessage ?? '');
+  const [welcomeMessages, setWelcomeMessages] = useState<string[]>(() => parseWelcomeMessages(space?.welcomeMessage));
 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
@@ -78,7 +88,7 @@ export function OverviewPanel({ spaceId }: OverviewPanelProps) {
       setSpaceName(space.name);
       setAvatarColorState(space.avatarColor ?? null);
       setSystemChannelIdState(space.systemChannelId ?? '');
-      setWelcomeMessageState(space.welcomeMessage ?? '');
+      setWelcomeMessages(parseWelcomeMessages(space.welcomeMessage));
       setIconFilename(null);
       if (iconPreview) {
         URL.revokeObjectURL(iconPreview);
@@ -120,7 +130,9 @@ export function OverviewPanel({ spaceId }: OverviewPanelProps) {
   const hasBannerChange = bannerFilename !== null;
   const hasAvatarColorChange = avatarColorState !== (space.avatarColor ?? null);
   const hasSystemChannelChange = systemChannelIdState !== (space.systemChannelId ?? '');
-  const hasWelcomeMessageChange = welcomeMessageState !== (space.welcomeMessage ?? '');
+  const currentNormalizedWelcome = serializeWelcomeMessages(parseWelcomeMessages(space.welcomeMessage));
+  const newNormalizedWelcome = serializeWelcomeMessages(welcomeMessages);
+  const hasWelcomeMessageChange = newNormalizedWelcome !== currentNormalizedWelcome;
   const hasChanges = hasNameChange || hasIconChange || hasBannerChange || hasAvatarColorChange || hasSystemChannelChange || hasWelcomeMessageChange;
 
   const currentIconUrl = space.icon
@@ -241,7 +253,7 @@ export function OverviewPanel({ spaceId }: OverviewPanelProps) {
         updates.systemChannelId = systemChannelIdState || null;
       }
       if (hasWelcomeMessageChange) {
-        updates.welcomeMessage = welcomeMessageState.trim() || null;
+        updates.welcomeMessage = newNormalizedWelcome;
       }
       await updateSpace(spaceId, updates);
       setIconFilename(null);
@@ -266,7 +278,7 @@ export function OverviewPanel({ spaceId }: OverviewPanelProps) {
     setSpaceName(space.name);
     setAvatarColorState(space.avatarColor ?? null);
     setSystemChannelIdState(space.systemChannelId ?? '');
-    setWelcomeMessageState(space.welcomeMessage ?? '');
+    setWelcomeMessages(parseWelcomeMessages(space.welcomeMessage));
     setIconFilename(null);
     if (iconPreview) {
       URL.revokeObjectURL(iconPreview);
@@ -516,24 +528,73 @@ export function OverviewPanel({ spaceId }: OverviewPanelProps) {
           </p>
         </div>
 
-        {/* Welcome Message Template */}
+        {/* Welcome Messages List */}
         {systemChannelIdState && (
-          <div>
-            <label className="block text-xs text-txt-secondary mb-1.5">
-              {t('spaces:settings.overview.welcomeMessageLabel')}
-            </label>
-            <input
-              type="text"
-              value={welcomeMessageState}
-              onChange={(e) => setWelcomeMessageState(e.target.value)}
-              placeholder={t('spaces:settings.overview.welcomeMessagePlaceholder')}
-              maxLength={200}
-              className="input-standard w-full"
-              disabled={!canManageSpace}
-            />
-            <p className="text-[11px] text-txt-tertiary mt-1">
-              {t('spaces:settings.overview.welcomeMessageHint')}
-            </p>
+          <div className="space-y-2">
+            <div>
+              <label className="block text-xs text-txt-secondary">
+                {t('spaces:settings.overview.welcomeMessageLabel')}
+              </label>
+              <p className="text-[11px] text-txt-tertiary mt-0.5">
+                {t('spaces:settings.overview.welcomeMessageHint')}
+              </p>
+            </div>
+
+            <div className="space-y-2 pt-1">
+              {welcomeMessages.map((msg, index) => (
+                <div key={index} className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={msg}
+                    onChange={(e) => {
+                      const next = [...welcomeMessages];
+                      next[index] = e.target.value;
+                      setWelcomeMessages(next);
+                    }}
+                    placeholder={t('spaces:settings.overview.welcomeMessagePlaceholder')}
+                    maxLength={200}
+                    className="input-standard flex-1 text-xs"
+                    disabled={!canManageSpace}
+                  />
+                  {canManageSpace && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = welcomeMessages.filter((_, i) => i !== index);
+                        setWelcomeMessages(next);
+                      }}
+                      className="w-8 h-8 rounded-lg flex items-center justify-center text-txt-tertiary hover:text-txt-danger hover:bg-accent-rose/10 transition-colors flex-shrink-0"
+                      title={t('common:actions.remove')}
+                      aria-label={t('common:actions.remove')}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              ))}
+
+              {welcomeMessages.length === 0 && (
+                <div className="py-2.5 px-3 rounded-lg bg-surface-base/50 border border-border-soft text-xs text-txt-tertiary">
+                  {t('spaces:settings.overview.welcomeMessageEmpty')}
+                </div>
+              )}
+
+              {canManageSpace && (
+                <button
+                  type="button"
+                  onClick={() => setWelcomeMessages([...welcomeMessages, ''])}
+                  className="glass-bubble rounded-full px-3 py-1.5 flex items-center gap-1.5 text-xs text-txt-primary hover:text-txt-secondary transition-colors"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                  {t('spaces:settings.overview.addWelcomeMessage')}
+                </button>
+              )}
+            </div>
           </div>
         )}
           </div>

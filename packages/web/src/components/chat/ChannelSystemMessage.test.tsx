@@ -64,15 +64,21 @@ describe('ChannelSystemMessage', () => {
     expect(text.container.textContent).toBe('System message');
   });
 
-  it('renders default welcome message for member_join event', () => {
+  it('renders default welcome message for member_join event with @ mention badge', () => {
     useSpaceStore.setState({ members: [member(actor, 'StarCaptain')] });
     const joinMsg = poke({ event: 'member_join', userId: 'actor', displayName: 'Actor' });
     const { container } = render(<ChannelSystemMessage message={joinMsg} />);
-    expect(container.textContent).toContain('StarCaptain');
-    expect(container.textContent).toContain('Glad you\'re here');
+    expect(container.textContent).toBe('Welcome @StarCaptain to the space!');
   });
 
-  it('renders custom welcome message with {username} placeholder replaced', () => {
+  it('renders specific random variant message according to variantIndex', () => {
+    useSpaceStore.setState({ members: [member(actor, 'StarCaptain')] });
+    const joinMsg = poke({ event: 'member_join', userId: 'actor', displayName: 'Actor', variantIndex: 2 });
+    const { container } = render(<ChannelSystemMessage message={joinMsg} />);
+    expect(container.textContent).toBe('A wild @StarCaptain appeared!');
+  });
+
+  it('renders custom welcome message with {username} placeholder replaced by @ mention badge', () => {
     useSpaceStore.setState({ members: [member(actor, 'StarCaptain')] });
     const joinMsg = poke({
       event: 'member_join',
@@ -81,7 +87,7 @@ describe('ChannelSystemMessage', () => {
       customMessage: 'Hey {username}, welcome to our guild!',
     });
     const { container } = render(<ChannelSystemMessage message={joinMsg} />);
-    expect(container.textContent).toBe('Hey StarCaptain, welcome to our guild!');
+    expect(container.textContent).toBe('Hey @StarCaptain, welcome to our guild!');
   });
 
   it('renders custom welcome message appended when no placeholder provided', () => {
@@ -93,7 +99,7 @@ describe('ChannelSystemMessage', () => {
       customMessage: 'Enjoy your stay!',
     });
     const { container } = render(<ChannelSystemMessage message={joinMsg} />);
-    expect(container.textContent).toContain('StarCaptain');
+    expect(container.textContent).toContain('@StarCaptain');
     expect(container.textContent).toContain('Enjoy your stay!');
   });
 });
