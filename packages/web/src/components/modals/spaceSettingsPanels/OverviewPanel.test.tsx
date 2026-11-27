@@ -155,6 +155,11 @@ describe('OverviewPanel ownership transfer candidates', () => {
     expect(screen.getByText('# general')).toBeInTheDocument();
     expect(screen.queryByText('# voice')).not.toBeInTheDocument();
 
+    // Expand the welcome message section
+    const expandButton = screen.getByText('Expand');
+    expect(expandButton).toBeInTheDocument();
+    fireEvent.click(expandButton);
+
     const welcomeInput = screen.getByDisplayValue('Hello {username}');
     expect(welcomeInput).toBeInTheDocument();
 
@@ -173,5 +178,29 @@ describe('OverviewPanel ownership transfer candidates', () => {
     const removeButtons = screen.getAllByLabelText('Remove');
     fireEvent.click(removeButtons[0]!);
     expect(screen.queryByDisplayValue('Welcome {username} to our server!')).not.toBeInTheDocument();
+  });
+
+  it('pre-populates default welcome messages when space.welcomeMessage is not set and allows expanding/collapsing', () => {
+    useSpaceStore.setState({
+      spaces: [{ ...space, systemChannelId: 'chan-1', welcomeMessage: null }],
+      channels: [
+        { id: 'chan-1', spaceId: 'space-1', name: 'general', type: 'text', position: 0, categoryId: null, createdAt: 1 },
+      ],
+    });
+
+    renderPanel();
+
+    // Section is collapsed by default and shows badge count 8
+    const expandButton = screen.getByText('Expand');
+    expect(expandButton).toBeInTheDocument();
+    expect(screen.getByText('8')).toBeInTheDocument();
+
+    // Expand section
+    fireEvent.click(expandButton);
+    expect(screen.getByText('Collapse')).toBeInTheDocument();
+
+    // All default messages are visible in inputs
+    expect(screen.getByDisplayValue('Welcome {username} to the space!')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('A wild {username} appeared!')).toBeInTheDocument();
   });
 });
