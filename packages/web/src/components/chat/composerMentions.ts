@@ -113,3 +113,22 @@ export function composerMentions(
 }
 
 export type ComposerMentions = ReturnType<typeof composerMentions>;
+
+/**
+ * What the composer writes into the draft for a mention of `userId`: the wire
+ * token and the space that ends it. `userId` is the user's id on the channel's
+ * origin, the id the channel's people carry (`utils/channelUser`). The picker
+ * and the author menu both insert this text.
+ */
+export function mentionInsertion(userId: string): string {
+  return `<@${userId}> `;
+}
+
+/**
+ * The draft with a mention of `userId` added at its end. A draft that ends in
+ * text gets a space first, so the token never runs into the word before it.
+ */
+export function appendMention(draft: string, userId: string): string {
+  const separator = draft.length > 0 && !/\s$/.test(draft) ? ' ' : '';
+  return draft + separator + mentionInsertion(userId);
+}

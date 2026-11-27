@@ -82,5 +82,7 @@ export function useComposerClearance(deps: {
     deps.stagedCount,
   ]);
 
-  return { setComposerRef, popoverAnchorRef };
+  // `composerEl` is returned as well: the file drop zone covers the composer's
+  // parent, and needs the element as state so it re-attaches when it changes.
+  return { setComposerRef, popoverAnchorRef, composerEl };
 }

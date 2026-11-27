@@ -77,8 +77,10 @@ export function openInspector(instance: SpawnedInstance): DbInspector {
       db.prepare('SELECT message_id AS messageId, user_id AS userId, emoji FROM reactions WHERE user_id = ?').all(uid) as { messageId: string; userId: string; emoji: string }[],
     dmReactionsForUser: (uid) =>
       db.prepare('SELECT dm_message_id AS dmMessageId, user_id AS userId, emoji FROM dm_reactions WHERE user_id = ?').all(uid) as { dmMessageId: string; userId: string; emoji: string }[],
+    // Exclude auto-generated system rows (e.g. space join welcome notifications
+    // keyed to the joining user's id) so callers count only user-authored messages.
     messagesAuthored: (uid) =>
-      db.prepare('SELECT id, user_id AS userId, content FROM messages WHERE user_id = ?').all(uid) as { id: string; userId: string; content: string }[],
+      db.prepare("SELECT id, user_id AS userId, content FROM messages WHERE user_id = ? AND type = 'user'").all(uid) as { id: string; userId: string; content: string }[],
     dmMembership: (uid) =>
       db.prepare('SELECT dm_channel_id AS dmChannelId, user_id AS userId FROM dm_members WHERE user_id = ?').all(uid) as { dmChannelId: string; userId: string }[],
     dmChannelExists: (id) => {

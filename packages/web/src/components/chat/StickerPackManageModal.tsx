@@ -204,7 +204,7 @@ export function StickerPackManageModal({ packId, onClose, onSaved }: StickerPack
       onMouseDown={e => e.stopPropagation()}
     >
       <div className="absolute inset-0 bg-black/50" onClick={() => { if (!submitting) onClose(); }} />
-      <div className="relative w-full max-w-lg mx-4 glass-modal rounded-xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden animate-slide-up">
+      <div className="relative w-full max-w-lg mx-4 glass-modal rounded-xl shadow-2xl flex flex-col max-h-[calc(90*var(--app-vh))] overflow-hidden animate-slide-up">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border-soft">
           <h3 className="text-base font-semibold text-txt-primary">

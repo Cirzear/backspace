@@ -336,7 +336,7 @@ export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModal
 
               {/* Packs Grid */}
               {loading ? (
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 desktop:grid-cols-3 gap-4">
                   {Array.from({ length: 6 }).map((_, i) => (
                     <div key={i} className="h-44 rounded-2xl bg-surface-base animate-pulse border border-border-soft" />
                   ))}
@@ -346,7 +346,7 @@ export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModal
                   <p className="text-sm">{t('stickers.noPacks')}</p>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 desktop:grid-cols-3 gap-4">
                   {packs.map(pack => (
                     <div
                       key={pack.id}
@@ -538,7 +538,7 @@ export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModal
                   {reviews.map(pack => (
                     <div
                       key={pack.id}
-                      className="p-4 rounded-xl border border-border-soft bg-surface-base/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                      className="p-4 rounded-xl border border-border-soft bg-surface-base/60 flex flex-col desktop:flex-row desktop:items-center justify-between gap-4"
                     >
                       <div className="flex items-start gap-3 min-w-0">
                         <div className="h-12 w-12 shrink-0 rounded-lg bg-surface-elevated flex items-center justify-center overflow-hidden border border-border-soft mt-0.5">
@@ -569,7 +569,7 @@ export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModal
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                      <div className="flex items-center gap-2 shrink-0 self-end desktop:self-center">
                         <button
                           type="button"
                           onClick={() => handleOpenPreview(pack.id)}
@@ -612,7 +612,7 @@ export function StickerStoreModal({ onClose, onPacksChanged }: StickerStoreModal
           onMouseDown={e => e.stopPropagation()}
         >
           <div className="absolute inset-0 bg-black/60" onClick={() => setPreviewPack(null)} />
-          <div className="relative w-full max-w-md mx-4 glass-modal rounded-xl shadow-2xl p-6 flex flex-col max-h-[80vh] animate-slide-up">
+          <div className="relative w-full max-w-md mx-4 glass-modal rounded-xl shadow-2xl p-6 flex flex-col max-h-[calc(80*var(--app-vh))] animate-slide-up">
             <div className="flex items-start justify-between gap-3 mb-4">
               <div>
                 <h4 className="text-base font-bold text-txt-primary">{previewPack.name}</h4>

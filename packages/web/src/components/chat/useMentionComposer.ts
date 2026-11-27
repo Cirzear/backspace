@@ -2,12 +2,13 @@ import { useCallback, useMemo, useState, type RefObject, type ChangeEvent, type 
 import { useComposerStore } from '../../stores/composerStore';
 import { useSpaceStore } from '../../stores/spaceStore';
 import {
+  filterMentionCandidates,
   useChannelMentionCandidates,
   useChannelUserResolver,
   type ChannelUser,
 } from '../../utils/channelUser';
-import { userDisplayName } from '../../utils/identity';
-import { composerMentions, type ComposerMentions } from './composerMentions';
+import { spaceMemberName } from '../../utils/identity';
+import { composerMentions, mentionInsertion, type ComposerMentions } from './composerMentions';
 import { mentionOptions, type MentionOption } from './mentionOptions';
 import { hasPermissionBit, PermissionBits } from '../../utils/permissions';
 
@@ -48,7 +49,9 @@ export function useMentionComposer({ channelId, draftText, textareaRef }: Option
         value,
         (userId) => {
           const found = resolveUser(userId);
-          return found ? userDisplayName(found.user) : null;
+          // The name the sent message's MentionBadge shows: the space
+          // nickname where there is one.
+          return found ? spaceMemberName(found.member, found.user) : null;
         },
         (roleId) => {
           const role = spaceId === undefined ? undefined : roles.find((r) => r.id === roleId && r.spaceId === spaceId);
@@ -68,7 +71,7 @@ export function useMentionComposer({ channelId, draftText, textareaRef }: Option
       mentionState
         ? mentionOptions({
             query: mentionState.query,
-            candidates: mentionCandidates,
+            candidates: filterMentionCandidates(mentionCandidates, mentionState.query),
             roles: isDm ? [] : roles.filter((r) => !r.spaceId || spaceId === undefined || r.spaceId === spaceId),
             canMentionMass,
           })
@@ -83,8 +86,8 @@ export function useMentionComposer({ channelId, draftText, textareaRef }: Option
       const cursorPos = textarea ? mentionModel.toWire(textarea.selectionStart, true) : draftText.length;
       const before = draftText.slice(0, mentionState.startIndex);
       const after = draftText.slice(cursorPos);
-      const token = 'token' in option ? option.token : `<@${option.userId}>`;
-      const insertion = `${token} `;
+      // A role or mass-mention option carries its own token; a member is mentioned by id.
+      const insertion = 'token' in option ? `${option.token} ` : mentionInsertion(option.userId);
       const newContent = before + insertion + after;
       setDraft(channelId, newContent);
       setMentionState(null);

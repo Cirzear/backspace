@@ -5,6 +5,9 @@ Source files: `packages/server/src/routes/*.ts`
 
 ---
 
+Clients set `Content-Type: application/json` when sending a JSON body.
+Bodyless requests such as a group DM member `DELETE` omit `Content-Type`.
+
 ## Rate limiting
 
 Every request passes a limit: the global **200 per minute** registered in
@@ -21,14 +24,12 @@ creates and 1000 PATCHes per minute per user), which run inside the tus handler
 after auth, and the sticker upload limit in `routes/stickers.ts` (30 per minute
 per account, also counted after auth).
 
-The address comes from Fastify's `trustProxy`, which is a **count of trusted
-hops**: the `TRUSTED_PROXY_HOPS` environment variable, default 1, read in
-`config.ts` and documented there and in `.env.example`. At 1 the key is the
-address the nearest proxy appended, and entries a client writes into
-`X-Forwarded-For` are ignored. A deployment with a CDN in front of its own
-proxy, or with no proxy at all, sets a different number; see
-[web-security.md](web-security.md) section 9 and
-[deployment.md](deployment.md), "Server proxy-awareness".
+Fastify derives the client address by walking from the socket peer toward the
+client. Each trusted hop must match `TRUSTED_PROXY_ADDRESSES` and be within
+`TRUSTED_PROXY_HOPS` (default 1). The first untrusted address is the rate-limit
+key. Direct access uses the socket address with `TRUSTED_PROXY_HOPS=0`.
+See [web-security.md](web-security.md) section 9 and
+[deployment.md](deployment.md) under “Server proxy-awareness”.
 
 What an operator should take from that: **everyone sharing one public address
 shares one budget.** A school, an office behind a corporate proxy, a VPN exit
@@ -343,10 +344,11 @@ Served `Cache-Control: public, max-age=31536000, immutable`: a stored file's nam
 | GET | `/api/stickers` | JWT | Current user's collection, newest first: `{id, name, token}[]` |
 | POST | `/api/stickers` | JWT | `{name, image}`; canonical base64 image bytes. Creates or reuses an asset and collects it |
 | POST | `/api/stickers/:id/collect` | JWT | `{token, name}`; collects an existing local asset under `name` |
+| PATCH | `/api/stickers/:id` | JWT | `{name}`; renames only the current user's entry, returns `{id, name, token}` |
 | DELETE | `/api/stickers/:id` | JWT | Removes only the current user's entry |
 | GET | `/api/stickers/assets/:id.webp` | Public | Immutable WebP; anyone holding the link can read it |
 
-Upload and collect return `{id, name, token}`. The id is the SHA-256 of the re-encoded WebP bytes; the token is `sticker:<canonical absolute asset URL>`. Names are trimmed, not blank, and at most 100 characters. Uploads accept PNG, JPEG, WebP and GIF up to 5 MiB with a 67,108,864 decoded-pixel cap across frames, stored within 512 x 512; the JSON body limit allows for base64. Refusals: `400 validation_failed` (blank name, base64 that is not canonical), `400 sticker_invalid_image` (`details.max`, in MB), `400 sticker_pixel_limit_exceeded`, `409 sticker_collection_full` (`details.max`, 200 entries), `429 rate_limited` (30 uploads per account per minute, counted in the route after auth, next to the per-address limit), `400 sticker_not_local` (a collect token that is not this instance's), `404 sticker_not_found` (unknown asset, or a lost file on the asset route). Collection is idempotent, and removal never deletes a shared asset; unused assets are removed by the storage cleanup. Full description: [uploads.md](uploads.md#14-personal-stickers).
+Upload, collect and rename return `{id, name, token}`. The id is the SHA-256 of the re-encoded WebP bytes; the token is `sticker:<canonical absolute asset URL>`. Names follow `normalizeStickerName` (packages/shared/src/stickers.ts): trimmed, 1 to 100 characters, one line, at least one visible character, no control or bidirectional characters. Uploads accept PNG, JPEG, WebP and GIF up to 5 MiB with a 16,777,216 decoded-pixel cap across frames, stored within 512 x 512; the JSON body limit allows for base64. Refusals: `400 sticker_name_invalid` (`details.max`, a name the rule above refuses), `400 validation_failed` (base64 that is not canonical), `400 sticker_invalid_image` (`details.max`, in MB), `409 sticker_collection_full` (`details.max`, 200 entries), `429 rate_limited` (30 uploads per account per minute, counted in the route after auth, next to the per-address limit), `400 sticker_not_local` (a collect token that is not this instance's), `404 sticker_not_found` (unknown asset, a rename of an entry the caller does not have, or a lost file on the asset route). No WebSocket event follows a collection change; the picker reads the collection each time it opens. Collection is idempotent, and removal never deletes a shared asset; unused assets are removed by the storage cleanup. Full description: [uploads.md](uploads.md#14-personal-stickers).
 
 ## GIF (`routes/gif.ts`) — auth required
 ```

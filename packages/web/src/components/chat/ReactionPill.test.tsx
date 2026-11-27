@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { Reaction, User } from '@backspace/shared';
 
 vi.mock('../../audio/AudioManager', () => ({
@@ -16,8 +16,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { useSpaceStore } from '../../stores/spaceStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useContextMenuStore } from '../../stores/contextMenuStore';
-import * as imageMenuItems from './imageMenuItems';
-import * as imageActions from '../../utils/imageActions';
+import { api, HttpError } from '../../api/client';
 
 function user(id: string, username: string, displayName: string | null = null, homeInstance: string | null = null): User {
   return { id, username, displayName, avatar: null, createdAt: 1, homeInstance, homeUserId: homeInstance ? `${id}-home` : null } as unknown as User;
@@ -179,46 +178,88 @@ it('shows a sticker preview with reactors and preserves toggle behavior', () => 
   expect(toggle).toHaveBeenCalledOnce();
 });
 
-it('opens context menu on right click for sticker reactions and offers sticker collection', async () => {
-  const token = `sticker:https://remote.test/api/stickers/assets/${'b'.repeat(64)}.webp`;
-  const saveSpy = vi.spyOn(imageMenuItems, 'saveStickerToCollection').mockResolvedValue();
-  const copySpy = vi.spyOn(imageActions, 'copyImageToClipboard').mockResolvedValue();
-  const saveImageSpy = vi.spyOn(imageActions, 'saveImage').mockImplementation(() => {});
+describe('sticker reaction menu', () => {
+  const ID = 'b'.repeat(64);
+  const remoteToken = `sticker:https://remote.test/api/stickers/assets/${ID}.webp`;
+  const saved = { id: 'c'.repeat(64), name: 'Sticker', token: `sticker:https://chat.test/api/stickers/assets/${'c'.repeat(64)}.webp` };
   const toast = vi.fn();
-  useUIStore.setState({ addToast: toast });
 
-  useContextMenuStore.getState().close();
-  render(<ReactionPill emoji={token} origin="" reactions={[{ ...reaction(MIRA, 1), emoji: token }]} onToggle={vi.fn()} />);
+  beforeEach(() => {
+    vi.useRealTimers();
+    toast.mockReset();
+    useUIStore.setState({ addToast: toast });
+    useContextMenuStore.getState().close();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
 
-  const button = screen.getByRole('button');
-  fireEvent.contextMenu(button, { clientX: 100, clientY: 200 });
+  function openMenu(token: string) {
+    cleanup();
+    render(<ReactionPill emoji={token} origin="" reactions={[{ ...reaction(MIRA, 1), emoji: token }]} onToggle={vi.fn()} />);
+    fireEvent.contextMenu(screen.getByRole('button'), { clientX: 100, clientY: 200 });
+    const menu = useContextMenuStore.getState().menu;
+    if (!menu) throw new Error('Expected a menu');
+    return menu;
+  }
 
-  const menu = useContextMenuStore.getState().menu;
-  expect(menu).not.toBeNull();
-  expect(menu?.position).toEqual({ x: 100, y: 200 });
-  const keys = menu?.items.map(i => i.key);
-  expect(keys).toEqual(['collect-sticker', 'copy-image', 'save-image']);
+  async function runCollect(token: string) {
+    const item = openMenu(token).items.find(i => i.key === 'collect-sticker');
+    if (item?.type !== 'action') throw new Error('Expected the collect action');
+    await item.onClick();
+  }
 
-  const collectItem = menu?.items.find(i => i.key === 'collect-sticker');
-  if (collectItem?.type !== 'action') throw new Error('Expected action');
-  await collectItem.onClick();
-  expect(saveSpy).toHaveBeenCalledWith(token, 'Sticker');
-  expect(toast).toHaveBeenCalledWith('Added to my stickers', 'success');
+  it('offers the image menu a sticker message gets', () => {
+    const menu = openMenu(remoteToken);
+    expect(menu.position).toEqual({ x: 100, y: 200 });
+    expect(menu.items.map(i => i.key)).toEqual(['collect-sticker', 'save-image', 'copy-image', 'image-sep']);
+  });
 
-  const copyItem = menu?.items.find(i => i.key === 'copy-image');
-  if (copyItem?.type !== 'action') throw new Error('Expected action');
-  await copyItem.onClick();
-  expect(copySpy).toHaveBeenCalledWith(`https://remote.test/api/stickers/assets/${'b'.repeat(64)}.webp`);
+  it('collects a sticker from this instance by reference', async () => {
+    const collect = vi.spyOn(api.stickers, 'collect').mockResolvedValue(saved);
+    const fetchImage = vi.fn();
+    vi.stubGlobal('fetch', fetchImage);
+    await runCollect(remoteToken);
+    expect(collect).toHaveBeenCalledWith({ id: ID, token: remoteToken, name: 'Sticker' });
+    expect(fetchImage).not.toHaveBeenCalled();
+    expect(toast).toHaveBeenLastCalledWith('Added to my stickers', 'success');
+  });
 
-  const saveImgItem = menu?.items.find(i => i.key === 'save-image');
-  if (saveImgItem?.type !== 'action') throw new Error('Expected action');
-  saveImgItem.onClick();
-  expect(saveImageSpy).toHaveBeenCalledWith(`https://remote.test/api/stickers/assets/${'b'.repeat(64)}.webp`);
-});
+  it('reads another instance\'s sticker from its own address and uploads it home', async () => {
+    vi.spyOn(api.stickers, 'collect').mockRejectedValue(new HttpError(400, 'not local', undefined, 'sticker_not_local'));
+    const upload = vi.spyOn(api.stickers, 'upload').mockResolvedValue(saved);
+    const fetchImage = vi.fn().mockResolvedValue(new Response('webp', { headers: { 'Content-Type': 'image/webp' } }));
+    vi.stubGlobal('fetch', fetchImage);
+    await runCollect(remoteToken);
+    expect(fetchImage).toHaveBeenCalledWith(`https://remote.test/api/stickers/assets/${ID}.webp`, { credentials: 'omit', cache: 'no-store' });
+    expect(upload).toHaveBeenCalledWith({ name: 'Sticker', image: btoa('webp') });
+    expect(toast).toHaveBeenLastCalledWith('Added to my stickers', 'success');
+  });
 
-it('does not open sticker context menu on right click for native emoji reactions', () => {
-  useContextMenuStore.getState().close();
-  const pill = renderPill([reaction(MIRA, 1)]);
-  fireEvent.contextMenu(pill, { clientX: 100, clientY: 200 });
-  expect(useContextMenuStore.getState().menu).toBeNull();
+  it('names the reason when the other instance cannot be read or the home instance refuses', async () => {
+    vi.spyOn(api.stickers, 'collect').mockRejectedValue(new HttpError(400, 'not local', undefined, 'sticker_not_local'));
+    const upload = vi.spyOn(api.stickers, 'upload');
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    await runCollect(remoteToken);
+    expect(toast).toHaveBeenLastCalledWith('The image could not be loaded.', 'warning');
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html></html>', { headers: { 'Content-Type': 'text/html' } })));
+    await runCollect(remoteToken);
+    expect(toast).toHaveBeenLastCalledWith('The image could not be loaded.', 'warning');
+    expect(upload).not.toHaveBeenCalled();
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('webp', { headers: { 'Content-Type': 'image/webp' } })));
+    upload.mockRejectedValue(new HttpError(409, 'full', undefined, 'sticker_collection_full', { max: 200 }));
+    await runCollect(remoteToken);
+    expect(toast).toHaveBeenLastCalledWith('Your collection is full at 200 stickers. Remove one to add another.', 'warning');
+  });
+
+  it('leaves an emoji pill to the message menu', () => {
+    const outer = vi.fn();
+    render(<div onContextMenu={outer}><ReactionPill emoji="🎉" origin="" reactions={[reaction(MIRA, 1)]} onToggle={vi.fn()} /></div>);
+    fireEvent.contextMenu(screen.getByRole('button'));
+    expect(useContextMenuStore.getState().menu).toBeNull();
+    expect(outer).toHaveBeenCalledOnce();
+  });
 });

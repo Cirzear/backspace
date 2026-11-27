@@ -23,4 +23,8 @@ describe('mention completion candidates', () => {
     const candidates = [{ userId: 'bob', user: { username: 'bob', displayName: 'Bob' } as any, member: null, nameColor: null }];
     expect(mentionOptions({ query: 'bo', candidates, roles, canMentionMass: true }).map(o => o.token)).toEqual(['<@bob>']);
   });
+  it('keeps every candidate the caller matched, such as one found by its space nickname', () => {
+    const candidates = [{ userId: 'mira', user: { username: 'mira', displayName: 'Mira' } as any, member: null, nameColor: null }];
+    expect(mentionOptions({ query: 'cap', candidates, roles, canMentionMass: false }).map(o => o.token)).toEqual(['<@mira>']);
+  });
 });

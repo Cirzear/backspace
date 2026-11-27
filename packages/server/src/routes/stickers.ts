@@ -6,7 +6,7 @@ import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import path from 'node:path';
 import {
   MAX_PERSONAL_STICKERS, MAX_STICKER_BYTES, MAX_STICKER_NAME_LENGTH, STICKER_ID_PATTERN, STICKER_PREFIX,
-  STICKER_UPLOADS_PER_MINUTE, type PersonalSticker,
+  STICKER_UPLOADS_PER_MINUTE, normalizeStickerName, type PersonalSticker,
 } from '@backspace/shared/src/stickers.js';
 import { config } from '../config.js';
 import { getDb, schema } from '../db/index.js';
@@ -31,6 +31,11 @@ export function getMaxStickerSizeBytes(): number {
     return config.maxStickerSize ?? MAX_STICKER_BYTES;
   }
 }
+
+const nameSchema = { type: 'string', minLength: 1, maxLength: MAX_STICKER_NAME_LENGTH } as const;
+const idParamsSchema = {
+  type: 'object', required: ['id'], properties: { id: { type: 'string', pattern: STICKER_ID_PATTERN.source } },
+} as const;
 /** Stored stickers fit this box; the largest place one is shown is a 240 px message row. */
 const MAX_STICKER_DIMENSION = 512;
 export const MAX_STICKER_PREVIEW_DIMENSION = 128;
@@ -182,10 +187,11 @@ export async function stickerRoutes(app: FastifyInstance): Promise<void> {
       return payload;
     },
     schema: { body: { type: 'object', required: ['name', 'image'], additionalProperties: false,
-      properties: { name: { type: 'string', minLength: 1, maxLength: MAX_STICKER_NAME_LENGTH }, image: { type: 'string', minLength: 4 } } } },
+      properties: { name: nameSchema, image: { type: 'string', minLength: 4 } } } },
   }, async (request, reply) => {
-    const { name, image } = request.body;
-    if (!name.trim()) return sendError(reply, 400, 'validation_failed');
+    const { image } = request.body;
+    const name = normalizeStickerName(request.body.name);
+    if (name === undefined) return sendError(reply, 400, 'sticker_name_invalid', { max: MAX_STICKER_NAME_LENGTH });
     if (!uploadLimit.consume(request.userId)) return sendError(reply, 429, 'rate_limited');
     // Refused before the decode; collectSticker checks again where the row is written.
     if (collectionSize(request.userId) >= MAX_PERSONAL_STICKERS) {
@@ -210,7 +216,7 @@ export async function stickerRoutes(app: FastifyInstance): Promise<void> {
       throw error;
     }
     const id = await saveStickerAsset(encoded);
-    const sticker = collectSticker({ userId: request.userId, id, name: name.trim() });
+    const sticker = collectSticker({ userId: request.userId, id, name });
     if (!sticker) return sendError(reply, 409, 'sticker_collection_full', { max: MAX_PERSONAL_STICKERS });
     return sticker;
   });
@@ -221,15 +227,15 @@ export async function stickerRoutes(app: FastifyInstance): Promise<void> {
     schema: { body: { type: 'object', required: ['token', 'name'], additionalProperties: false, properties: {
       token: { type: 'string', maxLength: 2048 },
       // The collecting client names the entry in its own language; the server stores no wording of its own.
-      name: { type: 'string', minLength: 1, maxLength: MAX_STICKER_NAME_LENGTH },
+      name: nameSchema,
     } },
-      params: { type: 'object', required: ['id'], properties: { id: { type: 'string', pattern: STICKER_ID_PATTERN.source } } } },
+      params: idParamsSchema },
   }, async (request, reply) => {
     if (request.body.token !== tokenFor(request.params.id)) return sendError(reply, 400, 'sticker_not_local');
     const asset = getDb().select().from(schema.stickerAssets).where(eq(schema.stickerAssets.id, request.params.id)).get();
     if (!asset) return sendError(reply, 404, 'sticker_not_found');
-    const name = request.body.name.trim();
-    if (!name) return sendError(reply, 400, 'validation_failed');
+    const name = normalizeStickerName(request.body.name);
+    if (name === undefined) return sendError(reply, 400, 'sticker_name_invalid', { max: MAX_STICKER_NAME_LENGTH });
     const sticker = collectSticker({ userId: request.userId, id: asset.id, name });
     if (!sticker) return sendError(reply, 409, 'sticker_collection_full', { max: MAX_PERSONAL_STICKERS });
     return sticker;
@@ -242,33 +248,21 @@ export async function stickerRoutes(app: FastifyInstance): Promise<void> {
     return { success: true };
   });
 
+  // Renames only the caller's own entry. Other entries for the same asset keep their names.
   app.patch<{ Params: { id: string }; Body: { name: string } }>('/api/stickers/:id', {
     preHandler: authenticate,
     schema: {
-      body: {
-        type: 'object',
-        required: ['name'],
-        additionalProperties: false,
-        properties: { name: { type: 'string', minLength: 1, maxLength: MAX_STICKER_NAME_LENGTH } },
-      },
-      params: {
-        type: 'object',
-        required: ['id'],
-        properties: { id: { type: 'string', pattern: STICKER_ID_PATTERN.source } },
-      },
+      body: { type: 'object', required: ['name'], additionalProperties: false, properties: { name: nameSchema } },
+      params: idParamsSchema,
     },
   }, async (request, reply) => {
-    const trimmed = request.body.name.trim();
-    if (!trimmed) return sendError(reply, 400, 'validation_failed');
-    const result = getDb().update(schema.personalStickers)
-      .set({ name: trimmed })
-      .where(and(
-        eq(schema.personalStickers.userId, request.userId),
-        eq(schema.personalStickers.stickerId, request.params.id),
-      ))
-      .run();
+    const name = normalizeStickerName(request.body.name);
+    if (name === undefined) return sendError(reply, 400, 'sticker_name_invalid', { max: MAX_STICKER_NAME_LENGTH });
+    const result = getDb().update(schema.personalStickers).set({ name }).where(and(
+      eq(schema.personalStickers.userId, request.userId), eq(schema.personalStickers.stickerId, request.params.id),
+    )).run();
     if (!result.changes) return sendError(reply, 404, 'sticker_not_found');
-    return { id: request.params.id, name: trimmed, token: tokenFor(request.params.id) };
+    return { id: request.params.id, name, token: tokenFor(request.params.id) } satisfies PersonalSticker;
   });
 
   // Same public-link access policy as existing uploads. Never accept a filesystem path or remote URL.

@@ -4,9 +4,7 @@ import { getHomeOrigin } from '../../platform/instanceRuntime';
 import { stickerUrl } from '@backspace/shared/src/stickers';
 import { isStickerMessage } from '../../utils/stickerMessages';
 import { StickerMessage } from './StickerMessage';
-import { insertComposerMention } from './useComposerMention';
-import { useChannelPokeStore } from '../../stores/channelPokeStore';
-import { wsSend } from '../../hooks/useWebSocket';
+import { useAuthorMenu } from './useAuthorMenu';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -16,7 +14,7 @@ import { MarkdownRenderer } from './MarkdownRenderer';
 import { InlineMessageText } from './InlineMessageText';
 import { Avatar } from '../ui/Avatar';
 import { ProfileAvatar } from '../ui/ProfileAvatar';
-import { useContextMenuStore } from '../../stores/contextMenuStore';
+import { menuPositionFor, useContextMenuStore } from '../../stores/contextMenuStore';
 import { buildMessageMenuItems } from './messageMenuItems';
 import { useAuthStore, useSelfIdentity } from '../../stores/authStore';
 import { useChatStore } from '../../stores/chatStore';
@@ -413,7 +411,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     });
 
     if (items.length === 0) return;
-    useContextMenuStore.getState().open({ x: e.clientX, y: e.clientY }, items);
+    useContextMenuStore.getState().open(menuPositionFor(e), items);
   };
 
   const handleEditSubmit = async (e: React.KeyboardEvent) => {
@@ -462,39 +460,33 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
     ? { spaceId: currentSpaceId, userId: message.userId }
     : undefined;
 
-  const supportsPoke = useChannelPokeStore((s) => s.hosts[messageOrigin] === true);
-  const handleAuthorMenu = (e: React.MouseEvent) => {
-    if (isDmMessage || pending || !message.user || !canSendMessages) return;
-    // Do not bubble into the message menu: author actions are a separate interaction.
-    e.preventDefault();
-    e.stopPropagation();
-    const items: import('../../stores/contextMenuStore').ContextMenuItem[] = [
-      {
-        type: 'action',
-        key: 'mention-author',
-        label: '@' + displayName,
-        onClick: () => insertComposerMention(channelKey, message.userId),
-      },
-    ];
-    if (supportsPoke) {
-      items.push({
-        type: 'action',
-        key: 'poke-author',
-        label: t('chat:poke.action'),
-        onClick: () => {
-          if (!wsSend({ type: 'channel_poke', channelId: channelKey, targetUserId: message.userId }, messageOrigin)) {
-            useUIStore.getState().addToast(t('chat:poke.disconnected'), 'warning');
-          }
-        },
-      });
-    }
-    useContextMenuStore.getState().open({ x: e.clientX, y: e.clientY }, items);
-  };
+  const handleAuthorMenu = useAuthorMenu({
+    channelId: channelKey,
+    authorId: message.userId,
+    origin: messageOrigin,
+    isDm: isDmMessage,
+    canSend: canSendMessages && !isDeadDmThread && !pending,
+    isAuthor,
+  });
 
-  const handleUsernameClick = (e: React.MouseEvent) => {
+  const handleUsernameClick = (e: React.MouseEvent | React.KeyboardEvent) => {
     if (!message.user) return;
     e.stopPropagation();
     openUserProfile(message.user, messageOrigin, e.currentTarget.getBoundingClientRect(), undefined, authorMember);
+  };
+
+  // The name is the author's keyboard stop (the avatar beside it opens the
+  // same card and menu, so it stays out of the tab order): Enter and Space
+  // open the profile card like a click, and the menu key or Shift+F10 open
+  // the author menu like a right click.
+  const handleUsernameKeyDown = (e: React.KeyboardEvent<HTMLSpanElement>) => {
+    if (e.target !== e.currentTarget) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleUsernameClick(e);
+    } else if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+      handleAuthorMenu(e);
+    }
   };
 
   const replyRoleColor = (msg: { userId: string }) => getMemberDisplayColor(msg.userId);
@@ -600,7 +592,14 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
 
         {(isFirstInGroup || message.replyTo) && (
           <div className="flex items-baseline gap-2 mb-0.5">
-            <span onClick={handleUsernameClick} onContextMenu={handleAuthorMenu}>
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={handleUsernameClick}
+              onContextMenu={handleAuthorMenu}
+              onKeyDown={handleUsernameKeyDown}
+              className="rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/60"
+            >
               <PersonName
                 name={displayName}
                 person={displayIdentity}

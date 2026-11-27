@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { and, eq } from 'drizzle-orm';
@@ -25,16 +25,32 @@ vi.mock('../utils/federationAuth.js', async (importActual) => {
   return { ...actual, getOurOrigin: () => 'https://home.test' };
 });
 
-function applyMigrations(db: Database.Database): void {
+// Cache parsed migration SQL once across tests to avoid re-reading 37+ files in every beforeEach
+// and prevent cold-import + disk-I/O timeouts under parallel full-suite runs.
+const MIGRATION_STATEMENTS: string[] = (() => {
   const dir = path.resolve(__dirname, '../../drizzle');
+  const stmts: string[] = [];
   for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.sql')).sort()) {
     const sqlText = fs.readFileSync(path.join(dir, f), 'utf8');
     for (const stmt of sqlText.split(/-->\s*statement-breakpoint/)) {
       const clean = stmt.trim();
-      if (clean) db.exec(clean);
+      if (clean) stmts.push(clean);
     }
   }
+  return stmts;
+})();
+
+function applyMigrations(db: Database.Database): void {
+  for (const stmt of MIGRATION_STATEMENTS) {
+    db.exec(stmt);
+  }
 }
+
+// Preload the module graph in beforeAll so the first test does not hit the 5s default
+// timeout on cold dynamic import during heavy parallel test runs.
+beforeAll(async () => {
+  await import('./federation.js');
+}, 30_000);
 
 beforeEach(() => {
   sqlite = new Database(':memory:');

@@ -155,6 +155,12 @@ export function healSkippedOutboxMigration(db: Database.Database, migrationsFold
  * Ensures required columns on messages and spaces exist even if legacy migration timestamps
  * caused 0029 or 0030 to be skipped during upgrade from older shapes (e.g. pre-squash).
  * Idempotent — no-op if columns already exist or if tables do not exist yet.
+ *
+ * Only columns of a migration the migrator can skip belong here: 0029 and 0030
+ * carry journal timestamps older than 0028's, so a database that already
+ * applied 0028 never runs them. A column of a migration the migrator still
+ * runs must not be added here, or that migration stops the boot on
+ * "duplicate column name" (see `PRE_ADDED_COLUMN_MIGRATIONS`).
  */
 export function healLegacyColumns(db: Database.Database): void {
   const messagesTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'messages'").get();
@@ -170,13 +176,74 @@ export function healLegacyColumns(db: Database.Database): void {
     if (!cols.some((c) => c.name === 'owner_title')) {
       db.exec("ALTER TABLE `spaces` ADD `owner_title` text DEFAULT NULL");
     }
-    if (!cols.some((c) => c.name === 'system_channel_id')) {
-      db.exec("ALTER TABLE `spaces` ADD `system_channel_id` text DEFAULT NULL");
-    }
-    if (!cols.some((c) => c.name === 'welcome_message')) {
-      db.exec("ALTER TABLE `spaces` ADD `welcome_message` text DEFAULT NULL");
-    }
   }
+}
+
+/** A migration that only adds columns, and that an earlier build added ahead of the migrator. */
+interface PreAddedColumnMigration {
+  /** The migration's file in the migrations folder. */
+  file: string;
+  /** The journal's `when` for it: the `created_at` the migrator records. */
+  createdAt: number;
+  table: string;
+  /** Every column the migration adds. */
+  columns: readonly string[];
+}
+
+/**
+ * Migrations whose columns a past build added at boot before the migrator ran
+ * them. On such a database the migrator's own ALTER TABLE stopped the boot on
+ * "duplicate column name" and rolled back, leaving the columns in place and
+ * the migration unrecorded, so every later boot stopped the same way.
+ */
+const PRE_ADDED_COLUMN_MIGRATIONS = {
+  stickerSize: {
+    file: '0035_max_sticker_size.sql',
+    createdAt: 1792100000000,
+    table: 'instance_settings',
+    columns: ['max_sticker_size_bytes'],
+  },
+  systemChannel: {
+    file: '0037_space_system_channel_and_welcome.sql',
+    createdAt: 1792300000000,
+    table: 'spaces',
+    columns: ['system_channel_id', 'welcome_message'],
+  },
+} as const satisfies Record<string, PreAddedColumnMigration>;
+
+/**
+ * Records `migration` as applied when all of its columns are there and
+ * `__drizzle_migrations` has no row for it, so the migrator does not run it
+ * again. Returns whether it recorded anything. A no-op in every other state:
+ * no table yet (first boot), a column missing (the migrator adds them; with
+ * only some present it stops the boot, which is the state to look at by
+ * hand), no migration history, or already recorded.
+ */
+function recordPreAddedColumnMigration(
+  db: Database.Database,
+  migrationsFolder: string,
+  migration: PreAddedColumnMigration,
+): boolean {
+  const table = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(migration.table);
+  if (!table) return false;
+
+  const present = new Set(
+    (db.prepare('SELECT name FROM pragma_table_info(?)').all(migration.table) as Array<{ name: string }>).map((c) => c.name),
+  );
+  if (!migration.columns.every((column) => present.has(column))) return false;
+
+  const migrationsTableExists = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = '__drizzle_migrations'").get();
+  if (!migrationsTableExists) return false;
+
+  const alreadyRecorded = db.prepare('SELECT 1 FROM __drizzle_migrations WHERE created_at = ? LIMIT 1').get(migration.createdAt);
+  if (alreadyRecorded) return false;
+
+  const migrationPath = path.join(migrationsFolder, migration.file);
+  if (!fs.existsSync(migrationPath)) return false;
+
+  const hash = crypto.createHash('sha256').update(fs.readFileSync(migrationPath, 'utf8')).digest('hex');
+  db.prepare('INSERT INTO __drizzle_migrations ("hash", "created_at") VALUES (?, ?)').run(hash, migration.createdAt);
+  return true;
 }
 
 /**
@@ -186,26 +253,20 @@ export function healLegacyColumns(db: Database.Database): void {
  * Record 0035 so Drizzle migrator does not attempt to execute 0035_max_sticker_size.sql again.
  */
 export function healSkippedStickerSizeMigration(db: Database.Database, migrationsFolder: string): void {
-  const settingsTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'instance_settings'").get();
-  if (!settingsTable) return;
+  if (recordPreAddedColumnMigration(db, migrationsFolder, PRE_ADDED_COLUMN_MIGRATIONS.stickerSize)) {
+    console.log('[migrate] Detected pre-existing max_sticker_size_bytes. Backfilled migration 0035_max_sticker_size record.');
+  }
+}
 
-  const cols = db.prepare("PRAGMA table_info('instance_settings')").all() as Array<{ name: string }>;
-  if (!cols.some((c) => c.name === 'max_sticker_size_bytes')) return;
-
-  const migrationsTableExists = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = '__drizzle_migrations'").get();
-  if (!migrationsTableExists) return;
-
-  const STICKER_SIZE_TIMESTAMP = 1792100000000;
-  const alreadyRecorded = db.prepare('SELECT 1 FROM __drizzle_migrations WHERE created_at = ? LIMIT 1').get(STICKER_SIZE_TIMESTAMP);
-  if (alreadyRecorded) return;
-
-  const migrationPath = path.join(migrationsFolder, '0035_max_sticker_size.sql');
-  if (!fs.existsSync(migrationPath)) return;
-
-  const sql = fs.readFileSync(migrationPath, 'utf8');
-  const hash = crypto.createHash('sha256').update(sql).digest('hex');
-
-  db.prepare('INSERT INTO __drizzle_migrations ("hash", "created_at") VALUES (?, ?)').run(hash, STICKER_SIZE_TIMESTAMP);
-  console.log('[migrate] Detected pre-existing max_sticker_size_bytes. Backfilled migration 0035_max_sticker_size record.');
+/**
+ * The same repair for 0037. Builds between the migration's introduction and
+ * this fix added `spaces.system_channel_id` and `spaces.welcome_message` in
+ * `healLegacyColumns`, ahead of the migrator, so a database upgraded with one
+ * of them holds both columns and no 0037 record.
+ */
+export function healPreAddedSystemChannelMigration(db: Database.Database, migrationsFolder: string): void {
+  if (recordPreAddedColumnMigration(db, migrationsFolder, PRE_ADDED_COLUMN_MIGRATIONS.systemChannel)) {
+    console.log('[migrate] Detected pre-existing spaces.system_channel_id and welcome_message. Backfilled migration 0037_space_system_channel_and_welcome record.');
+  }
 }
 

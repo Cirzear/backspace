@@ -37,7 +37,7 @@ Source: `packages/server/src/ws/handler.ts` (transport/auth), `packages/server/s
 | `dm_message_delete` | messageId | member, author only |
 | `dm_typing_start` | dmChannelId | 5s auto-expire |
 
-`dm_message_create` first counts against its rate limit: the REST route's numbers (`utils/dmMessageRateLimit.ts`), keyed on the address the socket connected from (`request.ip` of the upgrade, recorded in `ws/socketAddress.ts`, so it follows `TRUSTED_PROXY_HOPS` as the HTTP limiter does), in a counter of its own. `DISABLE_RATE_LIMITS` switches it off. The three DM message events run the REST routes' checks (`utils/dmMessageRules.ts`), so they refuse what the routes refuse, in the same order and with the same codes (dm-system.md, "Message Operations"), `recipient_deleted` in a 1-on-1 whose partner was deleted included. A missing `dmChannelId` or `messageId` is `validation_failed`. Each refusal is an `error` with its code, and `details` where the code has placeholders, sent to the socket that sent the event and not to the user's other sessions (they did not act, and the client shows a coded error as a toast); nothing is stored, broadcast or relayed. The web client sends these actions over REST, not over these events.
+`dm_message_create` first counts against its rate limit: the REST route's numbers (`utils/dmMessageRateLimit.ts`), keyed on the address the socket connected from (`request.ip` of the upgrade, recorded in `ws/socketAddress.ts`, so it uses the same proxy address allowlist and hop cap as the HTTP limiter), in a counter of its own. `DISABLE_RATE_LIMITS` switches it off. The three DM message events run the REST routes' checks (`utils/dmMessageRules.ts`), so they refuse what the routes refuse, in the same order and with the same codes (dm-system.md, "Message Operations"), `recipient_deleted` in a 1-on-1 whose partner was deleted included. A missing `dmChannelId` or `messageId` is `validation_failed`. Each refusal is an `error` with its code, and `details` where the code has placeholders, sent to the socket that sent the event and not to the user's other sessions (they did not act, and the client shows a coded error as a toast); nothing is stored, broadcast or relayed. The web client sends these actions over REST, not over these events.
 
 ### Reactions (space + DM, auto-detected)
 | type | fields | notes |
@@ -158,9 +158,11 @@ to a peer, and DMs have none.
 **Capability.** `ready.supportsPoke` is `true` from an instance that handles
 `channel_poke`. The client keeps it per origin (`stores/channelPokeStore.ts`)
 and offers Poke only for messages from an origin that said so. A 1.10.0 or
-older instance sends no flag; there, and in DMs, without SEND_MESSAGES and on
-a message still sending, right-clicking the author opens the message menu as
-before.
+older instance sends no flag, so its messages get no Poke. On any instance,
+the author menu also has no Poke in DMs, without SEND_MESSAGES, on a message
+still sending, or on the viewer's own message. It may still offer Mention, which only writes into the composer and
+sends nothing; with neither item, right-clicking the author opens the message
+menu (permissions.md, the author right-click row).
 
 **Checks**, in order, each refused with an `error` and its code on the
 sending socket only, storing and sending nothing:

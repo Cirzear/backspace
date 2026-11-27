@@ -14,6 +14,12 @@ function userMatches(user: User, query: string): boolean {
 export function mentionOptions(input: {
   query: string;
   origin?: string;
+  /**
+   * Channel candidates the caller already matched against `query` with
+   * `filterMentionCandidates` (space nickname, shown name or username). They
+   * are not matched again here: this module stays free of the stores that
+   * rule reads, and a nickname match must not be dropped by a narrower one.
+   */
   candidates?: readonly ChannelUser[];
   members?: readonly MemberWithUser[];
   roles?: readonly Role[];
@@ -39,7 +45,6 @@ export function mentionOptions(input: {
   let users: MentionOption[] = [];
   if (input.candidates) {
     users = input.candidates
-      .filter((c) => userMatches(c.user, query))
       .map((c) => ({
         kind: 'user' as const,
         token: '<@' + c.userId + '>',

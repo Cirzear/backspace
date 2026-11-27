@@ -225,7 +225,7 @@
   "member_nickname_invalid": "Spitznamen dürfen höchstens {{max}} Zeichen in einer Zeile haben, mindestens ein sichtbares Zeichen und keine Steuerzeichen.",
   "sticker_invalid_image": "Lade ein PNG-, JPEG-, WebP- oder GIF-Bild mit höchstens {{max}} MB hoch.",
   "sticker_pixel_limit_exceeded": "Das Bild hat zu viele Animationsframes oder eine zu hohe Auflösung.",
-  "sticker_not_local": "Sticker von einem anderen Server können noch nicht zu deiner Sammlung hinzugefügt werden.",
+  "sticker_not_local": "Dieser Sticker liegt auf einem anderen Server und wurde deshalb nicht zu deiner Sammlung hinzugefügt.",
   "sticker_not_found": "Diesen Sticker gibt es nicht mehr.",
   "sticker_collection_full": "Deine Sammlung ist mit {{max}} Stickern voll. Entferne einen, um einen neuen hinzuzufügen.",
   "sticker_pack_not_found": "Dieses Stickerpaket gibt es nicht mehr.",

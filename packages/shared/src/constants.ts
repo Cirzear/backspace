@@ -133,9 +133,9 @@ export function normalizeMemberNickname(value: unknown): string | null | undefin
 /**
  * Whether a trimmed, non-empty label may be shown as a name or heading: no
  * control character, line break or bidirectional control, and at least one
- * visible character. Shared by nicknames and owner titles.
+ * visible character. Shared by nicknames, owner titles and sticker names.
  */
-function isVisibleSingleLine(trimmed: string): boolean {
+export function isVisibleSingleLine(trimmed: string): boolean {
   if (NICKNAME_FORBIDDEN.test(trimmed)) return false;
   return trimmed.replace(NICKNAME_INVISIBLE, '').length > 0;
 }

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ensureDefaults, healLegacyColumns, healSkippedStickerSizeMigration } from './migrate.js';
+import { ensureDefaults, healLegacyColumns, healPreAddedSystemChannelMigration, healSkippedStickerSizeMigration } from './migrate.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.resolve(__dirname, '../../drizzle');
@@ -67,7 +67,41 @@ describe('healSkippedStickerSizeMigration', () => {
   });
 });
 
+describe('healPreAddedSystemChannelMigration', () => {
+  const RECORDED = 'SELECT COUNT(*) AS c FROM __drizzle_migrations WHERE created_at = 1792300000000';
+  const HISTORY = 'CREATE TABLE __drizzle_migrations (id integer PRIMARY KEY AUTOINCREMENT, hash text, created_at numeric);';
+
+  it('records 0037 once when an earlier build already added both columns', () => {
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE spaces (id text PRIMARY KEY, system_channel_id text, welcome_message text); ${HISTORY}`);
+    healPreAddedSystemChannelMigration(db, MIGRATIONS_DIR);
+    healPreAddedSystemChannelMigration(db, MIGRATIONS_DIR);
+
+    expect((db.prepare(RECORDED).get() as { c: number }).c).toBe(1);
+    db.close();
+  });
+
+  it('leaves 0037 to the migrator when a column is missing', () => {
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE spaces (id text PRIMARY KEY, system_channel_id text); ${HISTORY}`);
+    healPreAddedSystemChannelMigration(db, MIGRATIONS_DIR);
+
+    expect((db.prepare(RECORDED).get() as { c: number }).c).toBe(0);
+    db.close();
+  });
+});
+
 describe('healLegacyColumns', () => {
+  it('leaves the columns of 0037 to the migrator, which still runs it', () => {
+    const db = new Database(':memory:');
+    db.exec('CREATE TABLE spaces (id text PRIMARY KEY);');
+    healLegacyColumns(db);
+    const cols = db.prepare('PRAGMA table_info(spaces)').all() as Array<{ name: string }>;
+    expect(cols.map((c) => c.name)).toEqual(['id', 'owner_title']);
+    db.close();
+  });
+
+
   it('does not mutate instance_settings schema', () => {
     const db = new Database(':memory:');
     db.exec(`CREATE TABLE instance_settings (id integer PRIMARY KEY);`);

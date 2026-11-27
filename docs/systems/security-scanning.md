@@ -2,11 +2,8 @@
 
 Automated, continuous scanning wired into GitHub Actions. This document is the
 reference for what runs, where results go, and the one-time settings a maintainer
-must enable. **Current state: enforcing**, with one documented exception. The
-scanners in `security.yml` fail the job on a finding the tiered policy says must
-block. The published-image scan in `docker-publish.yml` is the exception and is
-still report-only, for the measured reason in "The image scan is the exception"
-below.
+must enable. The tiered policy defines blocking findings. The container release
+workflow scans the built amd64 image before publishing the multi-architecture image.
 
 ## Workflows
 
@@ -17,7 +14,7 @@ below.
 | `.github/workflows/security.yml` | gitleaks (secrets, full history), OSV-Scanner (deps), Trivy config (IaC), Trivy license | PR + push main + weekly | Security tab |
 | `.github/workflows/scorecard.yml` | OpenSSF Scorecard (repo posture) | push main + weekly + on branch-protection change | Security tab + public badge |
 | `.github/workflows/dast.yml` | ZAP baseline against an ephemeral instance (spider + passive, unauthenticated) | push main + weekly + manual + PRs touching its own config | Job summary + artifact (advisory) |
-| `.github/workflows/docker-publish.yml` | Image scan (Trivy) + SBOM + provenance for the published container | tag push / manual | image scan (report-only) + SBOM + provenance |
+| `.github/workflows/docker-publish.yml` | Image scan (Trivy) + SBOM + provenance for the published container | tag push / manual | amd64 image scan gate + SBOM + provenance |
 | `.github/workflows/telemetry-receiver.yml` | Typecheck + Workers test suite for `scripts/telemetry-receiver`, and its deploy to Cloudflare | PR + push main, both path-filtered to the package; deploy on manual dispatch only | job status; a published Worker |
 | `.github/workflows/pr-triage.yml` | Fork PR triage: "routine" or "read first" verdict for the CI approval click, plus lockfile and Flatpak source summary | `pull_request_target` on fork PRs + manual | one comment per PR, updated in place |
 
@@ -38,35 +35,22 @@ merge-blocking, Dependabot alerts, and native secret-scanning are GitHub *settin
 
 ### How enforcement is actually wired
 
-Turning this on was not a matter of deleting `continue-on-error`. Two things had to
-be true first, and both were measured rather than assumed.
+The Trivy checks set `exit-code: '1'` explicitly. The image job also sets
+`limit-severities-for-sarif: true` so the action applies the severity filter
+when generating SARIF.
 
-**Trivy exits 0 in SARIF mode whatever it finds.** Removing `continue-on-error`
-alone would have looked like enforcement while enforcing nothing. The config and
-license jobs carry `exit-code: '1'` plus `severity: 'HIGH,CRITICAL'`; the exit code
-is what blocks, and the severity filter is what keeps it aligned with the tiered
-policy above.
+OSV exits with an error for any active finding. Apply the tiered policy alongside
+the job result when reviewing a merge. The historical OSV deferrals were removed
+after the affected dependency paths were patched. The merged Fastify upgrade
+retains two Moderate advisory IDs across three lockfile entries. Any future
+deferral must name the affected advisory and carry an expiry.
 
-**All thirteen remaining OSV findings are fixable**, and five are HIGH, so a plain
-flip would have turned `main` red and blocked every pull request. `osv-scanner.toml`
-resolves that as a **ratchet rather than a waiver**: it lists exactly the backlog
-that existed at flip time, one entry per finding, each with the reason and the
-version that fixes it. Anything not in that file fails the job, so a newly
-introduced vulnerability blocks while the documented backlog stays visible.
+### Container release gate
 
-Every entry carries `ignoreUntil = 2026-12-01`. **A waiver with no expiry is how a
-backlog becomes permanent.** When that date passes these findings come back and
-block, which forces the upgrade decision instead of letting it rot. That is
-deliberate, and it means `main` can go red on that date if nobody has acted. The
-fix is to do the upgrades, not to push the date.
-
-### The image scan is the exception
-
-`docker-publish.yml`'s Trivy image scan stays report-only, but the backlog behind
-that decision is now mostly gone. The findings the scan reports are not the ones
-the dependency pass covers: Trivy inspects the image's real `node_modules` and its
-installed OS and Node packages, while OSV reads the lockfile, so the two see
-different things.
+Trivy scans the amd64 image before the registry push and fails the workflow if
+it detects a fixable HIGH or CRITICAL package finding or an embedded secret at
+either severity. The SARIF upload runs after the scan even on failure. Trivy
+inspects the built image. OSV inspects the workspace lockfile.
 
 **Measured 2026-09-03 against an image built from `main`: 20 fixable
 HIGH/CRITICAL.** Seventeen of them had nothing to do with the application. They
@@ -85,23 +69,11 @@ wholesale from `deps` and the CMD starts `node` directly, so neither manager was
 ever invoked. The `Dockerfile` now removes both from that stage (the `deps` and
 `builder` stages still need pnpm and keep it). **The count after that change is 3.**
 
-The three that remain are one cluster, all reached through Fastify 4:
-`fastify` 4.29.1 (CVE-2026-25223), `@fastify/static` 7.0.4 (CVE-2026-15074) and
-`find-my-way` 8.2.2 (CVE-2026-47219). Every fixed version Trivy names is in a
-later major: Fastify 5.7.2, `@fastify/static` 10.1.1, `find-my-way` 9.7.0, and
-`@fastify/static` 10 requires Fastify 5 anyway. There is no fix inside the 4.x
-line, so clearing these is the Fastify 5 migration and its plugin ecosystem, not a
-version bump. That is a code change with a real blast radius and it belongs in its
-own pass.
-
-So the job stays report-only for now. Making it blocking today would fail every
-release publish until the Fastify migration lands, and holding security fixes
-behind a scanner backlog is the exact inversion this project already decided
-against when the release track was changed from one release at the end to a patch
-per landed track. **When the Fastify migration lands, re-measure, and if the count
-is zero add `exit-code: '1'` and drop `continue-on-error` from the Trivy step in
-`docker-publish.yml`.** Do not reach the same place with `.trivyignore` entries;
-suppressing the count is not the same as clearing it.
+The three results in that baseline came from Fastify 4.29.1
+(CVE-2026-25223), `@fastify/static` 7.0.4 (CVE-2026-15074), and
+`find-my-way` 8.2.2 (CVE-2026-47219). The Fastify 5 migration updated all
+three. The 25 November 2026 amd64 scan measured zero fixable HIGH or CRITICAL
+findings after the migration. [Scan evidence](https://github.com/TheZwiss/backspace/actions/runs/45530722734)
 
 ## Dynamic scanning (DAST)
 
@@ -284,10 +256,8 @@ Three plausible ways of measuring give a wrong answer.
   no analysis is recorded against a branch ref, and `refs/pull/N/merge` reports only
   findings that fall on the changed lines, so a clean PR run means "nothing on this
   diff" rather than "nothing in the repository".
-- **A green scanner check is not always a measurement.** Where a scan step still
-  carries `continue-on-error: true`, the check passing means the analysis ran and
-  the SARIF uploaded, nothing more. Since the enforcement flip in PR #77 that
-  applies only to the container image scan in `docker-publish.yml`.
+- **The image gate uses severity and fix filters.** Run a separate scan with
+  broader filters to measure advisory or unfixed findings.
 - **`trivy config .` reports more locally than in CI.** Run locally after an install
   it walks `node_modules` and reports DS-0001, DS-0017 and DS-0026 against a
   Dockerfile vendored inside `@surma/rollup-plugin-off-main-thread`. The CI job
@@ -321,28 +291,28 @@ cannot be worked one at a time.
 
 ### What is left open, and why
 
-Sixteen OSV findings are held in `osv-scanner.toml`, in two shapes. Fourteen need a
-major upgrade that is a separate decision with its own compatibility work. Two
-have no fixed release at all and sit only in build tooling. None of them is
-dismissed:
+The Fastify 5 migration removed twelve OSV deferrals: nine for Fastify core,
+two for the static plugin, and one for `find-my-way`. The new versions are
+Fastify 5.12.8, `@fastify/static` 10.1.12 and `find-my-way` 9.10.2. The
+workspace scan still reports `CVE-2026-118773` on glob 11.1.0 and
+`CVE-2026-118764` on minimatch 9.0.9 and 10.2.6. These are separate dependency
+paths from the updated static plugin, which uses glob 14 and minimatch 11.
 
-| Package | Findings | Bucket | Fixed in |
-|---------|----------|--------|----------|
-| `fastify` 4.29.1 | 9 | server image | 5.x (5.12.2, one in 5.12.5) |
-| `@fastify/static` 7.0.4 | 2 | server image | 10.x |
-| `find-my-way` 8.2.2 | 1 | server image | 9.7.0 |
-| `esbuild` 0.18.20 | 1 | build-time (`drizzle-kit` to `@esbuild-kit/core-utils`) | 0.25.0 |
-| `postcss-selector-parser` 6.1.4 | 1 | build-time (`tailwindcss` 3 and `postcss-nested`) | 7.1.6 only; tailwindcss 3 does not accept 7.x |
-| `braces` 3.0.3 | 1 | build-time (`tailwindcss` 3 through `chokidar` and `micromatch`) | no fixed release |
-| `sprintf-js` 1.1.3 | 1 | build-time (`electron-builder` to `@electron/get` to `global-agent` to `roarr`) | no fixed release |
+On 23 November 2026, OSV reported two unused ignores. The `sprintf-js`
+advisory (`CVE-2026-97058`) was withdrawn. The `braces` advisory
+(`CVE-2026-93687`) remains active in OSV, but its record only supplies a Git
+range. OSV therefore cannot match it to the npm lockfile. Keep tracking it
+with the Tailwind upgrade. Version 3.0.3 remains a build-time dependency through
+Tailwind 3, chokidar and micromatch.
 
-The five fastify findings published on 2026-09-30 were each checked against the
-server rather than only deferred. Each needs a feature the server does not use:
-HTTP/2 with `reply.trailer()`, an `$async` request schema, a header schema with
-the `dependencies` keyword, a `false` request-part schema, or not-found handlers
-encapsulated under an auth hook (the server registers one, at the root, as the
-SPA fallback). A new route that uses one of those makes the matching finding
-reachable, which is a reason to do the fastify 5 upgrade first.
+The `postcss-selector-parser` 6.1.6 security release carries the fixes on the 6.x
+line. Tailwind 3 and `postcss-nested` already accept that major, so the override
+raises the 6.x floor and the `CVE-2026-104844` deferral is removed.
+
+Drizzle Kit 0.31.11 declares `@esbuild-kit/esm-loader` but loads TypeScript schemas
+with its direct `esbuild` dependency. The version-scoped override removes the unused
+loader and its esbuild 0.18.20 copy, clearing `GHSA-67mh-4wv8-2f99`. Recheck the
+override when updating Drizzle Kit.
 
 The October 2026 pass removed four entries. The two `react-router` ones no longer
 matched anything, since `react-router-dom` is on 7.18.4. The two `lodash` ones were
@@ -404,8 +374,14 @@ finds the shipped binary before the build step is reached.
 
 ## Dismissal register
 
-`.trivyignore` and `.github/codeql/codeql-config.yml` are the machine-readable half
-of this. What follows is the half a human reads.
+`.gitleaksignore`, `.trivyignore` and `.github/codeql/codeql-config.yml` record the exceptions the scanners use.
+
+On 23 November 2026, the history scan reported sixteen `generic-api-key`
+false positives. Twelve are literal JWT secrets injected into mocked server
+configuration. One is a dummy JWT secret in a disposable container smoke test.
+Three are prose describing S2S-proof-gated reattachment, including a comment in
+the auth route. `.gitleaksignore` records the exact historical fingerprints.
+The rule remains active for any other match, including on the same paths.
 
 ### CodeQL alerts
 
@@ -597,7 +573,6 @@ Currently deferred, with the condition that releases each one:
 | react / react-dom / `@types/*` 18 | `RefObject<T \| null>` variance and `useState` arity break across the chat components | the UI pass landing; then one PR moving all four together |
 | tailwindcss 3 | v4 moves the PostCSS plugin to `@tailwindcss/postcss` and replaces the config model the design system is built on | a dedicated port of the theme, surface/input tiers and `globals.css` |
 | typescript 5 | v7 removes the `baseUrl` compiler option (TS5102) that the workspace tsconfigs rely on | migrating every tsconfig off `baseUrl` first |
-| fastify 4 + all `@fastify/*` | the 11.x plugin lines target Fastify 5; on Fastify 4 the server stops booting | one PR taking core and every plugin across together |
 | `@tus/file-store` + `@tus/server` 1.x | matched pair; bumping either alone splits it | one PR moving both, upload pipeline exercised end to end |
 | `@types/node` 22 (24 for the script packages) | types describing a newer Node than the runtime let code typecheck clean and fail in production | whenever a runtime moves, in that same PR |
 | jsdom 28 | jsdom 30 pulls undici 8 against the `undici@^7` override, so every vitest worker dies with `webidl.util.markAsUncloneable is not a function` and the web suite does not run; it also changes SVG attribute-selector matching | extending the undici override to 8, then re-testing both |
@@ -629,11 +604,6 @@ pnpm outdated -r
 That lists every package behind its latest across the workspace in one shot, with
 no PR churn, and it is the right way to check whether an ignore entry is still
 earning its place.
-
-One entry can also preempt several future PRs. The `@fastify/*` wildcard covers
-`cors`, `helmet`, `multipart` and `static`, all of which are sitting a major
-behind and would otherwise arrive as four separate proposals for the same
-Fastify 5 migration.
 
 ### A green check is not a verified upgrade
 
@@ -672,9 +642,8 @@ Two cases from the first pass are worth keeping in mind:
   does not support the macOS and Windows legs of the build matrix.
 - Least-privilege `permissions:` per workflow/job.
 - SBOM + SLSA provenance are attached to the published container image at push
-  (`.github/workflows/docker-publish.yml`), alongside a report-only Trivy scan
-  of the amd64 image (the arm64 image ships unscanned; enforcement is turned
-  on in a later plan).
+  (`.github/workflows/docker-publish.yml`). Trivy gates the amd64 build before
+  either architecture is published. The gate covers amd64 only.
 - `cloudflare/wrangler-action` is pinned at `9acf94ac` (v3.15.0), the head of
   the v3 line, in `telemetry-receiver.yml`. It is used twice in the same job and
   both uses carry the same pin. It is the only action in the repository that
@@ -748,7 +717,7 @@ the pipeline the code runs in". The bot's verdict encodes exactly that split:
 | CI workflows | `.github/workflows/**`, `.github/actions/**`, including the previous name of a rename | yes |
 | Install-time code | `.pnpmfile.cjs` and `.npmrc` at any depth, `pnpm-workspace.yaml`, `patches/**`; and any `package.json` whose `scripts.*`, `pnpm.*` or `packageManager` changed (a dependency bump alone does not count) | yes |
 | Build recipes | `Dockerfile*`, `docker-compose*.yml`, `docker-entrypoint.sh`, `Caddyfile`, `install.sh`, `deploy.sh`, `restore.sh`, `io.github.TheZwiss.backspace*.yml`, `flatpak/*.{sh,mjs,cjs,js,py}`, `packages/desktop/electron-builder.yml`, `packages/desktop/scripts/**` | yes |
-| Scanner configuration | `.github/codeql/**`, `osv-scanner.toml`, `.trivyignore`, `.zap/**`, `.gitleaks.toml` | yes |
+| Scanner configuration | `.github/codeql/**`, `osv-scanner.toml`, `.trivyignore`, `.zap/**`, `.gitleaks.toml`, `.gitleaksignore` | yes |
 | `pnpm-lock.yaml` | new package names vs. version bumps vs. removals; entries whose resolution is not exactly `{integrity: ...}` with a bare semver (git, tarball URL, directory, `file:`); importer specifiers new at head that point outside the registry; `overrides` and `patchedDependencies` blocks | only `overrides` and `patchedDependencies` |
 | `flatpak/node-sources.json` | added `file`/`archive` entries with a checksum from the hosts the generator uses (npm registry, Electron releases on github.com, Node headers on electronjs.org) are "known"; `shell`, `script`, `patch`, unknown types, and `inline` entries with a script name or a shebang are "executable"; downloads from any other host or without a checksum are "foreign" | executable and foreign entries |
 
@@ -854,7 +823,7 @@ rename.
       `RELEASE_BOT_APP_ID` (the numeric App ID) and `RELEASE_BOT_PRIVATE_KEY`
       (its PEM private key). The private key only ever goes to
       `actions/create-github-app-token`, pinned by SHA
-      (`bcd2ba49218906704ab6c1aa796996da409d3eb1`, v3.2.0), which mints an
+      (`f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc`, v3.4.0), which mints an
       installation token narrowed to this repository and to the scopes the job
       uses, and revokes it when the job ends. Two jobs do that, and no other
       workflow reads the secrets.
